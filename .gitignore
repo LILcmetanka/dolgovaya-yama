@@ -4,3 +4,4 @@ dist/
 *.log
 .vscode/*
 !.vscode/extensions.json
+CLAUDE.md
