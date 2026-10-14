@@ -134,16 +134,6 @@ export function drawPlaque(scene: Phaser.Scene, x: number, y: number, width: num
   scene.add.rectangle(x, y, width, height, PANEL_FILL, 0.92).setRounded(12).setStrokeStyle(2, PANEL_BORDER);
 }
 
-/** Значок «сколько одинаковых»: count квадратиков в ряд — 2 для пары, 3 для трёх. */
-export function drawMatchIcon(scene: Phaser.Scene, x: number, y: number, count: number): void {
-  const size = 7;
-  const gap = 3;
-  const total = count * size + (count - 1) * gap;
-  const g = scene.add.graphics();
-  g.fillStyle(0x94a3b8);
-  for (let i = 0; i < count; i++) g.fillRoundedRect(x - total / 2 + i * (size + gap), y - size / 2, size, size, 2);
-}
-
 /** Иконки кнопок: рычаг автомата («крутить») и стопка монет («забрать»). Рисуются один раз. */
 export function createIconTextures(scene: Phaser.Scene): void {
   if (!scene.textures.exists(LEVER_ICON)) {

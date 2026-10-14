@@ -15,6 +15,7 @@ import {
   SYMBOLS,
   TAKE_BOOST,
   winWithMultiplier,
+  powerUpPrice,
   type Line,
   type LineResult,
   type PowerUp,
@@ -28,7 +29,6 @@ import {
   createLamps,
   drawBackground,
   drawCabinet,
-  drawMatchIcon,
   drawPanel,
   drawPlaque,
   LAMP_OFF,
@@ -42,12 +42,15 @@ const CENTER_X = 480;
 const CENTER_Y = 320;
 const LEFT_PANEL_X = 113; // центр левой панели (раунд, прокрутки, рекорд)
 const RIGHT_PANEL_X = 848; // центр правой панели (выплаты)
-const PANEL_Y = 274;
+const PANEL_Y = 275;
 const PANEL_WIDTH = 194;
-const PANEL_HEIGHT = 212;
-const SWATCH_X = 772; // мини-барабаны в таблице выплат
-const PAIR_COLUMN_X = 862;
-const THREE_COLUMN_X = 912;
+const PANEL_HEIGHT = 230;
+// Колонки таблицы выплат: мини-барабан | ПАРА | ТРИ, между ними линии-разделители.
+const SWATCH_X = 777;
+const PAYTABLE_LINE_1_X = 803;
+const PAIR_COLUMN_X = 838;
+const PAYTABLE_LINE_2_X = 873;
+const THREE_COLUMN_X = 908;
 const DEBT_BAR_Y = 108;
 const DEBT_BAR_WIDTH = 480;
 const DEBT_BAR_HEIGHT = 30;
@@ -356,19 +359,29 @@ export class GameScene extends Phaser.Scene {
     for (let reel = 0; reel < REEL_XS.length; reel++) this.showSymbol(reel, SYMBOLS[reel]);
   }
 
-  /** Таблица выплат справа: значки ■■ (пара) и ■■■ (три), строка на каждый символ, у черепа — «кон сгорает». */
+  /** Таблица выплат справа: шапка «ПАРА | ТРИ», линии-разделители, строка на каждый символ, у черепа — «кон сгорает». */
   private drawPaytable(): void {
     drawPanel(this, RIGHT_PANEL_X, PANEL_Y, PANEL_WIDTH, PANEL_HEIGHT);
     const top = PANEL_Y - PANEL_HEIGHT / 2;
+    const left = RIGHT_PANEL_X - PANEL_WIDTH / 2;
+    const right = RIGHT_PANEL_X + PANEL_WIDTH / 2;
+    const headerY = top + 50; // шапка таблицы
+    const firstRowY = top + 80;
+    const rowStep = 26;
+    const lastPayRowY = firstRowY + (SYMBOLS.length - 2) * rowStep; // последняя строка с выплатами (череп в списке последний)
+
     this.addText(RIGHT_PANEL_X, top + 18, 'ВЫПЛАТЫ', { fontSize: '18px', fontStyle: 'bold', color: GOLD_TEXT }).setOrigin(0.5);
-    drawMatchIcon(this, PAIR_COLUMN_X, top + 46, 2);
-    drawMatchIcon(this, THREE_COLUMN_X, top + 46, 3);
+    const headerStyle = { fontSize: '13px', fontStyle: 'bold', color: MUTED_TEXT };
+    this.addText(PAIR_COLUMN_X, headerY, 'ПАРА', headerStyle).setOrigin(0.5);
+    this.addText(THREE_COLUMN_X, headerY, 'ТРИ', headerStyle).setOrigin(0.5);
+
     SYMBOLS.forEach((symbol, row) => {
-      const y = top + 66 + row * 24;
-      if (row % 2 === 0) this.add.rectangle(RIGHT_PANEL_X, y, PANEL_WIDTH - 16, 22, 0xffffff, 0.05).setRounded(6);
+      const y = firstRowY + row * rowStep;
+      if (row % 2 === 0) this.add.rectangle(RIGHT_PANEL_X, y, PANEL_WIDTH - 16, rowStep - 2, 0xffffff, 0.05).setRounded(6);
       this.drawSwatch(SWATCH_X, y, symbol);
       if (isSkull(symbol)) {
-        this.addText(SWATCH_X + 20, y, 'кон сгорает', { fontSize: '15px', color: RED_TEXT }).setOrigin(0, 0.5);
+        // У черепа выплат нет — одна надпись на обе колонки.
+        this.addText((PAYTABLE_LINE_1_X + right) / 2, y, 'кон сгорает', { fontSize: '15px', color: RED_TEXT }).setOrigin(0.5);
       } else {
         this.addText(PAIR_COLUMN_X, y, String(symbol.pair), { fontSize: '16px' }).setOrigin(0.5);
         this.addText(THREE_COLUMN_X, y, String(symbol.three), {
@@ -378,12 +391,19 @@ export class GameScene extends Phaser.Scene {
         }).setOrigin(0.5);
       }
     });
+
+    // Линии таблицы: под шапкой и между колонками (до строки черепа).
+    const lines = this.add.graphics();
+    lines.lineStyle(1, 0x64748b, 0.8);
+    lines.lineBetween(left + 10, headerY + 13, right - 10, headerY + 13);
+    lines.lineBetween(PAYTABLE_LINE_1_X, headerY - 11, PAYTABLE_LINE_1_X, lastPayRowY + rowStep / 2);
+    lines.lineBetween(PAYTABLE_LINE_2_X, headerY - 11, PAYTABLE_LINE_2_X, lastPayRowY + rowStep / 2);
   }
 
   /** Маленький «барабан» для таблицы выплат: цвет фона, рамка и знак символа. */
   private drawSwatch(x: number, y: number, symbol: SlotSymbol): void {
-    this.add.rectangle(x, y, 22, 22, symbol.color).setRounded(5).setStrokeStyle(2, borderColor(symbol));
-    this.addText(x, y, symbol.sign, { fontSize: '14px', fontStyle: 'bold', padding: { y: 3 } }).setOrigin(0.5);
+    this.add.rectangle(x, y, 24, 24, symbol.color).setRounded(5).setStrokeStyle(2, borderColor(symbol));
+    this.addText(x, y, symbol.sign, { fontSize: '15px', fontStyle: 'bold', padding: { y: 3 } }).setOrigin(0.5);
   }
 
   private drawMessageAndPot(): void {
@@ -916,11 +936,12 @@ export class GameScene extends Phaser.Scene {
     return this.add.container(CENTER_X, y, [coin, amount]);
   }
 
-  /** Карточка усиления: клавиша, иконка, название, подсказка и ценник. Наведение — подсветка, купленное — штамп. */
+  /** Карточка усиления: клавиша, иконка, название, подсказка и ценник. Наведение — подсветка, купленное — счётчик «×2». */
   private drawShopCard(powerUp: PowerUp, index: number): Phaser.GameObjects.Container {
     const x = CENTER_X + (index - (POWER_UPS.length - 1) / 2) * SHOP_CARD_STEP; // карточки в ряд по центру
-    const bought = this.boughtInShop.includes(powerUp.id);
+    const boughtCount = this.boughtCount(powerUp);
     const available = this.canBuy(powerUp);
+    const border = boughtCount > 0 ? DEBT_BAR_COLOR : CARD_BORDER; // купленное — в зелёной рамке
     const halfWidth = SHOP_CARD_WIDTH / 2;
     const halfHeight = SHOP_CARD_HEIGHT / 2;
 
@@ -928,7 +949,7 @@ export class GameScene extends Phaser.Scene {
     const bg = this.add
       .rectangle(0, 0, SHOP_CARD_WIDTH, SHOP_CARD_HEIGHT, available ? 0x1e293b : 0x111827)
       .setRounded(16)
-      .setStrokeStyle(3, bought ? DEBT_BAR_COLOR : CARD_BORDER);
+      .setStrokeStyle(3, border);
     const keyCap = this.add
       .rectangle(-halfWidth + 22, -halfHeight + 22, 24, 24, 0x0f172a)
       .setRounded(5)
@@ -943,19 +964,23 @@ export class GameScene extends Phaser.Scene {
     // Ценник: тёмная «таблетка» с монеткой и ценой.
     const tag = this.add.rectangle(0, halfHeight - 30, 96, 32, 0x0b1120).setRounded(16).setStrokeStyle(2, 0xb45309);
     const coin = this.add.image(-22, halfHeight - 30, COIN_TEXTURE);
-    const price = this.addText(12, halfHeight - 30, String(powerUp.price), {
+    // На ценнике — цена следующей покупки: каждое следующее того же вида дороже.
+    const price = this.addText(12, halfHeight - 30, String(this.currentPrice(powerUp)), {
       fontSize: '20px',
       fontStyle: 'bold',
       color: GOLD_TEXT,
     }).setOrigin(0.5);
     const card = this.add.container(x, SHOP_CARD_Y, [bg, keyCap, keyLabel, icon, name, hint, tag, coin, price]);
 
-    if (bought) {
-      for (const part of [icon, name, hint, tag, coin, price]) part.setAlpha(0.5);
-      card.add(this.drawBoughtStamp());
-    } else if (!available) {
-      for (const part of [keyLabel, icon, name, hint, coin, price]) part.setAlpha(0.35);
+    if (boughtCount > 0) {
+      // Сколько раз уже взяли в этот заход — зелёный значок в правом верхнем углу.
+      const badgeX = halfWidth - 26;
+      const badgeY = -halfHeight + 22;
+      const badge = this.add.rectangle(badgeX, badgeY, 40, 24, 0x166534).setRounded(12).setStrokeStyle(2, DEBT_BAR_COLOR);
+      const badgeText = this.addText(badgeX, badgeY, `×${boughtCount}`, { fontSize: '14px', fontStyle: 'bold' }).setOrigin(0.5);
+      card.add([badge, badgeText]);
     }
+    if (!available) for (const part of [keyLabel, icon, name, hint, coin, price]) part.setAlpha(0.35);
 
     bg.setInteractive({ useHandCursor: available });
     bg.on('pointerdown', () => this.buyPowerUp(powerUp));
@@ -967,23 +992,20 @@ export class GameScene extends Phaser.Scene {
       });
       bg.on('pointerout', () => {
         card.setScale(1);
-        bg.setStrokeStyle(3, CARD_BORDER);
+        bg.setStrokeStyle(3, border);
       });
     }
     return card;
   }
 
-  /** Штамп «КУПЛЕНО» поверх карточки — наклонённый, как печать. */
-  private drawBoughtStamp(): Phaser.GameObjects.Text {
-    return this.addText(0, -6, 'КУПЛЕНО', {
-      fontSize: '26px',
-      fontStyle: 'bold',
-      color: GREEN_TEXT,
-      stroke: '#052e16',
-      strokeThickness: 6,
-    })
-      .setOrigin(0.5)
-      .setAngle(-14);
+  /** Сколько раз это усиление уже купили в этот заход в магазин. */
+  private boughtCount(powerUp: PowerUp): number {
+    return this.boughtInShop.filter((id) => id === powerUp.id).length;
+  }
+
+  /** Цена следующей покупки этого усиления (растёт с каждой покупкой того же вида, см. powerUpPrice). */
+  private currentPrice(powerUp: PowerUp): number {
+    return powerUpPrice(powerUp, this.boughtCount(powerUp));
   }
 
   /** Что будет с излишком — строка под «кошельком». */
@@ -1016,15 +1038,15 @@ export class GameScene extends Phaser.Scene {
     return row;
   }
 
-  /** Можно ли купить: магазин открыт, это усиление в этот заход ещё не брали и излишка хватает. */
+  /** Можно ли купить: магазин открыт и излишка хватает на следующую покупку этого усиления. */
   private canBuy(powerUp: PowerUp): boolean {
-    return this.isShopOpen && !this.boughtInShop.includes(powerUp.id) && this.paid >= powerUp.price;
+    return this.isShopOpen && this.paid >= this.currentPrice(powerUp);
   }
 
   /** Купить усиление: цена вычитается из излишка, магазин перерисовывается. Выход — кнопкой «ДАЛЬШЕ». */
   private buyPowerUp(powerUp: PowerUp): void {
     if (!this.canBuy(powerUp)) return;
-    this.paid -= powerUp.price;
+    this.paid -= this.currentPrice(powerUp);
     this.boughtInShop.push(powerUp.id);
     this.applyPowerUp(powerUp);
     this.drawShop();

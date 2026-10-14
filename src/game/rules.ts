@@ -21,6 +21,8 @@ export const REDUCED_SKULL_WEIGHT = 4;
 export const EXTRA_SPINS = 2;
 /** Во сколько раз «двойное забрать» увеличивает вносимый кон. */
 export const TAKE_BOOST = 2;
+/** На сколько базовых цен дорожает каждое следующее усиление того же вида за один заход в магазин. */
+export const PRICE_GROWTH = 1;
 
 /** Символ на барабане. */
 export interface SlotSymbol {
@@ -47,7 +49,7 @@ export interface PowerUp {
   id: 'spins' | 'shield' | 'fewerSkulls' | 'double';
   name: string; // название в магазине
   hint: string; // что делает, коротко
-  price: number; // сколько стоит из излишка
+  price: number; // базовая цена: первая покупка за заход (следующие дороже, см. powerUpPrice)
 }
 
 /**
@@ -139,4 +141,9 @@ export function multiplierForStreak(streak: number): number {
 /** Сколько прокрутка кладёт на кон: выигрыш из таблицы × множитель, округлённый до целого. */
 export function winWithMultiplier(win: number, multiplier: number): number {
   return Math.round(win * multiplier);
+}
+
+/** Цена усиления, если в этот заход его уже купили bought раз: 10 → 20 → 30… (при PRICE_GROWTH = 1). */
+export function powerUpPrice(powerUp: PowerUp, bought: number): number {
+  return Math.round(powerUp.price * (1 + bought * PRICE_GROWTH));
 }
