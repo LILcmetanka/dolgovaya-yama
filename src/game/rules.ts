@@ -1,5 +1,5 @@
 /**
- * Правила «Долговой ямы»: символы, выплаты, оценка линии, долг и множитель.
+ * Правила «Долговой ямы»: символы, выплаты, оценка линии, долг, множитель и усиления.
  * Здесь нет Phaser — только числа и маленькие чистые функции.
  */
 
@@ -15,6 +15,10 @@ export const DEBT_ROUND_TO = 10;
 export const MULTIPLIER_STEP = 1;
 /** Вес черепа: чем больше, тем чаще он выпадает. */
 export const SKULL_WEIGHT = 8;
+/** Сколько прокруток добавляет усиление «+2 прокрутки». */
+export const EXTRA_SPINS = 2;
+/** Во сколько раз «двойное забрать» увеличивает вносимый кон. */
+export const TAKE_BOOST = 2;
 
 /** Символ на барабане. */
 export interface SlotSymbol {
@@ -34,6 +38,24 @@ export const SYMBOLS: SlotSymbol[] = [
   { id: 'diamond', sign: '💎', color: 0x22d3ee, weight: 10, pair: 20, three: 100 },
   { id: 'seven', sign: '7', color: 0xa855f7, weight: 5, pair: 40, three: 400 },
   { id: 'skull', sign: '💀', color: 0x111827, weight: SKULL_WEIGHT, pair: 0, three: 0 },
+];
+
+/** Усиление из магазина. Покупается за излишек, который остался после закрытия долга. */
+export interface PowerUp {
+  id: 'spins' | 'shield' | 'double';
+  name: string; // название в магазине
+  hint: string; // что делает, коротко
+  price: number; // сколько стоит из излишка
+}
+
+/**
+ * Магазин усилений. Цены подобраны симуляцией: покупка помогает,
+ * но и оставить излишек в счёт нового долга — тоже нормальный выбор.
+ */
+export const POWER_UPS: PowerUp[] = [
+  { id: 'spins', name: `+${EXTRA_SPINS} прокрутки`, hint: 'в этом раунде', price: 10 },
+  { id: 'shield', name: 'Щит от черепа', hint: 'один раз спасёт кон', price: 15 },
+  { id: 'double', name: 'Двойное «забрать»', hint: `следующий кон ×${TAKE_BOOST}`, price: 30 },
 ];
 
 /** Линия — три символа, по одному с каждого барабана. */
@@ -100,4 +122,9 @@ export function multiplierForStreak(streak: number): number {
 /** Сколько прокрутка кладёт на кон: выигрыш из таблицы × множитель, округлённый до целого. */
 export function winWithMultiplier(win: number, multiplier: number): number {
   return Math.round(win * multiplier);
+}
+
+/** Цена самого дешёвого усиления: если излишек меньше, магазин не открывается. */
+export function cheapestPowerUpPrice(): number {
+  return Math.min(...POWER_UPS.map((powerUp) => powerUp.price));
 }
