@@ -1,24 +1,35 @@
 import Phaser from 'phaser';
+import { patternSize, type Pattern } from './patterns';
+import { GRID_COLUMNS, GRID_ROWS, isSkull, type SlotSymbol } from './rules';
 
 /**
- * Украшения «Долговой ямы»: фон, корпус автомата, лампочки и монетка.
- * Логики игры здесь нет. Картинок в проекте тоже нет — всё рисуется фигурами Phaser.
+ * Украшения «Долговой ямы»: фон, корпус автомата, лампочки, монетка, клетки символов и схемы паттернов.
+ * Логики игры здесь нет. Картинок в проекте тоже нет — всё рисуется кодом.
  */
 
+/** Шрифт игры: в нём есть шрифты эмодзи. */
+export const FONT = 'system-ui, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
 /** Цвет выключенной лампочки. */
 export const LAMP_OFF = 0x431407;
 /** Имена текстур, нарисованных кодом: монетка и иконки кнопок. */
 export const COIN_TEXTURE = 'coin';
 export const LEVER_ICON = 'icon-lever';
 export const COINS_ICON = 'icon-coins';
-export const SHIELD_ICON = 'icon-shield';
-export const SKULL_DOWN_ICON = 'icon-skull-down';
 const BACKGROUND_TEXTURE = 'background-pattern';
 const BOKEH_TEXTURE = 'bokeh';
 /** Цвета панелей в стиле автомата. */
 const PANEL_FILL = 0x0b1120;
 const PANEL_BORDER = 0xb45309;
 const PANEL_HEADER = 0x7f1d1d;
+/** Клетка сетки: рамка обычного символа и рамка черепа. */
+const CELL_BORDER = 0xe2e8f0;
+const SKULL_CELL_BORDER = 0xef4444;
+const CELL_BORDER_WIDTH = 3;
+/** Схема паттерна — маленькая сетка 5×3: клетки паттерна золотые, остальные тёмные. */
+const MINI_CELL = 7; // сторона клетки схемы, px
+const MINI_GAP = 2; // промежуток между клетками схемы, px
+const MINI_ON = 0xfde047;
+const MINI_OFF = 0x334155;
 
 /**
  * Фон «зала казино»: градиент сверху вниз, узор-ковёр из ромбиков,
@@ -92,19 +103,11 @@ function drawBokehLights(scene: Phaser.Scene): void {
   }
 }
 
-/** Корпус автомата вокруг барабанов: тень, красный корпус с золотой рамкой, тёмное окно и стрелки линии выплат. */
+/** Корпус автомата вокруг сетки: тень, красный корпус с золотой рамкой и тёмное окно. */
 export function drawCabinet(scene: Phaser.Scene, x: number, y: number, width: number, height: number): void {
   scene.add.rectangle(x + 6, y + 8, width, height, 0x000000, 0.4).setRounded(26); // тень
   scene.add.rectangle(x, y, width, height, 0x7f1d1d).setRounded(26).setStrokeStyle(6, 0xf59e0b); // корпус
-  scene.add.rectangle(x, y, width - 20, height - 20, 0x020617).setRounded(18); // окно для барабанов
-
-  // Золотые стрелки слева и справа показывают линию, по которой считается выигрыш.
-  const left = x - width / 2 + 2;
-  const right = x + width / 2 - 2;
-  const g = scene.add.graphics();
-  g.fillStyle(0xfbbf24);
-  g.fillTriangle(left, y - 9, left, y + 9, left + 9, y);
-  g.fillTriangle(right, y - 9, right, y + 9, right - 9, y);
+  scene.add.rectangle(x, y, width - 20, height - 20, 0x020617).setRounded(18); // окно для сетки
 }
 
 /** Лампочки по верхнему и нижнему краю корпуса. Порядок — по кругу: верх слева направо, низ справа налево. */
@@ -163,45 +166,6 @@ export function createIconTextures(scene: Phaser.Scene): void {
     g.generateTexture(COINS_ICON, 40, 40);
     g.destroy();
   }
-  if (!scene.textures.exists(SHIELD_ICON)) {
-    const g = scene.add.graphics();
-    g.fillStyle(0x1e3a8a);
-    fillShield(g, 20, 3, 32, 35); // тёмный ободок
-    g.fillStyle(0x3b82f6);
-    fillShield(g, 20, 6, 26, 29); // синий щит
-    g.fillStyle(0x93c5fd);
-    g.fillRect(18, 10, 4, 20); // светлая полоса посередине
-    g.generateTexture(SHIELD_ICON, 40, 40);
-    g.destroy();
-  }
-  if (!scene.textures.exists(SKULL_DOWN_ICON)) {
-    const g = scene.add.graphics();
-    g.fillStyle(0xe5e7eb);
-    g.fillCircle(16, 15, 11); // голова
-    g.fillRect(10, 21, 12, 10); // челюсть
-    g.fillStyle(0x111827);
-    g.fillCircle(12, 15, 3); // глаза
-    g.fillCircle(20, 15, 3);
-    g.fillRect(13, 26, 2, 5); // щели между зубами
-    g.fillRect(17, 26, 2, 5);
-    g.fillStyle(0x22c55e);
-    g.fillRect(31, 12, 5, 13); // зелёная стрелка вниз: «черепов меньше»
-    g.fillTriangle(27, 24, 40, 24, 33.5, 34);
-    g.generateTexture(SKULL_DOWN_ICON, 40, 40);
-    g.destroy();
-  }
-}
-
-/** Щит: сверху ровный, по бокам прямой, снизу острый. cx — середина, top — верх. */
-function fillShield(g: Phaser.GameObjects.Graphics, cx: number, top: number, width: number, height: number): void {
-  g.beginPath();
-  g.moveTo(cx - width / 2, top);
-  g.lineTo(cx + width / 2, top);
-  g.lineTo(cx + width / 2, top + height * 0.5);
-  g.lineTo(cx, top + height);
-  g.lineTo(cx - width / 2, top + height * 0.5);
-  g.closePath();
-  g.fillPath();
 }
 
 /** Текстура монетки: рисуем кругами и сохраняем как картинку в памяти. После рестарта сцены она уже есть. */
@@ -216,4 +180,84 @@ export function createCoinTexture(scene: Phaser.Scene): void {
   g.fillCircle(7, 7, 2.5); // блик
   g.generateTexture(COIN_TEXTURE, 20, 20);
   g.destroy();
+}
+
+/** Имя текстуры символа, например 'symbol-cherry'. */
+export function symbolTexture(symbol: SlotSymbol): string {
+  return `symbol-${symbol.id}`;
+}
+
+/**
+ * Текстуры клеток: цветной квадрат с рамкой (у черепа красная), блик «стекла» и знак символа.
+ * Рисуем один раз на canvas браузера: при мелькании клетка только меняет текстуру и не перерисовывает эмодзи.
+ */
+export function createSymbolTextures(scene: Phaser.Scene, symbols: SlotSymbol[], size: number, radius: number): void {
+  for (const symbol of symbols) {
+    const key = symbolTexture(symbol);
+    if (scene.textures.exists(key)) continue;
+    const texture = scene.textures.createCanvas(key, size, size);
+    if (!texture) continue;
+    drawSymbolCell(texture.context, symbol, size, radius);
+    texture.refresh(); // передать нарисованное в видеокарту
+  }
+}
+
+/** Одна клетка на canvas: квадрат, блик и знак по центру. */
+function drawSymbolCell(ctx: CanvasRenderingContext2D, symbol: SlotSymbol, size: number, radius: number): void {
+  const inset = CELL_BORDER_WIDTH / 2; // рамка рисуется по краю квадрата — отступаем, чтобы она не обрезалась
+  ctx.beginPath();
+  ctx.roundRect(inset, inset, size - CELL_BORDER_WIDTH, size - CELL_BORDER_WIDTH, radius);
+  ctx.fillStyle = cssColor(symbol.color);
+  ctx.fill();
+  ctx.lineWidth = CELL_BORDER_WIDTH;
+  ctx.strokeStyle = cssColor(isSkull(symbol) ? SKULL_CELL_BORDER : CELL_BORDER);
+  ctx.stroke();
+
+  // Блик «стекла» в верхней части клетки.
+  ctx.beginPath();
+  ctx.roundRect(size * 0.14, size * 0.09, size * 0.72, size * 0.2, radius / 2);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+  ctx.fill();
+
+  // Знак с тенью, чтобы не сливался с фоном.
+  ctx.font = `bold ${Math.round(size * 0.55)}px ${FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 3;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(symbol.sign, size / 2, size / 2 + 2);
+}
+
+/** Цвет-число 0xef4444 → строка '#ef4444' для canvas. */
+function cssColor(color: number): string {
+  return `#${color.toString(16).padStart(6, '0')}`;
+}
+
+/** Имя текстуры схемы паттерна, например 'pattern-row3'. */
+export function patternTexture(pattern: Pattern): string {
+  return `pattern-${pattern.id}`;
+}
+
+/** Схемы паттернов для панели: маленькая сетка 5×3, клетки паттерна золотые. Форма стоит посередине схемы. */
+export function createPatternTextures(scene: Phaser.Scene, patterns: Pattern[]): void {
+  const step = MINI_CELL + MINI_GAP;
+  for (const pattern of patterns) {
+    const key = patternTexture(pattern);
+    if (scene.textures.exists(key)) continue;
+    const { width, height } = patternSize(pattern);
+    const left = Math.floor((GRID_COLUMNS - width) / 2); // на сколько клеток сдвинуть форму к середине
+    const top = Math.floor((GRID_ROWS - height) / 2);
+    const g = scene.add.graphics();
+    for (let row = 0; row < GRID_ROWS; row++) {
+      for (let col = 0; col < GRID_COLUMNS; col++) {
+        const inPattern = pattern.cells.some(([r, c]) => r + top === row && c + left === col);
+        g.fillStyle(inPattern ? MINI_ON : MINI_OFF);
+        g.fillRect(col * step, row * step, MINI_CELL, MINI_CELL);
+      }
+    }
+    g.generateTexture(key, GRID_COLUMNS * step - MINI_GAP, GRID_ROWS * step - MINI_GAP);
+    g.destroy();
+  }
 }
