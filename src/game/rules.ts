@@ -15,6 +15,8 @@ export const DEBT_ROUND_TO = 10;
 export const MULTIPLIER_STEP = 1;
 /** Вес черепа: чем больше, тем чаще он выпадает. */
 export const SKULL_WEIGHT = 8;
+/** Вес черепа в раунде с усилением «Меньше черепов». */
+export const REDUCED_SKULL_WEIGHT = 4;
 /** Сколько прокруток добавляет усиление «+2 прокрутки». */
 export const EXTRA_SPINS = 2;
 /** Во сколько раз «двойное забрать» увеличивает вносимый кон. */
@@ -42,7 +44,7 @@ export const SYMBOLS: SlotSymbol[] = [
 
 /** Усиление из магазина. Покупается за излишек, который остался после закрытия долга. */
 export interface PowerUp {
-  id: 'spins' | 'shield' | 'double';
+  id: 'spins' | 'shield' | 'fewerSkulls' | 'double';
   name: string; // название в магазине
   hint: string; // что делает, коротко
   price: number; // сколько стоит из излишка
@@ -55,6 +57,7 @@ export interface PowerUp {
 export const POWER_UPS: PowerUp[] = [
   { id: 'spins', name: `+${EXTRA_SPINS} прокрутки`, hint: 'в этом раунде', price: 10 },
   { id: 'shield', name: 'Щит от черепа', hint: 'один раз спасёт кон', price: 15 },
+  { id: 'fewerSkulls', name: 'Меньше черепов', hint: 'в этом раунде вдвое реже', price: 20 },
   { id: 'double', name: 'Двойное «забрать»', hint: `следующий кон ×${TAKE_BOOST}`, price: 30 },
 ];
 
@@ -73,23 +76,37 @@ export function isSkull(symbol: SlotSymbol): boolean {
   return symbol.id === 'skull';
 }
 
-/** Случайный символ с учётом весов. */
-export function randomSymbol(): SlotSymbol {
+/** Вес символа. Вес черепа передаём отдельно: усиление «Меньше черепов» уменьшает его на раунд. */
+function weightOf(symbol: SlotSymbol, skullWeight: number): number {
+  return isSkull(symbol) ? skullWeight : symbol.weight;
+}
+
+/** Случайный символ с учётом весов. skullWeight — вес черепа в этом раунде. */
+export function randomSymbol(skullWeight = SKULL_WEIGHT): SlotSymbol {
   let totalWeight = 0;
-  for (const symbol of SYMBOLS) totalWeight += symbol.weight;
+  for (const symbol of SYMBOLS) totalWeight += weightOf(symbol, skullWeight);
 
   // Бросаем число от 0 до суммы весов и смотрим, в чей отрезок оно попало.
   let roll = Math.random() * totalWeight;
   for (const symbol of SYMBOLS) {
-    if (roll < symbol.weight) return symbol;
-    roll -= symbol.weight;
+    const weight = weightOf(symbol, skullWeight);
+    if (roll < weight) return symbol;
+    roll -= weight;
   }
   return SYMBOLS[SYMBOLS.length - 1]; // сюда не дойдём, но TypeScript требует return
 }
 
 /** Прокрутка: на каждом из трёх барабанов независимо выпадает свой символ. */
-export function spinLine(): Line {
-  return [randomSymbol(), randomSymbol(), randomSymbol()];
+export function spinLine(skullWeight = SKULL_WEIGHT): Line {
+  return [randomSymbol(skullWeight), randomSymbol(skullWeight), randomSymbol(skullWeight)];
+}
+
+/** Шанс, что на линии будет хотя бы один череп (от 0 до 1): 1 − (шанс «не череп» на барабане)³. */
+export function skullLineChance(skullWeight: number): number {
+  let otherWeight = 0;
+  for (const symbol of SYMBOLS) if (!isSkull(symbol)) otherWeight += symbol.weight;
+  const noSkullOnReel = otherWeight / (otherWeight + skullWeight);
+  return 1 - noSkullOnReel ** 3;
 }
 
 /** Оценка линии строго по порядку: череп → три одинаковых → пара → ничего. */
@@ -122,9 +139,4 @@ export function multiplierForStreak(streak: number): number {
 /** Сколько прокрутка кладёт на кон: выигрыш из таблицы × множитель, округлённый до целого. */
 export function winWithMultiplier(win: number, multiplier: number): number {
   return Math.round(win * multiplier);
-}
-
-/** Цена самого дешёвого усиления: если излишек меньше, магазин не открывается. */
-export function cheapestPowerUpPrice(): number {
-  return Math.min(...POWER_UPS.map((powerUp) => powerUp.price));
 }
