@@ -33,6 +33,8 @@ import {
   drawPlaque,
   LAMP_OFF,
   LEVER_ICON,
+  SHIELD_ICON,
+  SKULL_DOWN_ICON,
 } from './decor';
 
 // Раскладка экрана 960×640.
@@ -62,10 +64,13 @@ const BUTTON_HEIGHT = 84;
 const BUTTON_PRESS = 6; // на сколько px кнопка вдавливается (столько же видно её тени)
 const SPIN_BUTTON_X = 310;
 const TAKE_BUTTON_X = 650;
-const SHOP_CARD_Y = 300;
-const SHOP_CARD_STEP = 232; // расстояние между центрами карточек магазина
-const SHOP_CARD_WIDTH = 220;
-const SHOP_CARD_HEIGHT = 150;
+const SHOP_Y = 330; // центр окна магазина
+const SHOP_WIDTH = 900;
+const SHOP_HEIGHT = 520;
+const SHOP_CARD_Y = 325;
+const SHOP_CARD_STEP = 214; // расстояние между центрами карточек магазина
+const SHOP_CARD_WIDTH = 200;
+const SHOP_CARD_HEIGHT = 210;
 
 // Анимация прокрутки: время в мс, расстояние в px.
 const FLICKER_DELAY = 60; // как часто меняется символ, пока барабан крутится
@@ -105,6 +110,7 @@ const WIN_BORDER = 0xfde047;
 const SHIELD_BORDER = 0x60a5fa;
 const SPIN_COLOR = 0xea580c;
 const BUTTON_BORDER = 0xfbbf24;
+const CARD_BORDER = 0x475569;
 const TAKE_COLOR = 0x16a34a;
 const DEBT_BAR_COLOR = 0x22c55e;
 const GOLD_TEXT = '#fde047';
@@ -127,12 +133,13 @@ interface Button {
   y: number;
 }
 
-/** Всё, из чего нарисован магазин: прямоугольники, надписи, картинки-монетки и кнопка. */
-type ShopPart =
-  | Phaser.GameObjects.Rectangle
-  | Phaser.GameObjects.Text
-  | Phaser.GameObjects.Image
-  | Phaser.GameObjects.Container;
+/** Иконка каждого усиления в магазине (нарисованы кодом в decor.ts). */
+const POWER_UP_ICONS: Record<PowerUp['id'], string> = {
+  spins: LEVER_ICON,
+  shield: SHIELD_ICON,
+  fewerSkulls: SKULL_DOWN_ICON,
+  double: COINS_ICON,
+};
 
 /** «+12» или, если множитель больше 1, «+4 ×3 = +12». */
 function formatWin(win: number, multiplier: number, gain: number): string {
@@ -214,7 +221,7 @@ export class GameScene extends Phaser.Scene {
   private potText!: Phaser.GameObjects.Text;
   private spinButton!: Button;
   private takeButton!: Button;
-  private shopParts: ShopPart[] = []; // всё, что нарисовано в магазине
+  private shopLayer?: Phaser.GameObjects.Container; // магазин целиком: всё, что в нём нарисовано
 
   constructor() {
     super('GameScene');
@@ -877,78 +884,136 @@ export class GameScene extends Phaser.Scene {
     this.drawShop();
   }
 
-  /** Нарисовать магазин заново: после каждой покупки меняются излишек и карточки. */
+  /** Нарисовать магазин заново (после покупки меняются излишек и карточки). Всё лежит в одном контейнере-слое. */
   private drawShop(): void {
     this.clearShop();
-    const shade = this.add.rectangle(CENTER_X, CENTER_Y, 960, 640, 0x000000, 0.9);
-    shade.setInteractive(); // ловит клики, чтобы кнопки под магазином не нажимались
-    const title = this.addText(CENTER_X, 116, 'МАГАЗИН', {
-      fontSize: '34px',
-      fontStyle: 'bold',
-      color: GOLD_TEXT,
-    }).setOrigin(0.5);
-    const info = this.addText(CENTER_X, 166, this.shopInfoText(), { fontSize: '20px', color: '#e2e8f0' }).setOrigin(0.5);
-    const stock = this.addText(CENTER_X, 402, this.stockText(), { fontSize: '16px', color: BLUE_TEXT }).setOrigin(0.5);
-    const done = this.makeButton(CENTER_X, 460, TAKE_COLOR, 'Enter', () => this.closeShop());
-    done.label.setText('ДАЛЬШЕ');
+    const layer = this.add.container(0, 0).setDepth(SHOP_DEPTH);
+    this.shopLayer = layer;
+    const top = SHOP_Y - SHOP_HEIGHT / 2;
 
-    this.shopParts = [shade, title, info, stock, done.shadow, done.face];
-    POWER_UPS.forEach((powerUp, index) => this.drawShopCard(powerUp, index));
-    for (const part of this.shopParts) part.setDepth(SHOP_DEPTH);
+    const shade = this.add.rectangle(CENTER_X, CENTER_Y, 960, 640, 0x000000, 0.75);
+    shade.setInteractive(); // ловит клики, чтобы кнопки под магазином не нажимались
+    layer.add(shade);
+    layer.add(drawPanel(this, CENTER_X, SHOP_Y, SHOP_WIDTH, SHOP_HEIGHT));
+    layer.add(this.addText(CENTER_X, top + 18, 'МАГАЗИН', { fontSize: '20px', fontStyle: 'bold', color: GOLD_TEXT }).setOrigin(0.5));
+    layer.add(this.drawWallet(top + 64));
+    layer.add(this.addText(CENTER_X, top + 100, this.shopInfoText(), { fontSize: '16px', color: MUTED_TEXT }).setOrigin(0.5));
+    POWER_UPS.forEach((powerUp, index) => layer.add(this.drawShopCard(powerUp, index)));
+    layer.add(this.drawStock(top + 388));
+    const done = this.makeButton(CENTER_X, top + 456, TAKE_COLOR, 'Enter', () => this.closeShop());
+    done.label.setText('ДАЛЬШЕ');
+    layer.add([done.shadow, done.face]);
   }
 
-  /** Карточка усиления: клавиша в углу, название, что делает, цена монетками. Купленное — «КУПЛЕНО», недоступное — тусклое. */
-  private drawShopCard(powerUp: PowerUp, index: number): void {
+  /** «Кошелёк»: монетка и крупное число — сколько излишка можно потратить. Стоит по центру. */
+  private drawWallet(y: number): Phaser.GameObjects.Container {
+    const amount = this.addText(0, 0, String(this.paid), { fontSize: '34px', fontStyle: 'bold', color: GOLD_TEXT }).setOrigin(0, 0.5);
+    const coinSize = 32;
+    const gap = 10;
+    const width = coinSize + gap + amount.width;
+    const coin = this.add.image(-width / 2 + coinSize / 2, 0, COIN_TEXTURE).setScale(coinSize / 20);
+    amount.setX(-width / 2 + coinSize + gap);
+    return this.add.container(CENTER_X, y, [coin, amount]);
+  }
+
+  /** Карточка усиления: клавиша, иконка, название, подсказка и ценник. Наведение — подсветка, купленное — штамп. */
+  private drawShopCard(powerUp: PowerUp, index: number): Phaser.GameObjects.Container {
     const x = CENTER_X + (index - (POWER_UPS.length - 1) / 2) * SHOP_CARD_STEP; // карточки в ряд по центру
     const bought = this.boughtInShop.includes(powerUp.id);
     const available = this.canBuy(powerUp);
-    const card = this.add
-      .rectangle(x, SHOP_CARD_Y, SHOP_CARD_WIDTH, SHOP_CARD_HEIGHT, available ? 0x1e293b : 0x0f172a)
+    const halfWidth = SHOP_CARD_WIDTH / 2;
+    const halfHeight = SHOP_CARD_HEIGHT / 2;
+
+    // Всё рисуем относительно центра карточки и кладём в контейнер — так её можно увеличить целиком.
+    const bg = this.add
+      .rectangle(0, 0, SHOP_CARD_WIDTH, SHOP_CARD_HEIGHT, available ? 0x1e293b : 0x111827)
       .setRounded(16)
-      .setStrokeStyle(3, bought ? DEBT_BAR_COLOR : 0x475569);
-    card.setInteractive({ useHandCursor: true });
-    card.on('pointerdown', () => this.buyPowerUp(powerUp));
+      .setStrokeStyle(3, bought ? DEBT_BAR_COLOR : CARD_BORDER);
+    const keyCap = this.add
+      .rectangle(-halfWidth + 22, -halfHeight + 22, 24, 24, 0x0f172a)
+      .setRounded(5)
+      .setStrokeStyle(2, 0x64748b);
+    const keyLabel = this.addText(-halfWidth + 22, -halfHeight + 22, String(index + 1), {
+      fontSize: '14px',
+      fontStyle: 'bold',
+    }).setOrigin(0.5);
+    const icon = this.add.image(0, -halfHeight + 58, POWER_UP_ICONS[powerUp.id]).setScale(1.4);
+    const name = this.addText(0, -halfHeight + 108, powerUp.name, { fontSize: '17px', fontStyle: 'bold' }).setOrigin(0.5);
+    const hint = this.addText(0, -halfHeight + 134, powerUp.hint, { fontSize: '14px', color: MUTED_TEXT }).setOrigin(0.5);
+    // Ценник: тёмная «таблетка» с монеткой и ценой.
+    const tag = this.add.rectangle(0, halfHeight - 30, 96, 32, 0x0b1120).setRounded(16).setStrokeStyle(2, 0xb45309);
+    const coin = this.add.image(-22, halfHeight - 30, COIN_TEXTURE);
+    const price = this.addText(12, halfHeight - 30, String(powerUp.price), {
+      fontSize: '20px',
+      fontStyle: 'bold',
+      color: GOLD_TEXT,
+    }).setOrigin(0.5);
+    const card = this.add.container(x, SHOP_CARD_Y, [bg, keyCap, keyLabel, icon, name, hint, tag, coin, price]);
 
-    // Клавиша — маленькая «кнопка клавиатуры» в левом верхнем углу.
-    const keyX = x - SHOP_CARD_WIDTH / 2 + 22;
-    const keyY = SHOP_CARD_Y - SHOP_CARD_HEIGHT / 2 + 22;
-    const keyCap = this.add.rectangle(keyX, keyY, 24, 24, 0x0f172a).setRounded(5).setStrokeStyle(2, 0x64748b);
-    const keyLabel = this.addText(keyX, keyY, String(index + 1), { fontSize: '14px', fontStyle: 'bold' }).setOrigin(0.5);
-
-    const name = this.addText(x, SHOP_CARD_Y - 22, powerUp.name, { fontSize: '19px', fontStyle: 'bold' }).setOrigin(0.5);
-    const hint = this.addText(x, SHOP_CARD_Y + 6, powerUp.hint, { fontSize: '15px', color: MUTED_TEXT }).setOrigin(0.5);
-    const parts: ShopPart[] = [card, keyCap, keyLabel, name, hint];
     if (bought) {
-      parts.push(this.addText(x, SHOP_CARD_Y + 44, 'КУПЛЕНО', { fontSize: '16px', color: GREEN_TEXT }).setOrigin(0.5));
-    } else {
-      // Цена: монетка и число рядом.
-      parts.push(this.add.image(x - 14, SHOP_CARD_Y + 44, COIN_TEXTURE));
-      parts.push(this.addText(x + 12, SHOP_CARD_Y + 44, String(powerUp.price), {
-        fontSize: '20px',
-        fontStyle: 'bold',
-        color: GOLD_TEXT,
-      }).setOrigin(0.5));
+      for (const part of [icon, name, hint, tag, coin, price]) part.setAlpha(0.5);
+      card.add(this.drawBoughtStamp());
+    } else if (!available) {
+      for (const part of [keyLabel, icon, name, hint, coin, price]) part.setAlpha(0.35);
     }
 
-    if (!available && !bought) for (const part of parts.slice(1)) part.setAlpha(0.35); // сама карточка не прозрачная
-    this.shopParts.push(...parts);
+    bg.setInteractive({ useHandCursor: available });
+    bg.on('pointerdown', () => this.buyPowerUp(powerUp));
+    if (available) {
+      // Наведение мышью: карточка чуть больше, рамка золотая.
+      bg.on('pointerover', () => {
+        card.setScale(1.05);
+        bg.setStrokeStyle(3, BUTTON_BORDER);
+      });
+      bg.on('pointerout', () => {
+        card.setScale(1);
+        bg.setStrokeStyle(3, CARD_BORDER);
+      });
+    }
+    return card;
   }
 
-  /** Что будет с излишком — строка под заголовком магазина. */
+  /** Штамп «КУПЛЕНО» поверх карточки — наклонённый, как печать. */
+  private drawBoughtStamp(): Phaser.GameObjects.Text {
+    return this.addText(0, -6, 'КУПЛЕНО', {
+      fontSize: '26px',
+      fontStyle: 'bold',
+      color: GREEN_TEXT,
+      stroke: '#052e16',
+      strokeThickness: 6,
+    })
+      .setOrigin(0.5)
+      .setAngle(-14);
+  }
+
+  /** Что будет с излишком — строка под «кошельком». */
   private shopInfoText(): string {
     if (this.paid === 0) return 'Излишка нет — переплати долг, чтобы покупать';
-    if (this.isDebtPaid()) return `Излишек: ${this.paid} — закроет и долг ${this.debt}`;
-    return `Излишек: ${this.paid} — остаток уйдёт в долг`;
+    if (this.isDebtPaid()) return `Излишка хватит и на новый долг ${this.debt}`;
+    return 'Что не потратишь — уйдёт в долг';
   }
 
-  /** Что уже лежит в запасе: бонусы не пропадают, даже если долги закрываются один за другим. */
-  private stockText(): string {
-    const items: string[] = [];
-    if (this.bonusSpins > 0) items.push(`прокрутки: +${this.bonusSpins}`);
-    if (this.fewerSkullRounds > 0) items.push(`меньше черепов: ${this.fewerSkullRounds}`);
-    if (this.shields > 0) items.push(`щит: ${this.shields}`);
-    if (this.doubleTakes > 0) items.push(`забрать ×${TAKE_BOOST}: ${this.doubleTakes}`);
-    return items.length > 0 ? `В запасе — ${items.join(' · ')}` : '';
+  /** Запас бонусов иконками: что куплено и ещё не сработало. Бонусы не пропадают, даже если долги закрываются подряд. */
+  private drawStock(y: number): Phaser.GameObjects.Container {
+    const row = this.add.container(CENTER_X, y);
+    const items: [string, string][] = [];
+    if (this.bonusSpins > 0) items.push([LEVER_ICON, `+${this.bonusSpins}`]);
+    if (this.shields > 0) items.push([SHIELD_ICON, `×${this.shields}`]);
+    if (this.fewerSkullRounds > 0) items.push([SKULL_DOWN_ICON, `×${this.fewerSkullRounds}`]);
+    if (this.doubleTakes > 0) items.push([COINS_ICON, `×${this.doubleTakes}`]);
+    if (items.length === 0) return row;
+
+    const label = this.addText(0, 0, 'В запасе:', { fontSize: '16px', color: MUTED_TEXT }).setOrigin(1, 0.5);
+    row.add(label);
+    let x = 14;
+    for (const [icon, count] of items) {
+      row.add(this.add.image(x + 14, 0, icon).setScale(0.75));
+      const text = this.addText(x + 32, 0, count, { fontSize: '17px', fontStyle: 'bold' }).setOrigin(0, 0.5);
+      row.add(text);
+      x += 32 + text.width + 16;
+    }
+    row.setX(CENTER_X - (x - label.width) / 2); // весь ряд — по центру
+    return row;
   }
 
   /** Можно ли купить: магазин открыт, это усиление в этот заход ещё не брали и излишка хватает. */
@@ -984,9 +1049,9 @@ export class GameScene extends Phaser.Scene {
     this.refreshHud();
   }
 
-  /** Убрать всё, что нарисовано в магазине. */
+  /** Убрать магазин: контейнер-слой удаляется вместе со всем, что в нём лежит. */
   private clearShop(): void {
-    for (const part of this.shopParts) part.destroy();
-    this.shopParts = [];
+    this.shopLayer?.destroy();
+    this.shopLayer = undefined;
   }
 }
