@@ -20,11 +20,12 @@ import {
   type PowerUp,
   type SlotSymbol,
 } from './rules';
+import { COIN_TEXTURE, createCoinTexture, createLamps, drawBackground, drawCabinet, LAMP_OFF } from './decor';
 
 // Раскладка экрана 960×640.
 const CENTER_X = 480;
 const CENTER_Y = 320;
-const PANEL_X = 30; // левый край левой панели
+const PANEL_X = 24; // левый край левой панели
 const PAYTABLE_X = 760; // левый край таблицы выплат
 const PAIR_COLUMN_X = 850;
 const THREE_COLUMN_X = 905;
@@ -34,11 +35,14 @@ const DEBT_BAR_HEIGHT = 30;
 const REEL_XS = [310, 480, 650]; // центры трёх барабанов
 const REEL_Y = 250;
 const REEL_SIZE = 150;
+const CABINET_WIDTH = 520; // корпус автомата вокруг барабанов
+const CABINET_HEIGHT = 186;
 const MESSAGE_Y = 362;
 const POT_Y = 404;
 const BUTTON_Y = 545;
 const BUTTON_WIDTH = 320;
 const BUTTON_HEIGHT = 84;
+const BUTTON_PRESS = 6; // на сколько px кнопка вдавливается (столько же видно её тени)
 const SPIN_BUTTON_X = 310;
 const TAKE_BUTTON_X = 650;
 const SHOP_CARD_Y = 300;
@@ -58,10 +62,19 @@ const DEBT_CLOSED_TIME = 1000; // сколько держится «ДОЛГ З�
 const GAME_OVER_DELAY = 700; // пауза перед экраном проигрыша, чтобы увидеть последнюю прокрутку
 const RESTART_SPACE_DELAY = 800; // Пробел перезапускает игру не раньше, чем через столько
 
+// Лампочки на корпусе.
+const LAMP_TICK = 90; // как часто обновляются лампочки, мс
+const LAMP_IDLE_SPEED = 4; // в покое огонёк сдвигается раз в 4 тика, при событиях — каждый тик
+const LAMP_GOLD = 0xfde047;
+const LAMP_RED = 0xef4444;
+const LAMP_BLUE = 0x60a5fa;
+const LAMP_GREEN = 0x4ade80;
+
 const LOW_SPINS = 3; // столько прокруток или меньше — счётчик красный
 const RECORD_KEY = 'dolgovaya-yama-record'; // ключ рекорда в localStorage
 
 // Слои: чем больше число, тем выше лежит объект.
+const COIN_DEPTH = 5;
 const POPUP_DEPTH = 10;
 const BANNER_DEPTH = 20;
 const SHOP_DEPTH = 25;
@@ -85,10 +98,12 @@ const MUTED_TEXT = '#94a3b8';
 // Всплывающие надписи жирные и с тёмной обводкой, чтобы читались поверх барабанов.
 const POPUP_STYLE = { fontSize: '36px', fontStyle: 'bold', stroke: '#0f172a', strokeThickness: 6 };
 
-/** Кнопка: прямоугольник и надпись поверх него. */
+/** Кнопка: тень, прямоугольник и надпись поверх него. y — где кнопка стоит, когда не нажата. */
 interface Button {
+  shadow: Phaser.GameObjects.Rectangle;
   box: Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
+  y: number;
 }
 
 /** «+12» или, если множитель больше 1, «+4 ×3 = +12». */
@@ -146,9 +161,18 @@ export class GameScene extends Phaser.Scene {
   private isGameOver = false; // прокрутки кончились, а долг не закрыт
   private canRestartWithSpace = false; // Пробел на экране проигрыша срабатывает не сразу
 
+  // Лампочки на корпусе автомата.
+  private lampTick = 0; // сколько раз лампочки уже обновились
+  private lampSpeed = LAMP_IDLE_SPEED; // через сколько тиков огонёк сдвигается
+  private lampColor = LAMP_GOLD; // каким цветом горят лампочки сейчас
+  private lampResetTimer?: Phaser.Time.TimerEvent; // когда вернуть лампочки в спокойный режим
+
   // Объекты на экране.
   private reelBoxes: Phaser.GameObjects.Rectangle[] = [];
   private reelSigns: Phaser.GameObjects.Text[] = [];
+  private reelGlares: Phaser.GameObjects.Rectangle[] = []; // блики «стекла» на барабанах
+  private lamps: Phaser.GameObjects.Arc[] = [];
+  private coinEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private debtBarFill!: Phaser.GameObjects.Rectangle;
   private debtText!: Phaser.GameObjects.Text;
   private roundText!: Phaser.GameObjects.Text;
@@ -169,13 +193,17 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.resetState();
+    drawBackground(this);
+    createCoinTexture(this);
     this.drawHeader();
     this.drawDebtBar();
     this.drawLeftPanel();
+    this.drawMachine();
     this.drawReels();
     this.drawPaytable();
     this.drawMessageAndPot();
     this.drawButtons();
+    this.createCoinEmitter();
     this.setupKeyboard();
     this.refreshHud();
   }
@@ -198,12 +226,23 @@ export class GameScene extends Phaser.Scene {
     this.isShopOpen = false;
     this.isGameOver = false;
     this.canRestartWithSpace = false;
+    this.lampTick = 0;
+    this.lampSpeed = LAMP_IDLE_SPEED;
+    this.lampColor = LAMP_GOLD;
+    this.lampResetTimer = undefined;
   }
 
   // ---------- Отрисовка ----------
 
   private drawHeader(): void {
-    this.addText(CENTER_X, 18, 'ДОЛГОВАЯ ЯМА', { fontSize: '30px', fontStyle: 'bold' }).setOrigin(0.5, 0);
+    this.addText(CENTER_X, 14, 'ДОЛГОВАЯ ЯМА', {
+      fontSize: '32px',
+      fontStyle: 'bold',
+      color: GOLD_TEXT,
+      stroke: '#7c2d12',
+      strokeThickness: 6,
+      shadow: { offsetY: 3, color: '#000000', fill: true, stroke: true },
+    }).setOrigin(0.5, 0);
     this.addText(CENTER_X, 58, 'Закрой долг, пока не кончились прокрутки. 💀 сжигает всё, что на кону.', {
       fontSize: '17px',
       color: '#cbd5e1',
@@ -233,14 +272,22 @@ export class GameScene extends Phaser.Scene {
     this.spinsText = this.addText(PANEL_X, 230, '', { fontSize: '22px' });
     this.recordText = this.addText(PANEL_X, 266, '', { fontSize: '20px', color: MUTED_TEXT });
     // Купленные усиления: видны, только пока они есть.
-    this.skullChanceText = this.addText(PANEL_X, 306, '', { fontSize: '17px', color: VIOLET_TEXT });
-    this.shieldText = this.addText(PANEL_X, 330, '', { fontSize: '17px', color: BLUE_TEXT });
-    this.doubleText = this.addText(PANEL_X, 354, '', { fontSize: '17px', color: GREEN_TEXT });
+    this.skullChanceText = this.addText(PANEL_X, 306, '', { fontSize: '16px', color: VIOLET_TEXT });
+    this.shieldText = this.addText(PANEL_X, 330, '', { fontSize: '16px', color: BLUE_TEXT });
+    this.doubleText = this.addText(PANEL_X, 354, '', { fontSize: '16px', color: GREEN_TEXT });
+  }
+
+  /** Корпус автомата и лампочки вокруг барабанов. Лампочки обновляются по таймеру. */
+  private drawMachine(): void {
+    drawCabinet(this, CENTER_X, REEL_Y, CABINET_WIDTH, CABINET_HEIGHT);
+    this.lamps = createLamps(this, CENTER_X, REEL_Y, CABINET_WIDTH, CABINET_HEIGHT);
+    this.time.addEvent({ delay: LAMP_TICK, loop: true, callback: () => this.tickLamps() });
   }
 
   private drawReels(): void {
     this.reelBoxes = [];
     this.reelSigns = [];
+    this.reelGlares = [];
     for (const x of REEL_XS) {
       this.reelBoxes.push(this.add.rectangle(x, REEL_Y, REEL_SIZE, REEL_SIZE).setRounded(18));
       this.reelSigns.push(
@@ -251,6 +298,8 @@ export class GameScene extends Phaser.Scene {
           shadow: { offsetY: 4, blur: 8, color: 'rgba(0, 0, 0, 0.45)', fill: true }, // символ не сливается с фоном
         }).setOrigin(0.5),
       );
+      // Блик «стекла» в верхней части барабана.
+      this.reelGlares.push(this.add.rectangle(x, REEL_Y - 50, REEL_SIZE - 24, 28, 0xffffff, 0.08).setRounded(12));
     }
     // Пока не крутили — на барабанах первые три символа.
     for (let reel = 0; reel < REEL_XS.length; reel++) this.showSymbol(reel, SYMBOLS[reel]);
@@ -299,13 +348,22 @@ export class GameScene extends Phaser.Scene {
     this.takeButton = this.makeButton(TAKE_BUTTON_X, BUTTON_Y, TAKE_COLOR, () => this.take());
   }
 
-  /** Большая кнопка: нажимается и мышью, и пальцем. */
+  /** Большая объёмная кнопка: под ней тень, нажимается и мышью, и пальцем. */
   private makeButton(x: number, y: number, color: number, onPress: () => void): Button {
+    const shadow = this.add.rectangle(x, y + BUTTON_PRESS, BUTTON_WIDTH, BUTTON_HEIGHT, 0x000000, 0.45).setRounded(16);
     const box = this.add.rectangle(x, y, BUTTON_WIDTH, BUTTON_HEIGHT, color).setRounded(16);
     box.setInteractive({ useHandCursor: true });
     box.on('pointerdown', onPress);
     const label = this.addText(x, y, '', { fontSize: '21px', fontStyle: 'bold' }).setOrigin(0.5);
-    return { box, label };
+    return { shadow, box, label, y };
+  }
+
+  /** Кнопка «вдавливается»: опускается на свою тень и возвращается. */
+  private pressButton(button: Button): void {
+    this.tweens.killTweensOf([button.box, button.label]);
+    button.box.y = button.y;
+    button.label.y = button.y;
+    this.tweens.add({ targets: [button.box, button.label], y: button.y + BUTTON_PRESS, duration: 70, yoyo: true });
   }
 
   /** this.add.text с нашим шрифтом (в нём есть шрифты эмодзи). */
@@ -359,11 +417,50 @@ export class GameScene extends Phaser.Scene {
   /** Недоступная кнопка затемнена. Сами действия всё равно проверяют, можно ли их сделать. */
   private setButtonEnabled(button: Button, enabled: boolean): void {
     const alpha = enabled ? 1 : 0.35;
+    button.shadow.setAlpha(alpha);
     button.box.setAlpha(alpha);
     button.label.setAlpha(alpha);
   }
 
   // ---------- Обратная связь ----------
+
+  /** Огоньки бегут по лампочкам: горит каждая третья, огонёк сдвигается раз в lampSpeed тиков. */
+  private tickLamps(): void {
+    this.lampTick += 1;
+    const shift = Math.floor(this.lampTick / this.lampSpeed);
+    this.lamps.forEach((lamp, index) => lamp.setFillStyle((index + shift) % 3 === 0 ? this.lampColor : LAMP_OFF));
+  }
+
+  /** На время перекрасить лампочки и пустить огоньки быстрее: выигрыш, череп, щит, закрытый долг. */
+  private flashLamps(color: number, duration: number): void {
+    this.lampColor = color;
+    this.lampSpeed = 1;
+    this.lampResetTimer?.remove();
+    this.lampResetTimer = this.time.delayedCall(duration, () => {
+      this.lampColor = LAMP_GOLD;
+      this.lampSpeed = LAMP_IDLE_SPEED;
+    });
+  }
+
+  /** Монетки-частицы: сами не летят, только по команде explode() — веером вверх, потом падают. */
+  private createCoinEmitter(): void {
+    this.coinEmitter = this.add
+      .particles(0, 0, COIN_TEXTURE, {
+        speed: { min: 180, max: 380 },
+        angle: { min: 210, max: 330 },
+        gravityY: 700,
+        lifespan: 1000,
+        scale: { start: 1, end: 0.5 },
+        rotate: { min: 0, max: 360 },
+        emitting: false,
+      })
+      .setDepth(COIN_DEPTH);
+  }
+
+  /** Монетки из барабанов: чем больше выигрыш, тем больше монет (но не больше 40). */
+  private burstCoins(gain: number): void {
+    this.coinEmitter.explode(Math.min(6 + Math.floor(gain / 5), 40), CENTER_X, REEL_Y);
+  }
 
   /** Надпись всплывает над барабанами: поднимается и тает. */
   private showPopup(text: string, color: string): void {
@@ -392,7 +489,10 @@ export class GameScene extends Phaser.Scene {
       alpha: { value: 0, delay: 350, duration: 150 },
       duration: 500,
       ease: 'Cubic.easeIn',
-      onComplete: () => label.destroy(),
+      onComplete: () => {
+        label.destroy();
+        this.coinEmitter.explode(8, CENTER_X, DEBT_BAR_Y); // монетки брызгают из полосы долга
+      },
     });
   }
 
@@ -418,6 +518,7 @@ export class GameScene extends Phaser.Scene {
 
   /** Крупное «ДОЛГ ЗАКРЫТ!» поверх барабанов: выскакивает и через DEBT_CLOSED_TIME тает. */
   private showDebtClosedBanner(): void {
+    this.flashLamps(LAMP_GREEN, DEBT_CLOSED_TIME);
     const strip = this.add.rectangle(CENTER_X, REEL_Y, 960, 150, 0x052e16, 0.92).setDepth(BANNER_DEPTH);
     const label = this.addText(CENTER_X, REEL_Y, 'ДОЛГ ЗАКРЫТ!', {
       fontSize: '72px',
@@ -461,7 +562,7 @@ export class GameScene extends Phaser.Scene {
     const restart = this.makeButton(CENTER_X, 430, SPIN_COLOR, () => this.restartGame());
     restart.label.setText('ЗАНОВО · R / Пробел');
 
-    const parts = [shade, title, score, record, restart.box, restart.label];
+    const parts = [shade, title, score, record, restart.shadow, restart.box, restart.label];
     for (const part of parts) part.setDepth(GAME_OVER_DEPTH).setAlpha(0);
     this.tweens.add({ targets: parts, alpha: 1, duration: 400 });
 
@@ -518,6 +619,7 @@ export class GameScene extends Phaser.Scene {
   /** Прокрутка: тратит одну прокрутку, барабаны мелькают и останавливаются по очереди. */
   private spin(): void {
     if (!this.canAct()) return;
+    this.pressButton(this.spinButton);
     this.isSpinning = true;
     this.spinsLeft -= 1;
     const multiplier = multiplierForStreak(this.streak); // множитель запоминаем до прокрутки
@@ -548,7 +650,7 @@ export class GameScene extends Phaser.Scene {
   /** Короткий подскок барабана при остановке. */
   private bounceReel(reel: number): void {
     this.tweens.add({
-      targets: [this.reelBoxes[reel], this.reelSigns[reel]],
+      targets: [this.reelBoxes[reel], this.reelSigns[reel], this.reelGlares[reel]],
       y: REEL_Y - BOUNCE_HEIGHT,
       duration: 90,
       ease: 'Quad.easeOut',
@@ -579,6 +681,7 @@ export class GameScene extends Phaser.Scene {
     this.streak = 0;
     this.highlightReels(result.reels, SKULL_BORDER);
     this.flashAndShake();
+    this.flashLamps(LAMP_RED, 700);
     this.messageText.setText(lost > 0 ? `💀 Кон сгорел: −${lost}` : '💀 Череп! Множитель снова ×1');
   }
 
@@ -593,6 +696,7 @@ export class GameScene extends Phaser.Scene {
     this.streak += 1; // череп стал пустой прокруткой
     this.highlightReels(result.reels, SHIELD_BORDER);
     this.showPopup('ЩИТ!', BLUE_TEXT);
+    this.flashLamps(LAMP_BLUE, 700);
     this.messageText.setText(`Щит спас кон ${this.pot}! Следующая ×${multiplierForStreak(this.streak)}`);
   }
 
@@ -610,6 +714,8 @@ export class GameScene extends Phaser.Scene {
     this.messageText.setText(`${combo} ${sign}: ${winText} на кон`);
     this.highlightReels(result.reels, WIN_BORDER);
     this.showPopup(winText, GOLD_TEXT);
+    this.burstCoins(gain);
+    this.flashLamps(LAMP_GOLD, 900);
     this.pulsePot();
   }
 
@@ -618,6 +724,7 @@ export class GameScene extends Phaser.Scene {
   /** «Забрать»: кон уходит в долг. Бесплатно, но множитель снова ×1. */
   private take(): void {
     if (!this.canAct() || this.pot === 0) return;
+    this.pressButton(this.takeButton);
     this.payPot();
     if (this.isDebtPaid()) this.closeDebt();
     this.refreshHud();
@@ -724,7 +831,7 @@ export class GameScene extends Phaser.Scene {
     const done = this.makeButton(CENTER_X, 460, TAKE_COLOR, () => this.closeShop());
     done.label.setText('ДАЛЬШЕ · Enter');
 
-    this.shopParts = [shade, title, info, rule, stock, done.box, done.label];
+    this.shopParts = [shade, title, info, rule, stock, done.shadow, done.box, done.label];
     POWER_UPS.forEach((powerUp, index) => this.drawShopCard(powerUp, index));
     for (const part of this.shopParts) part.setDepth(SHOP_DEPTH);
   }
