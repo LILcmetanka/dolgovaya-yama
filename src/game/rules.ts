@@ -55,9 +55,9 @@ export interface PowerUp {
  * но и оставить излишек в счёт нового долга — тоже нормальный выбор.
  */
 export const POWER_UPS: PowerUp[] = [
-  { id: 'spins', name: `+${EXTRA_SPINS} прокрутки`, hint: 'в этом раунде', price: 10 },
-  { id: 'shield', name: 'Щит от черепа', hint: 'один раз спасёт кон', price: 15 },
-  { id: 'fewerSkulls', name: 'Меньше черепов', hint: 'в этом раунде вдвое реже', price: 20 },
+  { id: 'spins', name: `+${EXTRA_SPINS} прокрутки`, hint: 'на раунд', price: 10 },
+  { id: 'shield', name: 'Щит от черепа', hint: 'спасёт кон 1 раз', price: 15 },
+  { id: 'fewerSkulls', name: 'Меньше черепов', hint: 'вдвое реже на раунд', price: 20 },
   { id: 'double', name: 'Двойное «забрать»', hint: `следующий кон ×${TAKE_BOOST}`, price: 30 },
 ];
 

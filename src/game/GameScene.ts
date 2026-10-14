@@ -106,6 +106,9 @@ interface Button {
   y: number;
 }
 
+/** Всё, из чего нарисован магазин: прямоугольники, надписи и картинки-монетки. */
+type ShopPart = Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Image;
+
 /** «+12» или, если множитель больше 1, «+4 ×3 = +12». */
 function formatWin(win: number, multiplier: number, gain: number): string {
   return multiplier > 1 ? `+${win} ×${multiplier} = +${gain}` : `+${gain}`;
@@ -185,7 +188,7 @@ export class GameScene extends Phaser.Scene {
   private potText!: Phaser.GameObjects.Text;
   private spinButton!: Button;
   private takeButton!: Button;
-  private shopParts: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = []; // всё, что нарисовано в магазине
+  private shopParts: ShopPart[] = []; // всё, что нарисовано в магазине
 
   constructor() {
     super('GameScene');
@@ -243,7 +246,7 @@ export class GameScene extends Phaser.Scene {
       strokeThickness: 6,
       shadow: { offsetY: 3, color: '#000000', fill: true, stroke: true },
     }).setOrigin(0.5, 0);
-    this.addText(CENTER_X, 58, 'Закрой долг, пока не кончились прокрутки. 💀 сжигает всё, что на кону.', {
+    this.addText(CENTER_X, 58, 'Закрой долг, пока есть прокрутки. 💀 сжигает кон.', {
       fontSize: '17px',
       color: '#cbd5e1',
     }).setOrigin(0.5, 0);
@@ -332,7 +335,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawMessageAndPot(): void {
-    this.messageText = this.addText(CENTER_X, MESSAGE_Y, 'Крути! Выигрыши копятся на кону', {
+    this.messageText = this.addText(CENTER_X, MESSAGE_Y, 'Выигрыши копятся на кону', {
       fontSize: '22px',
       color: '#e2e8f0',
     }).setOrigin(0.5);
@@ -391,9 +394,9 @@ export class GameScene extends Phaser.Scene {
     this.spinsText.setColor(this.spinsLeft <= LOW_SPINS ? RED_TEXT : '#ffffff');
     this.recordText.setText(`Рекорд: ${this.record}`);
     const skullChance = Math.round(100 * skullLineChance(this.skullWeight));
-    this.skullChanceText.setText(`Шанс черепа: ${skullChance}%`).setVisible(this.skullWeight < SKULL_WEIGHT);
-    this.shieldText.setText(`Щит от черепа: ${this.shields}`).setVisible(this.shields > 0);
-    this.doubleText.setText(`Двойное «забрать»: ${this.doubleTakes}`).setVisible(this.doubleTakes > 0);
+    this.skullChanceText.setText(`Череп: ${skullChance}%`).setVisible(this.skullWeight < SKULL_WEIGHT);
+    this.shieldText.setText(`Щит: ${this.shields}`).setVisible(this.shields > 0);
+    this.doubleText.setText(`Забрать ×${TAKE_BOOST}: ${this.doubleTakes}`).setVisible(this.doubleTakes > 0);
     this.potText.setText(`НА КОНУ: ${this.pot}`);
     this.spinButton.label.setText(`КРУТИТЬ ×${multiplierForStreak(this.streak)} · Пробел`);
     this.takeButton.label.setText(this.takeLabel());
@@ -623,7 +626,7 @@ export class GameScene extends Phaser.Scene {
     this.isSpinning = true;
     this.spinsLeft -= 1;
     const multiplier = multiplierForStreak(this.streak); // множитель запоминаем до прокрутки
-    this.messageText.setText(`Крутим… ×${multiplier}`);
+    this.messageText.setText(''); // пока крутится, строка пустая — смотрим на барабаны
     this.refreshHud();
 
     const line = spinLine(this.skullWeight); // результат известен сразу, анимация только показывает его
@@ -682,7 +685,7 @@ export class GameScene extends Phaser.Scene {
     this.highlightReels(result.reels, SKULL_BORDER);
     this.flashAndShake();
     this.flashLamps(LAMP_RED, 700);
-    this.messageText.setText(lost > 0 ? `💀 Кон сгорел: −${lost}` : '💀 Череп! Множитель снова ×1');
+    this.messageText.setText(lost > 0 ? `💀 Кон сгорел: −${lost}` : '💀 Череп!');
   }
 
   /** Щит срабатывает, только если есть что спасать: щит в запасе и кон не пуст. */
@@ -697,13 +700,13 @@ export class GameScene extends Phaser.Scene {
     this.highlightReels(result.reels, SHIELD_BORDER);
     this.showPopup('ЩИТ!', BLUE_TEXT);
     this.flashLamps(LAMP_BLUE, 700);
-    this.messageText.setText(`Щит спас кон ${this.pot}! Следующая ×${multiplierForStreak(this.streak)}`);
+    this.messageText.setText('Щит спас кон!');
   }
 
   /** Выигрыш × множитель идёт на кон. */
   private addToPot(line: Line, result: LineResult, multiplier: number): void {
     if (result.kind === 'nothing') {
-      this.messageText.setText(`Пусто. Следующая прокрутка ×${multiplierForStreak(this.streak)}`);
+      this.messageText.setText('Пусто'); // множитель следующей прокрутки виден на кнопке
       return;
     }
     const gain = winWithMultiplier(result.win, multiplier);
@@ -711,7 +714,7 @@ export class GameScene extends Phaser.Scene {
     const winText = formatWin(result.win, multiplier, gain);
     const combo = result.kind === 'three' ? 'Три' : 'Пара';
     const sign = line[result.reels[0]].sign;
-    this.messageText.setText(`${combo} ${sign}: ${winText} на кон`);
+    this.messageText.setText(`${combo} ${sign}!`); // сумма всплывает над барабанами
     this.highlightReels(result.reels, WIN_BORDER);
     this.showPopup(winText, GOLD_TEXT);
     this.burstCoins(gain);
@@ -817,26 +820,22 @@ export class GameScene extends Phaser.Scene {
     this.clearShop();
     const shade = this.add.rectangle(CENTER_X, CENTER_Y, 960, 640, 0x000000, 0.9);
     shade.setInteractive(); // ловит клики, чтобы кнопки под магазином не нажимались
-    const title = this.addText(CENTER_X, 110, 'МАГАЗИН УСИЛЕНИЙ', {
+    const title = this.addText(CENTER_X, 116, 'МАГАЗИН', {
       fontSize: '34px',
       fontStyle: 'bold',
       color: GOLD_TEXT,
     }).setOrigin(0.5);
-    const info = this.addText(CENTER_X, 160, this.shopInfoText(), { fontSize: '20px', color: '#e2e8f0' }).setOrigin(0.5);
-    const rule = this.addText(CENTER_X, 192, 'Можно купить несколько — каждое по одному разу.', {
-      fontSize: '16px',
-      color: MUTED_TEXT,
-    }).setOrigin(0.5);
+    const info = this.addText(CENTER_X, 166, this.shopInfoText(), { fontSize: '20px', color: '#e2e8f0' }).setOrigin(0.5);
     const stock = this.addText(CENTER_X, 402, this.stockText(), { fontSize: '16px', color: BLUE_TEXT }).setOrigin(0.5);
     const done = this.makeButton(CENTER_X, 460, TAKE_COLOR, () => this.closeShop());
     done.label.setText('ДАЛЬШЕ · Enter');
 
-    this.shopParts = [shade, title, info, rule, stock, done.shadow, done.box, done.label];
+    this.shopParts = [shade, title, info, stock, done.shadow, done.box, done.label];
     POWER_UPS.forEach((powerUp, index) => this.drawShopCard(powerUp, index));
     for (const part of this.shopParts) part.setDepth(SHOP_DEPTH);
   }
 
-  /** Карточка усиления: название, что делает, цена и клавиша. Купленное — «КУПЛЕНО», недоступное — тусклое. */
+  /** Карточка усиления: клавиша в углу, название, что делает, цена монетками. Купленное — «КУПЛЕНО», недоступное — тусклое. */
   private drawShopCard(powerUp: PowerUp, index: number): void {
     const x = CENTER_X + (index - (POWER_UPS.length - 1) / 2) * SHOP_CARD_STEP; // карточки в ряд по центру
     const bought = this.boughtInShop.includes(powerUp.id);
@@ -847,32 +846,47 @@ export class GameScene extends Phaser.Scene {
       .setStrokeStyle(3, bought ? DEBT_BAR_COLOR : 0x475569);
     card.setInteractive({ useHandCursor: true });
     card.on('pointerdown', () => this.buyPowerUp(powerUp));
-    const name = this.addText(x, SHOP_CARD_Y - 40, powerUp.name, { fontSize: '19px', fontStyle: 'bold' }).setOrigin(0.5);
-    const hint = this.addText(x, SHOP_CARD_Y - 10, powerUp.hint, { fontSize: '14px', color: MUTED_TEXT }).setOrigin(0.5);
-    const price = this.addText(x, SHOP_CARD_Y + 36, bought ? 'КУПЛЕНО' : `Цена ${powerUp.price} · клавиша ${index + 1}`, {
-      fontSize: '16px',
-      color: bought ? GREEN_TEXT : GOLD_TEXT,
-    }).setOrigin(0.5);
 
-    if (!available && !bought) for (const text of [name, hint, price]) text.setAlpha(0.35);
-    this.shopParts.push(card, name, hint, price);
+    // Клавиша — маленькая «кнопка клавиатуры» в левом верхнем углу.
+    const keyX = x - SHOP_CARD_WIDTH / 2 + 22;
+    const keyY = SHOP_CARD_Y - SHOP_CARD_HEIGHT / 2 + 22;
+    const keyCap = this.add.rectangle(keyX, keyY, 24, 24, 0x0f172a).setRounded(5).setStrokeStyle(2, 0x64748b);
+    const keyLabel = this.addText(keyX, keyY, String(index + 1), { fontSize: '14px', fontStyle: 'bold' }).setOrigin(0.5);
+
+    const name = this.addText(x, SHOP_CARD_Y - 22, powerUp.name, { fontSize: '19px', fontStyle: 'bold' }).setOrigin(0.5);
+    const hint = this.addText(x, SHOP_CARD_Y + 6, powerUp.hint, { fontSize: '15px', color: MUTED_TEXT }).setOrigin(0.5);
+    const parts: ShopPart[] = [card, keyCap, keyLabel, name, hint];
+    if (bought) {
+      parts.push(this.addText(x, SHOP_CARD_Y + 44, 'КУПЛЕНО', { fontSize: '16px', color: GREEN_TEXT }).setOrigin(0.5));
+    } else {
+      // Цена: монетка и число рядом.
+      parts.push(this.add.image(x - 14, SHOP_CARD_Y + 44, COIN_TEXTURE));
+      parts.push(this.addText(x + 12, SHOP_CARD_Y + 44, String(powerUp.price), {
+        fontSize: '20px',
+        fontStyle: 'bold',
+        color: GOLD_TEXT,
+      }).setOrigin(0.5));
+    }
+
+    if (!available && !bought) for (const part of parts.slice(1)) part.setAlpha(0.35); // сама карточка не прозрачная
+    this.shopParts.push(...parts);
   }
 
   /** Что будет с излишком — строка под заголовком магазина. */
   private shopInfoText(): string {
-    if (this.paid === 0) return 'Излишка нет: усиления покупаются на переплату долга.';
-    if (this.isDebtPaid()) return `Излишка ${this.paid} хватит и на новый долг ${this.debt}. Или потрать его:`;
-    return `Излишек ${this.paid} пойдёт в новый долг ${this.debt}. Или потрать его:`;
+    if (this.paid === 0) return 'Излишка нет — переплати долг, чтобы покупать';
+    if (this.isDebtPaid()) return `Излишек: ${this.paid} — закроет и долг ${this.debt}`;
+    return `Излишек: ${this.paid} — остаток уйдёт в долг`;
   }
 
   /** Что уже лежит в запасе: бонусы не пропадают, даже если долги закрываются один за другим. */
   private stockText(): string {
     const items: string[] = [];
-    if (this.bonusSpins > 0) items.push(`+${this.bonusSpins} к прокруткам`);
-    if (this.fewerSkullRounds > 0) items.push(`меньше черепов ×${this.fewerSkullRounds}`);
-    if (this.shields > 0) items.push(`щит ×${this.shields}`);
-    if (this.doubleTakes > 0) items.push(`двойное «забрать» ×${this.doubleTakes}`);
-    return items.length > 0 ? `В запасе: ${items.join(' · ')}` : '';
+    if (this.bonusSpins > 0) items.push(`прокрутки: +${this.bonusSpins}`);
+    if (this.fewerSkullRounds > 0) items.push(`меньше черепов: ${this.fewerSkullRounds}`);
+    if (this.shields > 0) items.push(`щит: ${this.shields}`);
+    if (this.doubleTakes > 0) items.push(`забрать ×${TAKE_BOOST}: ${this.doubleTakes}`);
+    return items.length > 0 ? `В запасе — ${items.join(' · ')}` : '';
   }
 
   /** Можно ли купить: магазин открыт, это усиление в этот заход ещё не брали и излишка хватает. */
@@ -886,7 +900,6 @@ export class GameScene extends Phaser.Scene {
     this.paid -= powerUp.price;
     this.boughtInShop.push(powerUp.id);
     this.applyPowerUp(powerUp);
-    this.messageText.setText(`Куплено: ${powerUp.name} (−${powerUp.price})`);
     this.drawShop();
     this.refreshHud();
   }
