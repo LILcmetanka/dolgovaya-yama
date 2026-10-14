@@ -20,15 +20,32 @@ import {
   type PowerUp,
   type SlotSymbol,
 } from './rules';
-import { COIN_TEXTURE, createCoinTexture, createLamps, drawBackground, drawCabinet, LAMP_OFF } from './decor';
+import {
+  COIN_TEXTURE,
+  COINS_ICON,
+  createCoinTexture,
+  createIconTextures,
+  createLamps,
+  drawBackground,
+  drawCabinet,
+  drawMatchIcon,
+  drawPanel,
+  drawPlaque,
+  LAMP_OFF,
+  LEVER_ICON,
+} from './decor';
 
 // Раскладка экрана 960×640.
 const CENTER_X = 480;
 const CENTER_Y = 320;
-const PANEL_X = 24; // левый край левой панели
-const PAYTABLE_X = 760; // левый край таблицы выплат
-const PAIR_COLUMN_X = 850;
-const THREE_COLUMN_X = 905;
+const LEFT_PANEL_X = 113; // центр левой панели (раунд, прокрутки, рекорд)
+const RIGHT_PANEL_X = 848; // центр правой панели (выплаты)
+const PANEL_Y = 274;
+const PANEL_WIDTH = 194;
+const PANEL_HEIGHT = 212;
+const SWATCH_X = 772; // мини-барабаны в таблице выплат
+const PAIR_COLUMN_X = 862;
+const THREE_COLUMN_X = 912;
 const DEBT_BAR_Y = 108;
 const DEBT_BAR_WIDTH = 480;
 const DEBT_BAR_HEIGHT = 30;
@@ -86,7 +103,8 @@ const REEL_BORDER = 0xe2e8f0;
 const SKULL_BORDER = 0xef4444;
 const WIN_BORDER = 0xfde047;
 const SHIELD_BORDER = 0x60a5fa;
-const SPIN_COLOR = 0x2563eb;
+const SPIN_COLOR = 0xea580c;
+const BUTTON_BORDER = 0xfbbf24;
 const TAKE_COLOR = 0x16a34a;
 const DEBT_BAR_COLOR = 0x22c55e;
 const GOLD_TEXT = '#fde047';
@@ -98,16 +116,23 @@ const MUTED_TEXT = '#94a3b8';
 // Всплывающие надписи жирные и с тёмной обводкой, чтобы читались поверх барабанов.
 const POPUP_STYLE = { fontSize: '36px', fontStyle: 'bold', stroke: '#0f172a', strokeThickness: 6 };
 
-/** Кнопка: тень, прямоугольник и надпись поверх него. y — где кнопка стоит, когда не нажата. */
+/**
+ * Кнопка: тень стоит на месте, а «лицо» — контейнер с корпусом, бликом, иконкой и надписями.
+ * Контейнер двигает всё вместе: нажатие опускает лицо на тень. y — где кнопка стоит, когда не нажата.
+ */
 interface Button {
   shadow: Phaser.GameObjects.Rectangle;
-  box: Phaser.GameObjects.Rectangle;
+  face: Phaser.GameObjects.Container;
   label: Phaser.GameObjects.Text;
   y: number;
 }
 
-/** Всё, из чего нарисован магазин: прямоугольники, надписи и картинки-монетки. */
-type ShopPart = Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Image;
+/** Всё, из чего нарисован магазин: прямоугольники, надписи, картинки-монетки и кнопка. */
+type ShopPart =
+  | Phaser.GameObjects.Rectangle
+  | Phaser.GameObjects.Text
+  | Phaser.GameObjects.Image
+  | Phaser.GameObjects.Container;
 
 /** «+12» или, если множитель больше 1, «+4 ×3 = +12». */
 function formatWin(win: number, multiplier: number, gain: number): string {
@@ -177,6 +202,7 @@ export class GameScene extends Phaser.Scene {
   private lamps: Phaser.GameObjects.Arc[] = [];
   private coinEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private debtBarFill!: Phaser.GameObjects.Rectangle;
+  private debtBarShine!: Phaser.GameObjects.Rectangle; // светлый блик сверху заполнения
   private debtText!: Phaser.GameObjects.Text;
   private roundText!: Phaser.GameObjects.Text;
   private spinsText!: Phaser.GameObjects.Text;
@@ -198,6 +224,7 @@ export class GameScene extends Phaser.Scene {
     this.resetState();
     drawBackground(this);
     createCoinTexture(this);
+    createIconTextures(this);
     this.drawHeader();
     this.drawDebtBar();
     this.drawLeftPanel();
@@ -253,13 +280,19 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawDebtBar(): void {
-    const left = CENTER_X - DEBT_BAR_WIDTH / 2;
+    const innerWidth = DEBT_BAR_WIDTH - 8; // заполнение чуть уже рамки
+    const left = CENTER_X - innerWidth / 2;
     this.add
-      .rectangle(CENTER_X, DEBT_BAR_Y, DEBT_BAR_WIDTH, DEBT_BAR_HEIGHT, 0x1e293b)
-      .setStrokeStyle(2, 0x475569);
-    // Заполненная часть растёт от левого края: scaleX — доля внесённого (от 0 до 1).
+      .rectangle(CENTER_X, DEBT_BAR_Y, DEBT_BAR_WIDTH, DEBT_BAR_HEIGHT, 0x0b1120)
+      .setRounded(10)
+      .setStrokeStyle(3, 0xb45309);
+    // Заполненная часть растёт от левого края: scaleX — доля внесённого (от 0 до 1). Сверху на ней светлый блик.
     this.debtBarFill = this.add
-      .rectangle(left, DEBT_BAR_Y, DEBT_BAR_WIDTH, DEBT_BAR_HEIGHT, DEBT_BAR_COLOR)
+      .rectangle(left, DEBT_BAR_Y, innerWidth, DEBT_BAR_HEIGHT - 8, DEBT_BAR_COLOR)
+      .setOrigin(0, 0.5)
+      .setScale(0, 1);
+    this.debtBarShine = this.add
+      .rectangle(left, DEBT_BAR_Y - 5, innerWidth, 5, 0xffffff, 0.3)
       .setOrigin(0, 0.5)
       .setScale(0, 1);
     this.debtText = this.addText(CENTER_X, DEBT_BAR_Y, '', {
@@ -270,14 +303,22 @@ export class GameScene extends Phaser.Scene {
     }).setOrigin(0.5);
   }
 
+  /** Левая панель: в плашке номер раунда, ниже прокрутки, рекорд и купленные усиления. */
   private drawLeftPanel(): void {
-    this.roundText = this.addText(PANEL_X, 190, '', { fontSize: '26px', fontStyle: 'bold' });
-    this.spinsText = this.addText(PANEL_X, 230, '', { fontSize: '22px' });
-    this.recordText = this.addText(PANEL_X, 266, '', { fontSize: '20px', color: MUTED_TEXT });
+    drawPanel(this, LEFT_PANEL_X, PANEL_Y, PANEL_WIDTH, PANEL_HEIGHT);
+    const top = PANEL_Y - PANEL_HEIGHT / 2;
+    const textX = LEFT_PANEL_X - PANEL_WIDTH / 2 + 14;
+    this.roundText = this.addText(LEFT_PANEL_X, top + 18, '', {
+      fontSize: '18px',
+      fontStyle: 'bold',
+      color: GOLD_TEXT,
+    }).setOrigin(0.5);
+    this.spinsText = this.addText(textX, top + 44, '', { fontSize: '20px', fontStyle: 'bold' });
+    this.recordText = this.addText(textX, top + 76, '', { fontSize: '17px', color: MUTED_TEXT });
     // Купленные усиления: видны, только пока они есть.
-    this.skullChanceText = this.addText(PANEL_X, 306, '', { fontSize: '16px', color: VIOLET_TEXT });
-    this.shieldText = this.addText(PANEL_X, 330, '', { fontSize: '16px', color: BLUE_TEXT });
-    this.doubleText = this.addText(PANEL_X, 354, '', { fontSize: '16px', color: GREEN_TEXT });
+    this.skullChanceText = this.addText(textX, top + 116, '', { fontSize: '16px', color: VIOLET_TEXT });
+    this.shieldText = this.addText(textX, top + 140, '', { fontSize: '16px', color: BLUE_TEXT });
+    this.doubleText = this.addText(textX, top + 164, '', { fontSize: '16px', color: GREEN_TEXT });
   }
 
   /** Корпус автомата и лампочки вокруг барабанов. Лампочки обновляются по таймеру. */
@@ -308,30 +349,34 @@ export class GameScene extends Phaser.Scene {
     for (let reel = 0; reel < REEL_XS.length; reel++) this.showSymbol(reel, SYMBOLS[reel]);
   }
 
-  /** Таблица выплат справа: для каждого символа пара и три, для черепа — «кон сгорает». */
+  /** Таблица выплат справа: значки ■■ (пара) и ■■■ (три), строка на каждый символ, у черепа — «кон сгорает». */
   private drawPaytable(): void {
-    this.addText(PAYTABLE_X, 132, 'ВЫПЛАТЫ', { fontSize: '18px', fontStyle: 'bold' });
-    this.addText(PAIR_COLUMN_X, 160, 'пара', { fontSize: '15px', color: MUTED_TEXT }).setOrigin(0.5, 0);
-    this.addText(THREE_COLUMN_X, 160, 'три', { fontSize: '15px', color: MUTED_TEXT }).setOrigin(0.5, 0);
+    drawPanel(this, RIGHT_PANEL_X, PANEL_Y, PANEL_WIDTH, PANEL_HEIGHT);
+    const top = PANEL_Y - PANEL_HEIGHT / 2;
+    this.addText(RIGHT_PANEL_X, top + 18, 'ВЫПЛАТЫ', { fontSize: '18px', fontStyle: 'bold', color: GOLD_TEXT }).setOrigin(0.5);
+    drawMatchIcon(this, PAIR_COLUMN_X, top + 46, 2);
+    drawMatchIcon(this, THREE_COLUMN_X, top + 46, 3);
     SYMBOLS.forEach((symbol, row) => {
-      const y = 196 + row * 30;
-      this.drawSwatch(PAYTABLE_X + 14, y, symbol);
+      const y = top + 66 + row * 24;
+      if (row % 2 === 0) this.add.rectangle(RIGHT_PANEL_X, y, PANEL_WIDTH - 16, 22, 0xffffff, 0.05).setRounded(6);
+      this.drawSwatch(SWATCH_X, y, symbol);
       if (isSkull(symbol)) {
-        this.addText(PAYTABLE_X + 36, y, '— кон сгорает', {
-          fontSize: '17px',
-          color: RED_TEXT,
-        }).setOrigin(0, 0.5);
+        this.addText(SWATCH_X + 20, y, 'кон сгорает', { fontSize: '15px', color: RED_TEXT }).setOrigin(0, 0.5);
       } else {
-        this.addText(PAIR_COLUMN_X, y, String(symbol.pair), { fontSize: '18px' }).setOrigin(0.5);
-        this.addText(THREE_COLUMN_X, y, String(symbol.three), { fontSize: '18px' }).setOrigin(0.5);
+        this.addText(PAIR_COLUMN_X, y, String(symbol.pair), { fontSize: '16px' }).setOrigin(0.5);
+        this.addText(THREE_COLUMN_X, y, String(symbol.three), {
+          fontSize: '16px',
+          fontStyle: 'bold',
+          color: GOLD_TEXT,
+        }).setOrigin(0.5);
       }
     });
   }
 
   /** Маленький «барабан» для таблицы выплат: цвет фона, рамка и знак символа. */
   private drawSwatch(x: number, y: number, symbol: SlotSymbol): void {
-    this.add.rectangle(x, y, 28, 28, symbol.color).setRounded(6).setStrokeStyle(2, borderColor(symbol));
-    this.addText(x, y, symbol.sign, { fontSize: '17px', fontStyle: 'bold', padding: { y: 3 } }).setOrigin(0.5);
+    this.add.rectangle(x, y, 22, 22, symbol.color).setRounded(5).setStrokeStyle(2, borderColor(symbol));
+    this.addText(x, y, symbol.sign, { fontSize: '14px', fontStyle: 'bold', padding: { y: 3 } }).setOrigin(0.5);
   }
 
   private drawMessageAndPot(): void {
@@ -339,34 +384,51 @@ export class GameScene extends Phaser.Scene {
       fontSize: '22px',
       color: '#e2e8f0',
     }).setOrigin(0.5);
-    this.potText = this.addText(CENTER_X, POT_Y, '', {
-      fontSize: '32px',
+    // «НА КОНУ» — на табличке с монеткой слева.
+    drawPlaque(this, CENTER_X, POT_Y, 300, 46);
+    this.add.image(CENTER_X - 124, POT_Y, COIN_TEXTURE).setScale(1.3);
+    this.potText = this.addText(CENTER_X + 12, POT_Y, '', {
+      fontSize: '28px',
       fontStyle: 'bold',
       color: GOLD_TEXT,
     }).setOrigin(0.5);
   }
 
   private drawButtons(): void {
-    this.spinButton = this.makeButton(SPIN_BUTTON_X, BUTTON_Y, SPIN_COLOR, () => this.spin());
-    this.takeButton = this.makeButton(TAKE_BUTTON_X, BUTTON_Y, TAKE_COLOR, () => this.take());
+    this.spinButton = this.makeButton(SPIN_BUTTON_X, BUTTON_Y, SPIN_COLOR, 'Пробел', () => this.spin(), LEVER_ICON);
+    this.takeButton = this.makeButton(TAKE_BUTTON_X, BUTTON_Y, TAKE_COLOR, 'Enter', () => this.take(), COINS_ICON);
   }
 
-  /** Большая объёмная кнопка: под ней тень, нажимается и мышью, и пальцем. */
-  private makeButton(x: number, y: number, color: number, onPress: () => void): Button {
-    const shadow = this.add.rectangle(x, y + BUTTON_PRESS, BUTTON_WIDTH, BUTTON_HEIGHT, 0x000000, 0.45).setRounded(16);
-    const box = this.add.rectangle(x, y, BUTTON_WIDTH, BUTTON_HEIGHT, color).setRounded(16);
+  /**
+   * Большая кнопка автомата: тень, корпус с золотой рамкой, блик сверху, иконка (если есть),
+   * крупная надпись и под ней клавиша. Нажимается и мышью, и пальцем.
+   */
+  private makeButton(x: number, y: number, color: number, keyHint: string, onPress: () => void, icon?: string): Button {
+    const shadow = this.add.rectangle(x, y + BUTTON_PRESS, BUTTON_WIDTH, BUTTON_HEIGHT, 0x000000, 0.45).setRounded(18);
+    // Всё остальное рисуем относительно центра кнопки и кладём в контейнер.
+    const box = this.add.rectangle(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT, color).setRounded(18).setStrokeStyle(3, BUTTON_BORDER);
     box.setInteractive({ useHandCursor: true });
     box.on('pointerdown', onPress);
-    const label = this.addText(x, y, '', { fontSize: '21px', fontStyle: 'bold' }).setOrigin(0.5);
-    return { shadow, box, label, y };
+    const gloss = this.add.rectangle(0, -BUTTON_HEIGHT / 4, BUTTON_WIDTH - 16, BUTTON_HEIGHT / 2 - 8, 0xffffff, 0.16).setRounded(12);
+    const textX = icon ? 24 : 0; // с иконкой надписи сдвинуты вправо
+    const label = this.addText(textX, -9, '', {
+      fontSize: '24px',
+      fontStyle: 'bold',
+      stroke: 'rgba(0, 0, 0, 0.35)',
+      strokeThickness: 3,
+    }).setOrigin(0.5);
+    const key = this.addText(textX, 21, keyHint, { fontSize: '13px', color: 'rgba(255, 255, 255, 0.75)' }).setOrigin(0.5);
+    const parts: Phaser.GameObjects.GameObject[] = [box, gloss, label, key];
+    if (icon) parts.push(this.add.image(-BUTTON_WIDTH / 2 + 44, 0, icon));
+    const face = this.add.container(x, y, parts);
+    return { shadow, face, label, y };
   }
 
-  /** Кнопка «вдавливается»: опускается на свою тень и возвращается. */
+  /** Кнопка «вдавливается»: лицо опускается на тень и возвращается. */
   private pressButton(button: Button): void {
-    this.tweens.killTweensOf([button.box, button.label]);
-    button.box.y = button.y;
-    button.label.y = button.y;
-    this.tweens.add({ targets: [button.box, button.label], y: button.y + BUTTON_PRESS, duration: 70, yoyo: true });
+    this.tweens.killTweensOf(button.face);
+    button.face.y = button.y;
+    this.tweens.add({ targets: button.face, y: button.y + BUTTON_PRESS, duration: 70, yoyo: true });
   }
 
   /** this.add.text с нашим шрифтом (в нём есть шрифты эмодзи). */
@@ -389,7 +451,7 @@ export class GameScene extends Phaser.Scene {
   private refreshHud(): void {
     this.debtText.setText(`ДОЛГ ${this.paid} / ${this.debt}`);
     this.fillDebtBar(Math.min(this.paid / this.debt, 1));
-    this.roundText.setText(`Раунд ${this.round}`);
+    this.roundText.setText(`РАУНД ${this.round}`);
     this.spinsText.setText(`Прокрутки: ${this.spinsLeft}`);
     this.spinsText.setColor(this.spinsLeft <= LOW_SPINS ? RED_TEXT : '#ffffff');
     this.recordText.setText(`Рекорд: ${this.record}`);
@@ -398,7 +460,7 @@ export class GameScene extends Phaser.Scene {
     this.shieldText.setText(`Щит: ${this.shields}`).setVisible(this.shields > 0);
     this.doubleText.setText(`Забрать ×${TAKE_BOOST}: ${this.doubleTakes}`).setVisible(this.doubleTakes > 0);
     this.potText.setText(`НА КОНУ: ${this.pot}`);
-    this.spinButton.label.setText(`КРУТИТЬ ×${multiplierForStreak(this.streak)} · Пробел`);
+    this.spinButton.label.setText(`КРУТИТЬ ×${multiplierForStreak(this.streak)}`);
     this.takeButton.label.setText(this.takeLabel());
     this.setButtonEnabled(this.spinButton, this.canAct());
     this.setButtonEnabled(this.takeButton, this.canAct() && this.pot > 0);
@@ -407,22 +469,22 @@ export class GameScene extends Phaser.Scene {
   /** Надпись на кнопке «ЗАБРАТЬ»: сумма кона и ×2, если есть «двойное забрать». */
   private takeLabel(): string {
     const boost = this.doubleTakes > 0 ? ` ×${TAKE_BOOST}` : '';
-    return `ЗАБРАТЬ ${this.pot}${boost} · Enter`;
+    return `ЗАБРАТЬ ${this.pot}${boost}`;
   }
 
-  /** Полоса долга плавно доезжает до нужной доли (от 0 до 1). */
+  /** Полоса долга (и блик на ней) плавно доезжает до нужной доли (от 0 до 1). */
   private fillDebtBar(progress: number): void {
     if (this.debtBarFill.scaleX === progress) return;
-    this.tweens.killTweensOf(this.debtBarFill);
-    this.tweens.add({ targets: this.debtBarFill, scaleX: progress, duration: 400, ease: 'Cubic.easeOut' });
+    const parts = [this.debtBarFill, this.debtBarShine];
+    this.tweens.killTweensOf(parts);
+    this.tweens.add({ targets: parts, scaleX: progress, duration: 400, ease: 'Cubic.easeOut' });
   }
 
   /** Недоступная кнопка затемнена. Сами действия всё равно проверяют, можно ли их сделать. */
   private setButtonEnabled(button: Button, enabled: boolean): void {
     const alpha = enabled ? 1 : 0.35;
     button.shadow.setAlpha(alpha);
-    button.box.setAlpha(alpha);
-    button.label.setAlpha(alpha);
+    button.face.setAlpha(alpha);
   }
 
   // ---------- Обратная связь ----------
@@ -562,10 +624,10 @@ export class GameScene extends Phaser.Scene {
       fontSize: '24px',
       color: GOLD_TEXT,
     }).setOrigin(0.5);
-    const restart = this.makeButton(CENTER_X, 430, SPIN_COLOR, () => this.restartGame());
-    restart.label.setText('ЗАНОВО · R / Пробел');
+    const restart = this.makeButton(CENTER_X, 430, SPIN_COLOR, 'R / Пробел', () => this.restartGame());
+    restart.label.setText('ЗАНОВО');
 
-    const parts = [shade, title, score, record, restart.shadow, restart.box, restart.label];
+    const parts = [shade, title, score, record, restart.shadow, restart.face];
     for (const part of parts) part.setDepth(GAME_OVER_DEPTH).setAlpha(0);
     this.tweens.add({ targets: parts, alpha: 1, duration: 400 });
 
@@ -827,10 +889,10 @@ export class GameScene extends Phaser.Scene {
     }).setOrigin(0.5);
     const info = this.addText(CENTER_X, 166, this.shopInfoText(), { fontSize: '20px', color: '#e2e8f0' }).setOrigin(0.5);
     const stock = this.addText(CENTER_X, 402, this.stockText(), { fontSize: '16px', color: BLUE_TEXT }).setOrigin(0.5);
-    const done = this.makeButton(CENTER_X, 460, TAKE_COLOR, () => this.closeShop());
-    done.label.setText('ДАЛЬШЕ · Enter');
+    const done = this.makeButton(CENTER_X, 460, TAKE_COLOR, 'Enter', () => this.closeShop());
+    done.label.setText('ДАЛЬШЕ');
 
-    this.shopParts = [shade, title, info, stock, done.shadow, done.box, done.label];
+    this.shopParts = [shade, title, info, stock, done.shadow, done.face];
     POWER_UPS.forEach((powerUp, index) => this.drawShopCard(powerUp, index));
     for (const part of this.shopParts) part.setDepth(SHOP_DEPTH);
   }

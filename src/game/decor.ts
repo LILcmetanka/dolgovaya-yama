@@ -7,8 +7,14 @@ import Phaser from 'phaser';
 
 /** Цвет выключенной лампочки. */
 export const LAMP_OFF = 0x431407;
-/** Имя текстуры монетки. */
+/** Имена текстур, нарисованных кодом: монетка и иконки кнопок. */
 export const COIN_TEXTURE = 'coin';
+export const LEVER_ICON = 'icon-lever';
+export const COINS_ICON = 'icon-coins';
+/** Цвета панелей в стиле автомата. */
+const PANEL_FILL = 0x0b1120;
+const PANEL_BORDER = 0xb45309;
+const PANEL_HEADER = 0x7f1d1d;
 
 /** Фон — тёмный «ковёр казино»: ряды маленьких ромбиков, каждый второй ряд со сдвигом. */
 export function drawBackground(scene: Phaser.Scene): void {
@@ -48,6 +54,58 @@ export function createLamps(scene: Phaser.Scene, x: number, y: number, width: nu
   const top = xs.map((lampX) => scene.add.circle(lampX, y - height / 2, 5, LAMP_OFF));
   const bottom = [...xs].reverse().map((lampX) => scene.add.circle(lampX, y + height / 2, 5, LAMP_OFF));
   return [...top, ...bottom];
+}
+
+/** Панель в стиле автомата: тёмный фон, золотая рамка и красная плашка под заголовок сверху. */
+export function drawPanel(scene: Phaser.Scene, x: number, y: number, width: number, height: number): void {
+  scene.add.rectangle(x, y, width, height, PANEL_FILL, 0.92).setRounded(14).setStrokeStyle(3, PANEL_BORDER);
+  scene.add.rectangle(x, y - height / 2 + 18, width - 10, 26, PANEL_HEADER).setRounded(8);
+}
+
+/** Табличка под надписью (например, «НА КОНУ»): тёмная, с золотой рамкой. */
+export function drawPlaque(scene: Phaser.Scene, x: number, y: number, width: number, height: number): void {
+  scene.add.rectangle(x, y, width, height, PANEL_FILL, 0.92).setRounded(12).setStrokeStyle(2, PANEL_BORDER);
+}
+
+/** Значок «сколько одинаковых»: count квадратиков в ряд — 2 для пары, 3 для трёх. */
+export function drawMatchIcon(scene: Phaser.Scene, x: number, y: number, count: number): void {
+  const size = 7;
+  const gap = 3;
+  const total = count * size + (count - 1) * gap;
+  const g = scene.add.graphics();
+  g.fillStyle(0x94a3b8);
+  for (let i = 0; i < count; i++) g.fillRoundedRect(x - total / 2 + i * (size + gap), y - size / 2, size, size, 2);
+}
+
+/** Иконки кнопок: рычаг автомата («крутить») и стопка монет («забрать»). Рисуются один раз. */
+export function createIconTextures(scene: Phaser.Scene): void {
+  if (!scene.textures.exists(LEVER_ICON)) {
+    const g = scene.add.graphics();
+    g.fillStyle(0x94a3b8);
+    g.fillRoundedRect(8, 31, 24, 8, 3); // основание
+    g.fillStyle(0xe2e8f0);
+    g.fillRect(17, 12, 6, 21); // ручка
+    g.fillStyle(0x1f2937);
+    g.fillCircle(20, 10, 9); // тёмный ободок шарика
+    g.fillStyle(0xef4444);
+    g.fillCircle(20, 10, 7); // красный шарик
+    g.fillStyle(0xfecaca);
+    g.fillCircle(17, 7, 2.5); // блик
+    g.generateTexture(LEVER_ICON, 40, 40);
+    g.destroy();
+  }
+  if (!scene.textures.exists(COINS_ICON)) {
+    const g = scene.add.graphics();
+    for (let i = 0; i < 3; i++) {
+      const y = 29 - i * 8;
+      g.fillStyle(0x92400e);
+      g.fillEllipse(20, y + 3, 30, 12); // ребро монеты
+      g.fillStyle(0xfbbf24);
+      g.fillEllipse(20, y, 30, 12); // монета
+    }
+    g.generateTexture(COINS_ICON, 40, 40);
+    g.destroy();
+  }
 }
 
 /** Текстура монетки: рисуем кругами и сохраняем как картинку в памяти. После рестарта сцены она уже есть. */
