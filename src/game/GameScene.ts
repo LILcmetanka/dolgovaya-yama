@@ -20,50 +20,61 @@ import {
   createCoinTexture,
   createIconTextures,
   createLamps,
+  createLeverTextures,
   createPatternTextures,
   createSymbolTextures,
-  drawBackground,
-  drawCabinet,
-  drawPanel,
-  drawPlaque,
+  drawMachineBody,
+  drawNoteTexture,
+  drawRoom,
   FONT,
   LAMP_OFF,
-  LEVER_ICON,
+  LEVER_BALL_TEXTURE,
+  LEVER_ROD_TEXTURE,
+  NOTE_TEXTURE,
   patternTexture,
   symbolTexture,
+  type Box,
 } from './decor';
 
-// Раскладка экрана 960×640.
+// Раскладка экрана 960×640: вид от первого лица — автомат стоит вплотную, вокруг тёмная комната.
+// Части автомата — прямоугольники Box (x, y — середина): по ним decor.ts рисует корпус, а сцена ставит поверх живые объекты.
 const CENTER_X = 480;
 const CENTER_Y = 320;
-const LEFT_PANEL_X = 113; // центр левой панели (раунд, прокрутки, рекорд)
-const RIGHT_PANEL_X = 848; // центр правой панели (паттерны)
-const PANEL_Y = 285;
-const PANEL_WIDTH = 194;
-const PANEL_HEIGHT = 230;
-// Панель паттернов: два столбца, в каждой строке — схема паттерна и его ×.
-const PATTERN_COLUMN_STEP = 92; // расстояние между центрами столбцов панели
-const PATTERN_FIRST_Y = 52; // первая строка — на столько ниже верха панели
-const PATTERN_ROW_STEP = 36;
-const DEBT_BAR_Y = 108;
-const DEBT_BAR_WIDTH = 480;
-const DEBT_BAR_HEIGHT = 30;
-const GRID_Y = 285; // центр сетки 5×3
+const GRID_Y = 314; // центр сетки 5×3
 const CELL_SIZE = 80;
 const CELL_GAP = 6;
 const CELL_STEP = CELL_SIZE + CELL_GAP; // от центра клетки до центра соседней
 const CELL_RADIUS = 12; // скругление углов клетки
-const CABINET_PADDING = 18; // корпус автомата выступает за сетку на столько с каждой стороны
-const CABINET_WIDTH = GRID_COLUMNS * CELL_STEP - CELL_GAP + 2 * CABINET_PADDING;
-const CABINET_HEIGHT = GRID_ROWS * CELL_STEP - CELL_GAP + 2 * CABINET_PADDING;
-const MESSAGE_Y = 454;
-const POT_Y = 496;
-const BUTTON_Y = 573;
-const BUTTON_WIDTH = 320;
-const BUTTON_HEIGHT = 84;
+const SCREEN_PADDING = 18; // окно экрана шире сетки на столько с каждой стороны
+const BODY: Box = { x: CENTER_X, y: 366, width: 600, height: 720 }; // корпус; низ уходит за край экрана
+const DISPLAY: Box = { x: CENTER_X, y: 40, width: 260, height: 50 }; // табло: сколько внесено
+const GLASS: Box = { x: CENTER_X, y: 116, width: 500, height: 80 }; // стекло с паттернами
+const SCREEN: Box = {
+  x: CENTER_X,
+  y: GRID_Y,
+  width: GRID_COLUMNS * CELL_STEP - CELL_GAP + 2 * SCREEN_PADDING,
+  height: GRID_ROWS * CELL_STEP - CELL_GAP + 2 * SCREEN_PADDING,
+}; // окно вокруг сетки
+const BELLY: Box = { x: CENTER_X, y: 540, width: 500, height: 130 }; // панель под экраном
+const MULTIPLIER_WINDOW: Box = { x: 320, y: 552, width: 130, height: 58 }; // окошко множителя серии
+const LEVER_MOUNT: Box = { x: 800, y: 338, width: 48, height: 76 }; // крепление рычага; из его середины растёт рычаг
+const LEVER_ROD_LENGTH = 142; // длина штанги рычага, на её конце — шарик
+const NOTE: Box = { x: 96, y: 118, width: 150, height: 120 }; // записка с долгом на стене
+const NOTE_ANGLE = -6; // записка висит чуть криво, градусы
+// Стекло с паттернами: схемы рядами по 5.
+const PATTERN_COLUMNS = 5;
+const PATTERN_STEP_X = 96; // от центра схемы до центра соседней
+const PATTERN_STEP_Y = 36;
+// Лампочки прокруток под экраном: по одной на прокрутку.
+const SPIN_LAMP_Y = 492;
+const SPIN_LAMP_STEP = 26;
+const SPIN_LAMP_RADIUS = 8;
+// Временная кнопка «ЗАБРАТЬ»: в шаге 3 её заменит лоток.
+const TAKE_BUTTON_X = 590;
+const TAKE_BUTTON_Y = 552;
+const BUTTON_WIDTH = 240;
+const BUTTON_HEIGHT = 64;
 const BUTTON_PRESS = 6; // на сколько px кнопка вдавливается (столько же видно её тени)
-const SPIN_BUTTON_X = 310;
-const TAKE_BUTTON_X = 650;
 
 // Анимация прокрутки: время в мс, расстояние в px.
 const FLICKER_DELAY = 60; // как часто меняются символы, пока столбец крутится
@@ -72,21 +83,28 @@ const STOP_STEP = 120; // каждый следующий столбец ост�
 const RESULT_PAUSE = 200; // пауза между остановкой последнего столбца и итогом: подскок успевает закончиться
 const BOUNCE_HEIGHT = 14; // высота подскока при остановке
 const HIGHLIGHT_WIDTH = 6; // толщина рамки вокруг клеток найденного паттерна
+const LEVER_PULL_SCALE = -0.4; // рычаг дёрнули: штанга переворачивается, шарик уходит вниз «на игрока»
+const LEVER_PULL_TIME = 130; // рывок вниз, столько же — обратно
+const LEVER_HOLD_TIME = 60; // сколько рычаг держится внизу
+const LEVER_BALL_GROW = 0.15; // внизу шарик ближе к игроку — на столько крупнее (на каждую единицу укорочения штанги)
 
 // Обратная связь: время в мс.
-const BANNER_DELAY = 400; // пауза, чтобы «+36» долетело до полосы долга, перед «ДОЛГ ЗАКРЫТ!»
+const BANNER_DELAY = 400; // пауза, чтобы «+36» долетело до табло, перед «ДОЛГ ЗАКРЫТ!»
 const DEBT_CLOSED_TIME = 1000; // сколько держится «ДОЛГ ЗАКРЫТ!»
 const GAME_OVER_DELAY = 700; // пауза перед экраном проигрыша, чтобы увидеть последнюю прокрутку
 const RESTART_SPACE_DELAY = 800; // Пробел перезапускает игру не раньше, чем через столько
+const NOTE_FLIP_TIME = 140; // половина переворота записки
+const MULTIPLIER_FLASH_TIME = 600; // сколько окошко множителя горит красным после черепов
 
 // Лампочки на корпусе.
-const LAMP_TICK = 90; // как часто обновляются лампочки, мс
+const LAMP_TICK = 90; // как часто обновляются бегущие огни, мс
 const LAMP_IDLE_SPEED = 4; // в покое огонёк сдвигается раз в 4 тика, при событиях — каждый тик
 const LAMP_GOLD = 0xfde047;
 const LAMP_RED = 0xef4444;
 const LAMP_GREEN = 0x4ade80;
+const SPIN_LAMP_RIM = 0x1c1917; // ободок лампочки прокрутки
 
-const LOW_SPINS = 3; // столько прокруток или меньше — счётчик красный
+const LOW_SPINS = 3; // столько прокруток или меньше — оставшиеся лампочки красные
 const RECORD_KEY = 'dolgovaya-yama-record'; // ключ рекорда в localStorage
 
 // Слои: чем больше число, тем выше лежит объект.
@@ -98,16 +116,24 @@ const GAME_OVER_DEPTH = 30;
 // Внешний вид.
 const SKULL_BORDER = 0xef4444; // рамка паттерна из черепов
 const WIN_BORDER = 0xfde047; // рамка выигравшего паттерна
-const SPIN_COLOR = 0xea580c;
+const SPIN_COLOR = 0xea580c; // кнопка «ЗАНОВО»
 const BUTTON_BORDER = 0xfbbf24;
 const TAKE_COLOR = 0x16a34a;
-const DEBT_BAR_COLOR = 0x22c55e;
 const GOLD_TEXT = '#fde047';
 const GREEN_TEXT = '#4ade80';
 const RED_TEXT = '#f87171';
-const MUTED_TEXT = '#94a3b8';
+const HINT_TEXT = 'rgba(255, 255, 255, 0.55)'; // подсказка клавиши у рычага
+const LED_COLOR = '#fbbf24';
 // Всплывающие надписи жирные и с тёмной обводкой, чтобы читались поверх сетки.
 const POPUP_STYLE = { fontSize: '36px', fontStyle: 'bold', stroke: '#0f172a', strokeThickness: 6 };
+// Цифры табло и окошка множителя светятся, как на LED-табло.
+const LED_STYLE = {
+  fontFamily: 'ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", monospace',
+  fontSize: '32px',
+  fontStyle: 'bold',
+  color: LED_COLOR,
+  shadow: { color: '#f59e0b', blur: 12, fill: true },
+};
 
 /**
  * Кнопка: тень стоит на месте, а «лицо» — контейнер с корпусом, бликом, иконкой и надписями.
@@ -144,12 +170,6 @@ function columnStopTime(col: number): number {
 function startSymbol(row: number, col: number): SlotSymbol {
   const paying = SYMBOLS.filter((symbol) => !isSkull(symbol));
   return paying[(col + 2 * row) % paying.length];
-}
-
-/** Знаки символов, которые собрали паттерны, без повторов: «🍒 🔔». */
-function winSigns(hits: PatternHit[]): string {
-  const signs = new Set(hits.map((hit) => hit.symbol.sign));
-  return [...signs].join(' ');
 }
 
 /** Рекорд из localStorage. Если хранилище недоступно — 0, игра работает и так. */
@@ -190,27 +210,24 @@ export class GameScene extends Phaser.Scene {
   private isGameOver = false; // прокрутки кончились, а долг не закрыт
   private canRestartWithSpace = false; // Пробел на экране проигрыша срабатывает не сразу
 
-  // Лампочки на корпусе автомата.
-  private lampTick = 0; // сколько раз лампочки уже обновились
+  // Бегущие огни вокруг экрана.
+  private lampTick = 0; // сколько раз огни уже обновились
   private lampSpeed = LAMP_IDLE_SPEED; // через сколько тиков огонёк сдвигается
-  private lampColor = LAMP_GOLD; // каким цветом горят лампочки сейчас
-  private lampResetTimer?: Phaser.Time.TimerEvent; // когда вернуть лампочки в спокойный режим
+  private lampColor = LAMP_GOLD; // каким цветом горят огни сейчас
+  private lampResetTimer?: Phaser.Time.TimerEvent; // когда вернуть огни в спокойный режим
 
   // Объекты на экране.
   private cells: Phaser.GameObjects.Image[][] = []; // клетки сетки: cells[ряд][столбец]
   private cellHighlights!: Phaser.GameObjects.Graphics; // рамки вокруг клеток найденных паттернов
-  private patternFrames: Phaser.GameObjects.Rectangle[] = []; // рамки схем на панели, в порядке PATTERNS
-  private lamps: Phaser.GameObjects.Arc[] = [];
+  private patternFrames: Phaser.GameObjects.Rectangle[] = []; // рамки схем на стекле, в порядке PATTERNS
+  private lamps: Phaser.GameObjects.Arc[] = []; // бегущие огни вокруг экрана
+  private spinLamps: Phaser.GameObjects.Arc[] = []; // лампочки прокруток: одна на прокрутку
   private coinEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
-  private debtBarFill!: Phaser.GameObjects.Rectangle;
-  private debtBarShine!: Phaser.GameObjects.Rectangle; // светлый блик сверху заполнения
-  private debtText!: Phaser.GameObjects.Text;
-  private roundText!: Phaser.GameObjects.Text;
-  private spinsText!: Phaser.GameObjects.Text;
-  private recordText!: Phaser.GameObjects.Text;
-  private messageText!: Phaser.GameObjects.Text;
-  private potText!: Phaser.GameObjects.Text;
-  private spinButton!: Button;
+  private boardText!: Phaser.GameObjects.Text; // табло: сколько внесено
+  private multiplierText!: Phaser.GameObjects.Text; // окошко множителя серии
+  private note!: Phaser.GameObjects.Image; // записка с долгом: бумажка с надписями одной картинкой
+  private leverRod!: Phaser.GameObjects.Image; // штанга рычага, низ — точка вращения
+  private leverBall!: Phaser.GameObjects.Image; // шарик на конце штанги
   private takeButton!: Button;
 
   constructor() {
@@ -219,19 +236,21 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.resetState();
-    drawBackground(this);
+    drawRoom(this);
     createCoinTexture(this);
     createIconTextures(this);
+    createLeverTextures(this, LEVER_ROD_LENGTH);
     createSymbolTextures(this, SYMBOLS, CELL_SIZE, CELL_RADIUS);
     createPatternTextures(this, PATTERNS);
-    this.drawHeader();
-    this.drawDebtBar();
-    this.drawLeftPanel();
+    this.drawNote();
     this.drawMachine();
-    this.drawGrid();
+    this.drawBoard();
     this.drawPatternPanel();
-    this.drawMessageAndPot();
-    this.drawButtons();
+    this.drawGrid();
+    this.drawSpinLamps();
+    this.drawMultiplier();
+    this.drawTakeButton();
+    this.drawLever();
     this.createCoinEmitter();
     this.setupKeyboard();
     this.refreshHud();
@@ -257,64 +276,55 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- Отрисовка ----------
 
-  private drawHeader(): void {
-    this.addText(CENTER_X, 14, 'ДОЛГОВАЯ ЯМА', {
-      fontSize: '32px',
-      fontStyle: 'bold',
-      color: GOLD_TEXT,
-      stroke: '#7c2d12',
-      strokeThickness: 6,
-      shadow: { offsetY: 3, color: '#000000', fill: true, stroke: true },
-    }).setOrigin(0.5, 0);
-    this.addText(CENTER_X, 58, 'Закрой долг, пока есть прокрутки. Паттерн из 💀 сжигает кон.', {
-      fontSize: '17px',
-      color: '#cbd5e1',
-    }).setOrigin(0.5, 0);
+  /**
+   * Записка с долгом на стене: бумажка, «ДОЛГ» и сумма — одна картинка, нарисованная в decor.ts.
+   * Надписи нарисованы прямо на бумажке: Phaser 4 обрезает текст в повёрнутом контейнере, а картинку — нет.
+   */
+  private drawNote(): void {
+    drawNoteTexture(this, NOTE.width, NOTE.height, this.debt);
+    this.note = this.add.image(NOTE.x, NOTE.y, NOTE_TEXTURE).setAngle(NOTE_ANGLE);
   }
 
-  private drawDebtBar(): void {
-    const innerWidth = DEBT_BAR_WIDTH - 8; // заполнение чуть уже рамки
-    const left = CENTER_X - innerWidth / 2;
-    this.add
-      .rectangle(CENTER_X, DEBT_BAR_Y, DEBT_BAR_WIDTH, DEBT_BAR_HEIGHT, 0x0b1120)
-      .setRounded(10)
-      .setStrokeStyle(3, 0xb45309);
-    // Заполненная часть растёт от левого края: scaleX — доля внесённого (от 0 до 1). Сверху на ней светлый блик.
-    this.debtBarFill = this.add
-      .rectangle(left, DEBT_BAR_Y, innerWidth, DEBT_BAR_HEIGHT - 8, DEBT_BAR_COLOR)
-      .setOrigin(0, 0.5)
-      .setScale(0, 1);
-    this.debtBarShine = this.add
-      .rectangle(left, DEBT_BAR_Y - 5, innerWidth, 5, 0xffffff, 0.3)
-      .setOrigin(0, 0.5)
-      .setScale(0, 1);
-    this.debtText = this.addText(CENTER_X, DEBT_BAR_Y, '', {
-      fontSize: '18px',
-      fontStyle: 'bold',
-      stroke: '#0f172a',
-      strokeThickness: 4,
-    }).setOrigin(0.5);
-  }
-
-  /** Левая панель: в плашке номер раунда, ниже прокрутки и рекорд. */
-  private drawLeftPanel(): void {
-    drawPanel(this, LEFT_PANEL_X, PANEL_Y, PANEL_WIDTH, PANEL_HEIGHT);
-    const top = PANEL_Y - PANEL_HEIGHT / 2;
-    const textX = LEFT_PANEL_X - PANEL_WIDTH / 2 + 14;
-    this.roundText = this.addText(LEFT_PANEL_X, top + 18, '', {
-      fontSize: '18px',
-      fontStyle: 'bold',
-      color: GOLD_TEXT,
-    }).setOrigin(0.5);
-    this.spinsText = this.addText(textX, top + 44, '', { fontSize: '20px', fontStyle: 'bold' });
-    this.recordText = this.addText(textX, top + 76, '', { fontSize: '17px', color: MUTED_TEXT });
-  }
-
-  /** Корпус автомата и лампочки вокруг сетки. Лампочки обновляются по таймеру. */
+  /** Корпус автомата (одна запечённая картинка) и бегущие огни вокруг экрана. Огни обновляются по таймеру. */
   private drawMachine(): void {
-    drawCabinet(this, CENTER_X, GRID_Y, CABINET_WIDTH, CABINET_HEIGHT);
-    this.lamps = createLamps(this, CENTER_X, GRID_Y, CABINET_WIDTH, CABINET_HEIGHT);
+    drawMachineBody(this, {
+      body: BODY,
+      display: DISPLAY,
+      glass: GLASS,
+      screen: SCREEN,
+      belly: BELLY,
+      multiplierWindow: MULTIPLIER_WINDOW,
+      leverMount: LEVER_MOUNT,
+    });
+    this.lamps = createLamps(this, SCREEN.x, SCREEN.y, SCREEN.width, SCREEN.height);
     this.time.addEvent({ delay: LAMP_TICK, loop: true, callback: () => this.tickLamps() });
+  }
+
+  /** Табло сверху: монетка и сколько внесено в долг. Сюда летят забранные деньги. */
+  private drawBoard(): void {
+    this.add.image(DISPLAY.x - 84, DISPLAY.y, COIN_TEXTURE).setScale(1.5);
+    this.boardText = this.addText(DISPLAY.x + 12, DISPLAY.y, '', LED_STYLE).setOrigin(0.5);
+  }
+
+  /**
+   * Стекло с паттернами над экраном: схема каждого паттерна и его ×, рядами по пять.
+   * Цен символов на экране нет — игрок узнаёт их по опыту. Рамка схемы загорается, когда паттерн найден.
+   */
+  private drawPatternPanel(): void {
+    const rows = Math.ceil(PATTERNS.length / PATTERN_COLUMNS);
+    this.patternFrames = PATTERNS.map((pattern, index) => {
+      const col = index % PATTERN_COLUMNS;
+      const row = Math.floor(index / PATTERN_COLUMNS);
+      const x = GLASS.x + (col - (PATTERN_COLUMNS - 1) / 2) * PATTERN_STEP_X;
+      const y = GLASS.y + (row - (rows - 1) / 2) * PATTERN_STEP_Y;
+      const frame = this.add
+        .rectangle(x, y, PATTERN_STEP_X - 6, PATTERN_STEP_Y - 4)
+        .setRounded(6)
+        .setVisible(false);
+      this.add.image(x - 20, y, patternTexture(pattern)); // схема слева, «×N» справа
+      this.addText(x + 8, y, `×${pattern.multiplier}`, { fontSize: '16px', fontStyle: 'bold', color: GOLD_TEXT }).setOrigin(0, 0.5);
+      return frame;
+    });
   }
 
   /** Сетка 5×3: в каждой клетке картинка с готовой текстурой символа. Поверх — слой для рамок паттернов. */
@@ -330,51 +340,40 @@ export class GameScene extends Phaser.Scene {
     this.cellHighlights = this.add.graphics();
   }
 
-  /**
-   * Панель паттернов справа: схема каждого паттерна и его ×, в два столбца.
-   * Цен символов на экране нет — игрок узнаёт их по опыту. Рамка схемы загорается, когда паттерн найден.
-   */
-  private drawPatternPanel(): void {
-    drawPanel(this, RIGHT_PANEL_X, PANEL_Y, PANEL_WIDTH, PANEL_HEIGHT);
-    const top = PANEL_Y - PANEL_HEIGHT / 2;
-    this.addText(RIGHT_PANEL_X, top + 18, 'ПАТТЕРНЫ', { fontSize: '18px', fontStyle: 'bold', color: GOLD_TEXT }).setOrigin(0.5);
-
-    this.patternFrames = PATTERNS.map((pattern, index) => {
-      const side = index % 2 === 0 ? -1 : 1; // чётные — в левом столбце, нечётные — в правом
-      const x = RIGHT_PANEL_X + (side * PATTERN_COLUMN_STEP) / 2;
-      const y = top + PATTERN_FIRST_Y + Math.floor(index / 2) * PATTERN_ROW_STEP;
-      const frame = this.add
-        .rectangle(x, y, PATTERN_COLUMN_STEP - 4, PATTERN_ROW_STEP - 4)
-        .setRounded(6)
-        .setVisible(false);
-      this.add.image(x - 20, y, patternTexture(pattern)); // схема слева, «×N» справа
-      this.addText(x + 8, y, `×${pattern.multiplier}`, { fontSize: '16px', fontStyle: 'bold', color: GOLD_TEXT }).setOrigin(0, 0.5);
-      return frame;
-    });
+  /** Лампочки прокруток под экраном: по одной на каждую прокрутку раунда. */
+  private drawSpinLamps(): void {
+    this.spinLamps = [];
+    for (let index = 0; index < SPINS_PER_ROUND; index++) {
+      const x = CENTER_X + (index - (SPINS_PER_ROUND - 1) / 2) * SPIN_LAMP_STEP;
+      this.spinLamps.push(this.add.circle(x, SPIN_LAMP_Y, SPIN_LAMP_RADIUS, LAMP_OFF).setStrokeStyle(3, SPIN_LAMP_RIM));
+    }
   }
 
-  private drawMessageAndPot(): void {
-    this.messageText = this.addText(CENTER_X, MESSAGE_Y, 'Выигрыши копятся на кону', {
-      fontSize: '22px',
-      color: '#e2e8f0',
-    }).setOrigin(0.5);
-    // «НА КОНУ» — на табличке с монеткой слева.
-    drawPlaque(this, CENTER_X, POT_Y, 300, 46);
-    this.add.image(CENTER_X - 124, POT_Y, COIN_TEXTURE).setScale(1.3);
-    this.potText = this.addText(CENTER_X + 12, POT_Y, '', {
-      fontSize: '28px',
-      fontStyle: 'bold',
-      color: GOLD_TEXT,
-    }).setOrigin(0.5);
+  /** Окошко множителя серии: «×3» — с таким множителем пойдёт следующая прокрутка. */
+  private drawMultiplier(): void {
+    this.multiplierText = this.addText(MULTIPLIER_WINDOW.x, MULTIPLIER_WINDOW.y, '', LED_STYLE).setOrigin(0.5);
   }
 
-  private drawButtons(): void {
-    this.spinButton = this.makeButton(SPIN_BUTTON_X, BUTTON_Y, SPIN_COLOR, 'Пробел', () => this.spin(), LEVER_ICON);
-    this.takeButton = this.makeButton(TAKE_BUTTON_X, BUTTON_Y, TAKE_COLOR, 'Enter', () => this.take(), COINS_ICON);
+  /** Временная кнопка «ЗАБРАТЬ» на корпусе: на ней виден кон. В шаге 3 её заменит лоток. */
+  private drawTakeButton(): void {
+    this.takeButton = this.makeButton(TAKE_BUTTON_X, TAKE_BUTTON_Y, TAKE_COLOR, 'Enter', () => this.take(), COINS_ICON);
+  }
+
+  /** Рычаг справа: штанга и шарик на её конце. Дёрнуть — кликом по рычагу или Пробелом. Под креплением — подсказка клавиши. */
+  private drawLever(): void {
+    this.leverRod = this.add.image(LEVER_MOUNT.x, LEVER_MOUNT.y, LEVER_ROD_TEXTURE).setOrigin(0.5, 1);
+    this.leverBall = this.add.image(LEVER_MOUNT.x, LEVER_MOUNT.y, LEVER_BALL_TEXTURE);
+    this.placeLeverBall();
+    for (const part of [this.leverRod, this.leverBall]) {
+      part.setInteractive({ useHandCursor: true });
+      part.on('pointerdown', () => this.spin());
+    }
+    const hintY = LEVER_MOUNT.y + LEVER_MOUNT.height / 2 + 14;
+    this.addText(LEVER_MOUNT.x, hintY, 'Пробел', { fontSize: '13px', color: HINT_TEXT }).setOrigin(0.5);
   }
 
   /**
-   * Большая кнопка автомата: тень, корпус с золотой рамкой, блик сверху, иконка (если есть),
+   * Кнопка автомата: тень, корпус с золотой рамкой, блик сверху, иконка (если есть),
    * крупная надпись и под ней клавиша. Нажимается и мышью, и пальцем.
    */
   private makeButton(x: number, y: number, color: number, keyHint: string, onPress: () => void, icon?: string): Button {
@@ -384,16 +383,16 @@ export class GameScene extends Phaser.Scene {
     box.setInteractive({ useHandCursor: true });
     box.on('pointerdown', onPress);
     const gloss = this.add.rectangle(0, -BUTTON_HEIGHT / 4, BUTTON_WIDTH - 16, BUTTON_HEIGHT / 2 - 8, 0xffffff, 0.16).setRounded(12);
-    const textX = icon ? 24 : 0; // с иконкой надписи сдвинуты вправо
+    const textX = icon ? 20 : 0; // с иконкой надписи сдвинуты вправо
     const label = this.addText(textX, -9, '', {
-      fontSize: '24px',
+      fontSize: '22px',
       fontStyle: 'bold',
       stroke: 'rgba(0, 0, 0, 0.35)',
       strokeThickness: 3,
     }).setOrigin(0.5);
     const key = this.addText(textX, 21, keyHint, { fontSize: '13px', color: 'rgba(255, 255, 255, 0.75)' }).setOrigin(0.5);
     const parts: Phaser.GameObjects.GameObject[] = [box, gloss, label, key];
-    if (icon) parts.push(this.add.image(-BUTTON_WIDTH / 2 + 44, 0, icon));
+    if (icon) parts.push(this.add.image(-BUTTON_WIDTH / 2 + 32, 0, icon));
     const face = this.add.container(x, y, parts);
     return { shadow, face, label, y };
   }
@@ -420,27 +419,19 @@ export class GameScene extends Phaser.Scene {
     this.cells[row][col].setTexture(symbolTexture(symbol));
   }
 
-  /** Обновить надписи и кнопки по текущему состоянию. */
+  /** Обновить табло, окошко множителя, кнопку и лампочки по текущему состоянию. */
   private refreshHud(): void {
-    this.debtText.setText(`ДОЛГ ${this.paid} / ${this.debt}`);
-    this.fillDebtBar(Math.min(this.paid / this.debt, 1));
-    this.roundText.setText(`РАУНД ${this.round}`);
-    this.spinsText.setText(`Прокрутки: ${this.spinsLeft}`);
-    this.spinsText.setColor(this.spinsLeft <= LOW_SPINS ? RED_TEXT : '#ffffff');
-    this.recordText.setText(`Рекорд: ${this.record}`);
-    this.potText.setText(`НА КОНУ: ${this.pot}`);
-    this.spinButton.label.setText(`КРУТИТЬ ×${multiplierForStreak(this.streak)}`);
+    this.boardText.setText(String(this.paid));
+    this.multiplierText.setText(`×${multiplierForStreak(this.streak)}`);
     this.takeButton.label.setText(`ЗАБРАТЬ ${this.pot}`);
-    this.setButtonEnabled(this.spinButton, this.canAct());
     this.setButtonEnabled(this.takeButton, this.canAct() && this.pot > 0);
+    this.refreshSpinLamps();
   }
 
-  /** Полоса долга (и блик на ней) плавно доезжает до нужной доли (от 0 до 1). */
-  private fillDebtBar(progress: number): void {
-    if (this.debtBarFill.scaleX === progress) return;
-    const parts = [this.debtBarFill, this.debtBarShine];
-    this.tweens.killTweensOf(parts);
-    this.tweens.add({ targets: parts, scaleX: progress, duration: 400, ease: 'Cubic.easeOut' });
+  /** Горит столько лампочек, сколько прокруток осталось. Когда их мало — оставшиеся красные. */
+  private refreshSpinLamps(): void {
+    const litColor = this.spinsLeft <= LOW_SPINS ? LAMP_RED : LAMP_GOLD;
+    this.spinLamps.forEach((lamp, index) => lamp.setFillStyle(index < this.spinsLeft ? litColor : LAMP_OFF));
   }
 
   /** Недоступная кнопка затемнена. Сами действия всё равно проверяют, можно ли их сделать. */
@@ -459,7 +450,7 @@ export class GameScene extends Phaser.Scene {
     this.lamps.forEach((lamp, index) => lamp.setFillStyle((index + shift) % 3 === 0 ? this.lampColor : LAMP_OFF));
   }
 
-  /** На время перекрасить лампочки и пустить огоньки быстрее: выигрыш, черепа, закрытый долг. */
+  /** На время перекрасить бегущие огни и пустить их быстрее: выигрыш, черепа, закрытый долг. */
   private flashLamps(color: number, duration: number): void {
     this.lampColor = color;
     this.lampSpeed = 1;
@@ -467,6 +458,71 @@ export class GameScene extends Phaser.Scene {
     this.lampResetTimer = this.time.delayedCall(duration, () => {
       this.lampColor = LAMP_GOLD;
       this.lampSpeed = LAMP_IDLE_SPEED;
+    });
+  }
+
+  /** Рычаг дёргается: штанга переворачивается (шарик уходит вниз «на игрока») и возвращается. Шарик едет за концом штанги. */
+  private pullLever(): void {
+    this.tweens.killTweensOf(this.leverRod);
+    this.leverRod.setScale(1);
+    this.tweens.add({
+      targets: this.leverRod,
+      scaleY: LEVER_PULL_SCALE,
+      duration: LEVER_PULL_TIME,
+      hold: LEVER_HOLD_TIME,
+      yoyo: true,
+      ease: 'Quad.easeIn',
+      onUpdate: () => this.placeLeverBall(),
+      onComplete: () => this.placeLeverBall(),
+    });
+  }
+
+  /** Шарик всегда на конце штанги: штанга короче — шарик ниже. Внизу он ближе к игроку — чуть крупнее. */
+  private placeLeverBall(): void {
+    const stretch = this.leverRod.scaleY; // 1 — рычаг поднят, LEVER_PULL_SCALE — дёрнут до конца
+    this.leverBall.setY(LEVER_MOUNT.y - LEVER_ROD_LENGTH * stretch);
+    this.leverBall.setScale(1 + LEVER_BALL_GROW * (1 - stretch));
+  }
+
+  /** Лампочка этой прокрутки гаснет со вспышкой. */
+  private blinkSpinLamp(index: number): void {
+    const lamp = this.spinLamps[index];
+    if (!lamp) return;
+    this.tweens.add({ targets: lamp, scale: { from: 1.6, to: 1 }, duration: 250, ease: 'Quad.easeOut' });
+  }
+
+  /** Новый раунд: лампочки прокруток загораются по очереди слева направо. */
+  private popSpinLamps(): void {
+    this.spinLamps.forEach((lamp, index) => {
+      this.tweens.add({ targets: lamp, scale: { from: 0.3, to: 1 }, delay: index * 40, duration: 180, ease: 'Back.easeOut' });
+    });
+  }
+
+  /** Надпись коротко пульсирует: увеличивается и возвращается. */
+  private pulseText(text: Phaser.GameObjects.Text, scale = 1.25): void {
+    this.tweens.killTweensOf(text);
+    text.setScale(1);
+    this.tweens.add({ targets: text, scale, duration: 120, yoyo: true, ease: 'Quad.easeOut' });
+  }
+
+  /** Черепа оборвали серию: окошко множителя вспыхивает красным. */
+  private flashMultiplierRed(): void {
+    this.multiplierText.setColor(RED_TEXT);
+    this.pulseText(this.multiplierText);
+    this.time.delayedCall(MULTIPLIER_FLASH_TIME, () => this.multiplierText.setColor(LED_COLOR));
+  }
+
+  /** Новый долг: записка переворачивается, и на обороте — новая сумма. */
+  private flipNote(): void {
+    this.tweens.killTweensOf(this.note);
+    this.note.setScale(1);
+    this.tweens.add({
+      targets: this.note,
+      scaleX: 0,
+      duration: NOTE_FLIP_TIME,
+      yoyo: true,
+      ease: 'Quad.easeIn',
+      onYoyo: () => drawNoteTexture(this, NOTE.width, NOTE.height, this.debt),
     });
   }
 
@@ -506,32 +562,27 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  /** «+36» летит с кона в полосу долга. */
-  private flyToDebtBar(amount: number): void {
-    const label = this.addText(CENTER_X, POT_Y, `+${amount}`, { ...POPUP_STYLE, color: GREEN_TEXT })
+  /** «+36» летит с кнопки «ЗАБРАТЬ» в табло, там брызгают монетки и табло подпрыгивает. */
+  private flyToBoard(amount: number): void {
+    const label = this.addText(TAKE_BUTTON_X, TAKE_BUTTON_Y, `+${amount}`, { ...POPUP_STYLE, color: GREEN_TEXT })
       .setOrigin(0.5)
       .setDepth(POPUP_DEPTH);
     this.tweens.add({
       targets: label,
-      y: DEBT_BAR_Y,
+      x: DISPLAY.x,
+      y: DISPLAY.y,
       alpha: { value: 0, delay: 350, duration: 150 },
       duration: 500,
       ease: 'Cubic.easeIn',
       onComplete: () => {
         label.destroy();
-        this.coinEmitter.explode(8, CENTER_X, DEBT_BAR_Y); // монетки брызгают из полосы долга
+        this.coinEmitter.explode(8, DISPLAY.x, DISPLAY.y); // монетки брызгают из табло
+        this.pulseText(this.boardText);
       },
     });
   }
 
-  /** «НА КОНУ» коротко пульсирует. */
-  private pulsePot(): void {
-    this.tweens.killTweensOf(this.potText);
-    this.potText.setScale(1);
-    this.tweens.add({ targets: this.potText, scale: 1.25, duration: 120, yoyo: true, ease: 'Quad.easeOut' });
-  }
-
-  /** Подсветить найденные паттерны: толстые рамки на клетках и рамки схем на панели. Золотые — выигрыш, красные — черепа. */
+  /** Подсветить найденные паттерны: толстые рамки на клетках и рамки схем на стекле. Золотые — выигрыш, красные — черепа. */
   private highlightHits(hits: PatternHit[], color: number): void {
     this.cellHighlights.lineStyle(HIGHLIGHT_WIDTH, color);
     for (const hit of hits) {
@@ -630,7 +681,7 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  /** Пробел: в игре — прокрутка, после проигрыша — «заново», но не раньше чем через 0,8 с. */
+  /** Пробел: в игре — дёрнуть рычаг, после проигрыша — «заново», но не раньше чем через 0,8 с. */
   private onSpace(): void {
     if (!this.isGameOver) this.spin();
     else if (this.canRestartWithSpace) this.restartGame();
@@ -647,16 +698,16 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- Прокрутка ----------
 
-  /** Прокрутка: тратит одну прокрутку, столбцы мелькают и останавливаются слева направо. */
+  /** Прокрутка: рычаг дёргается, гаснет одна лампочка, столбцы мелькают и останавливаются слева направо. */
   private spin(): void {
     if (!this.canAct()) return;
-    this.pressButton(this.spinButton);
+    this.pullLever();
     this.isSpinning = true;
     this.spinsLeft -= 1;
     const multiplier = multiplierForStreak(this.streak); // множитель запоминаем до прокрутки
-    this.messageText.setText(''); // пока крутится, строка пустая — смотрим на сетку
     this.clearHighlights();
     this.refreshHud();
+    this.blinkSpinLamp(this.spinsLeft);
 
     const grid = spinGrid(); // результат известен сразу, анимация только показывает его
     for (let col = 0; col < GRID_COLUMNS; col++) this.spinColumn(col, grid);
@@ -702,6 +753,7 @@ export class GameScene extends Phaser.Scene {
       this.burnPot(result);
     } else {
       this.streak += 1; // серия растёт с каждой прокруткой без паттерна из черепов, даже без выигрыша
+      this.pulseText(this.multiplierText); // множитель в окошке вырос
       this.addToPot(result, multiplier);
     }
     if (this.spinsLeft === 0) this.endOfSpins();
@@ -716,23 +768,20 @@ export class GameScene extends Phaser.Scene {
     this.highlightHits(result.hits, SKULL_BORDER);
     this.flashAndShake();
     this.flashLamps(LAMP_RED, 700);
-    this.messageText.setText(lost > 0 ? `💀 Кон сгорел: −${lost}` : '💀💀💀');
+    this.flashMultiplierRed();
+    if (lost > 0) this.showPopup(`−${lost}`, RED_TEXT); // сколько сгорело с кона
   }
 
-  /** Выигрыш паттернов × множитель идёт на кон. */
+  /** Выигрыш паттернов × множитель идёт на кон. Пусто — ничего не происходит. */
   private addToPot(result: SpinResult, multiplier: number): void {
-    if (result.kind === 'nothing') {
-      this.messageText.setText('Пусто'); // множитель следующей прокрутки виден на кнопке
-      return;
-    }
+    if (result.kind === 'nothing') return;
     const gain = winWithMultiplier(result.win, multiplier);
     this.pot += gain;
-    this.messageText.setText(`${winSigns(result.hits)}!`); // сумма всплывает над сеткой
     this.highlightHits(result.hits, WIN_BORDER);
     this.showPopup(formatWin(result.win, multiplier, gain), GOLD_TEXT);
     this.burstCoins(gain);
     this.flashLamps(LAMP_GOLD, 900);
-    this.pulsePot();
+    this.pulseText(this.takeButton.label, 1.2); // кон на кнопке «ЗАБРАТЬ» вырос
   }
 
   // ---------- Забрать, долг и раунды ----------
@@ -746,14 +795,13 @@ export class GameScene extends Phaser.Scene {
     this.refreshHud();
   }
 
-  /** Кон переходит во «внесено», серия обрывается. */
+  /** Кон переходит во «внесено» и летит в табло, серия обрывается. */
   private payPot(): void {
     const amount = this.pot;
     this.paid += amount;
     this.pot = 0;
     this.streak = 0;
-    this.messageText.setText(`+${amount} внесено`);
-    this.flyToDebtBar(amount);
+    this.flyToBoard(amount);
   }
 
   /** Долг закрыт, как только внесено не меньше долга. */
@@ -761,7 +809,7 @@ export class GameScene extends Phaser.Scene {
     return this.paid >= this.debt;
   }
 
-  /** Долг закрыт: «+36» долетает до полосы, на секунду крупно «ДОЛГ ЗАКРЫТ!», потом следующий раунд. */
+  /** Долг закрыт: «+36» долетает до табло, на секунду крупно «ДОЛГ ЗАКРЫТ!», потом следующий раунд. */
   private closeDebt(): void {
     this.isRoundOver = true;
     this.time.delayedCall(BANNER_DELAY, () => this.showDebtClosedBanner());
@@ -769,7 +817,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Следующий раунд: новый долг, множитель ×1, излишек идёт в новый долг.
+   * Следующий раунд: новый долг на записке, множитель ×1, излишек идёт в новый долг.
    * Излишка хватает и на новый долг — он тоже закрывается, иначе прокрутки снова полные.
    */
   private startNextRound(): void {
@@ -779,9 +827,13 @@ export class GameScene extends Phaser.Scene {
     this.debt = debtForRound(this.round);
     this.streak = 0;
     this.updateRecord();
-    this.messageText.setText(`Раунд ${this.round} · новый долг ${this.debt}`);
-    if (this.isDebtPaid()) this.closeDebt();
-    else this.spinsLeft = SPINS_PER_ROUND; // оставшиеся прокрутки прошлого раунда сгорают
+    this.flipNote();
+    if (this.isDebtPaid()) {
+      this.closeDebt();
+    } else {
+      this.spinsLeft = SPINS_PER_ROUND; // оставшиеся прокрутки прошлого раунда сгорают
+      this.popSpinLamps();
+    }
     this.refreshHud();
   }
 

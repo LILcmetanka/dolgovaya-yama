@@ -3,24 +3,39 @@ import { patternSize, type Pattern } from './patterns';
 import { GRID_COLUMNS, GRID_ROWS, isSkull, type SlotSymbol } from './rules';
 
 /**
- * Украшения «Долговой ямы»: фон, корпус автомата, лампочки, монетка, клетки символов и схемы паттернов.
- * Логики игры здесь нет. Картинок в проекте тоже нет — всё рисуется кодом.
+ * Украшения «Долговой ямы»: тёмная комната, корпус автомата, рычаг, записка, лампочки, монетка,
+ * клетки символов и схемы паттернов. Логики игры здесь нет. Картинок в проекте тоже нет — всё рисуется кодом.
+ * Неподвижное рисуется один раз и «запекается» в текстуру: дальше это одна картинка, и игра идёт даже на слабом компьютере.
  */
 
 /** Шрифт игры: в нём есть шрифты эмодзи. */
 export const FONT = 'system-ui, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
 /** Цвет выключенной лампочки. */
 export const LAMP_OFF = 0x431407;
-/** Имена текстур, нарисованных кодом: монетка и иконки кнопок. */
+/** Имена текстур, нарисованных кодом. */
 export const COIN_TEXTURE = 'coin';
-export const LEVER_ICON = 'icon-lever';
 export const COINS_ICON = 'icon-coins';
-const BACKGROUND_TEXTURE = 'background-pattern';
-const BOKEH_TEXTURE = 'bokeh';
-/** Цвета панелей в стиле автомата. */
-const PANEL_FILL = 0x0b1120;
-const PANEL_BORDER = 0xb45309;
-const PANEL_HEADER = 0x7f1d1d;
+export const LEVER_ROD_TEXTURE = 'lever-rod';
+export const LEVER_BALL_TEXTURE = 'lever-ball';
+export const NOTE_TEXTURE = 'note';
+const ROOM_TEXTURE = 'room';
+const MACHINE_TEXTURE = 'machine';
+/** Комната: тёмная стена в полоску и пол. */
+const WALL_COLOR = 0x15100d;
+const FLOOR_COLOR = 0x090706;
+const FLOOR_Y = 560; // где стена переходит в пол
+/** Корпус автомата. */
+const BODY_COLOR = 0x4c1111; // лицевая часть
+const BODY_SIDE = 0x2b0909; // левый бок в тени — так корпус кажется объёмным
+const TRIM_COLOR = 0xb45309; // бронзовая окантовка
+const CHROME = 0x94a3b8;
+const CHROME_LIGHT = 0xe2e8f0;
+const SCREEN_GLASS = 0x020617; // почти чёрное стекло под сеткой
+/** Записка с долгом. */
+const NOTE_TAPE = 12; // скотч заходит на листок сверху, px
+const NOTE_INK = '#334155'; // «ДОЛГ»
+const NOTE_DEBT_INK = '#991b1b'; // сумма — красной ручкой
+const NOTE_DEBT_FONT_SIZE = 44; // сумма крупно; длинная сумма уменьшается, чтобы влезть на листок
 /** Клетка сетки: рамка обычного символа и рамка черепа. */
 const CELL_BORDER = 0xe2e8f0;
 const SKULL_CELL_BORDER = 0xef4444;
@@ -31,86 +46,217 @@ const MINI_GAP = 2; // промежуток между клетками схем
 const MINI_ON = 0xfde047;
 const MINI_OFF = 0x334155;
 
-/**
- * Фон «зала казино»: градиент сверху вниз, узор-ковёр из ромбиков,
- * тёплое свечение за автоматом и медленно мерцающие размытые огоньки.
- */
-export function drawBackground(scene: Phaser.Scene): void {
-  // Градиент: сверху тёмно-фиолетовый, снизу почти чёрный. Это один прямоугольник — он дешёвый.
-  const gradient = scene.add.graphics();
-  gradient.fillGradientStyle(0x2a1158, 0x2a1158, 0x05030f, 0x05030f, 1);
-  gradient.fillRect(0, 0, 960, 640);
-
-  // Узор и свечение не меняются: рисуем их один раз в текстуру и дальше показываем одной картинкой.
-  // Так не нужно перерисовывать сотни ромбиков каждый кадр — игра идёт и на слабом компьютере.
-  if (!scene.textures.exists(BACKGROUND_TEXTURE)) bakeBackgroundPattern(scene);
-  scene.add.image(0, 0, BACKGROUND_TEXTURE).setOrigin(0);
-
-  drawBokehLights(scene);
+/** Прямоугольник: x, y — его середина. */
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
-/** Узор-ковёр и свечение за автоматом — в текстуру BACKGROUND_TEXTURE. */
-function bakeBackgroundPattern(scene: Phaser.Scene): void {
-  const g = scene.add.graphics();
-  // Узор-ковёр: ряды маленьких ромбиков, каждый второй ряд со сдвигом.
-  const step = 32;
-  const size = 5;
-  g.fillStyle(0x4c1d95, 0.35);
-  for (let row = 0; row * step <= 640; row++) {
-    const y = row * step;
-    const shift = row % 2 === 0 ? 0 : step / 2;
-    for (let x = shift; x <= 960; x += step) {
-      g.fillTriangle(x - size, y, x + size, y, x, y - size); // верхняя половина ромбика
-      g.fillTriangle(x - size, y, x + size, y, x, y + size); // нижняя половина
-    }
-  }
+/** Где на корпусе какие части. Координаты задаёт GameScene: поверх этих мест он ставит живые объекты. */
+export interface MachineLayout {
+  body: Box; // корпус целиком, низ уходит за край экрана
+  display: Box; // табло с монетами
+  glass: Box; // стекло с паттернами
+  screen: Box; // окно вокруг сетки 5×3
+  belly: Box; // панель под экраном: лампочки прокруток, окошко множителя, кнопка
+  multiplierWindow: Box; // окошко множителя серии
+  leverMount: Box; // крепление рычага на правом боку
+}
 
-  // Свечение за автоматом: несколько полупрозрачных овалов друг в друге.
-  for (let i = 0; i < 6; i++) {
-    g.fillStyle(0xf59e0b, 0.035);
-    g.fillEllipse(480, 250, 760 - i * 90, 380 - i * 45);
+/** Тёмная комната: стена в полоску, плинтус, пол, тёплый отсвет от автомата и тёмные углы. */
+export function drawRoom(scene: Phaser.Scene): void {
+  if (!scene.textures.exists(ROOM_TEXTURE)) bakeRoom(scene);
+  scene.add.image(0, 0, ROOM_TEXTURE).setOrigin(0);
+}
+
+/** Комната — в текстуру ROOM_TEXTURE. */
+function bakeRoom(scene: Phaser.Scene): void {
+  const g = scene.add.graphics();
+  g.fillStyle(WALL_COLOR);
+  g.fillRect(0, 0, 960, FLOOR_Y);
+  g.fillStyle(0xffffff, 0.02); // обои: еле заметные вертикальные полосы
+  for (let x = 0; x < 960; x += 48) g.fillRect(x, 0, 20, FLOOR_Y);
+  g.fillStyle(0x241a14);
+  g.fillRect(0, FLOOR_Y - 10, 960, 10); // плинтус
+  g.fillStyle(FLOOR_COLOR);
+  g.fillRect(0, FLOOR_Y, 960, 640 - FLOOR_Y);
+
+  // Тёплый отсвет от огней автомата: полупрозрачные овалы друг в друге.
+  for (let i = 0; i < 7; i++) {
+    g.fillStyle(0xf59e0b, 0.025);
+    g.fillEllipse(480, 300, 1000 - i * 110, 760 - i * 80);
   }
-  g.generateTexture(BACKGROUND_TEXTURE, 960, 640);
+  // Тёмные углы: чёрные рамки, каждая следующая ближе к центру — края экрана темнее.
+  for (let i = 0; i < 5; i++) {
+    const inset = i * 26;
+    g.lineStyle(52, 0x000000, 0.14);
+    g.strokeRect(inset, inset, 960 - 2 * inset, 640 - 2 * inset);
+  }
+  g.generateTexture(ROOM_TEXTURE, 960, 640);
   g.destroy();
 }
 
-/** Размытые огоньки на фоне: белый круг, перекрашенный в разные цвета; яркость медленно «дышит». */
-function drawBokehLights(scene: Phaser.Scene): void {
-  if (!scene.textures.exists(BOKEH_TEXTURE)) {
+/**
+ * Корпус автомата: тело, табло, стекло для паттернов, окно экрана, панель под экраном,
+ * окошко множителя и крепление рычага. Всё это неподвижно — одна текстура на весь экран.
+ */
+export function drawMachineBody(scene: Phaser.Scene, layout: MachineLayout): void {
+  if (!scene.textures.exists(MACHINE_TEXTURE)) bakeMachineBody(scene, layout);
+  scene.add.image(0, 0, MACHINE_TEXTURE).setOrigin(0);
+}
+
+/** Корпус — в текстуру MACHINE_TEXTURE: части рисуются по очереди, от задних к передним. */
+function bakeMachineBody(scene: Phaser.Scene, layout: MachineLayout): void {
+  const g = scene.add.graphics();
+  drawBody(g, layout.body);
+  drawLeverMount(g, layout.leverMount);
+  drawInset(g, layout.display, 0x050505, TRIM_COLOR);
+  drawInset(g, layout.glass, 0x0b1120, TRIM_COLOR);
+  drawScreenFrame(g, layout.screen);
+  drawInset(g, layout.belly, 0x240808, 0x7c2d12);
+  drawInset(g, layout.multiplierWindow, 0x050505, TRIM_COLOR);
+  g.generateTexture(MACHINE_TEXTURE, 960, 640);
+  g.destroy();
+}
+
+/** Левый верхний угол прямоугольника. */
+function topLeft(box: Box): { left: number; top: number } {
+  return { left: box.x - box.width / 2, top: box.y - box.height / 2 };
+}
+
+/** Тело корпуса: тень на стене, тёмный левый бок, лицевая часть и бронзовая окантовка. */
+function drawBody(g: Phaser.GameObjects.Graphics, body: Box): void {
+  const { left, top } = topLeft(body);
+  const side = 16; // ширина бока в тени
+  g.fillStyle(0x000000, 0.5);
+  g.fillRoundedRect(left + 12, top + 10, body.width, body.height, 30); // тень на стене
+  g.fillStyle(BODY_SIDE);
+  g.fillRoundedRect(left, top, body.width, body.height, 30);
+  g.fillStyle(BODY_COLOR);
+  g.fillRoundedRect(left + side, top, body.width - side, body.height, 30);
+  g.lineStyle(4, TRIM_COLOR);
+  g.strokeRoundedRect(left + side + 8, top + 8, body.width - side - 16, body.height - 16, 24);
+}
+
+/** Утопленная панель: заливка, рамка и узкий блик сверху. */
+function drawInset(g: Phaser.GameObjects.Graphics, box: Box, fill: number, border: number): void {
+  const { left, top } = topLeft(box);
+  g.fillStyle(fill);
+  g.fillRoundedRect(left, top, box.width, box.height, 10);
+  g.lineStyle(3, border);
+  g.strokeRoundedRect(left, top, box.width, box.height, 10);
+  g.fillStyle(0xffffff, 0.05);
+  g.fillRoundedRect(left + 6, top + 4, box.width - 12, box.height * 0.3, 6);
+}
+
+/** Окно экрана: хромированная рамка и почти чёрное стекло под сеткой. */
+function drawScreenFrame(g: Phaser.GameObjects.Graphics, screen: Box): void {
+  const { left, top } = topLeft(screen);
+  const frame = 8; // ширина хромированной рамки
+  g.fillStyle(CHROME);
+  g.fillRoundedRect(left - frame, top - frame, screen.width + 2 * frame, screen.height + 2 * frame, 22);
+  g.fillStyle(SCREEN_GLASS);
+  g.fillRoundedRect(left, top, screen.width, screen.height, 16);
+}
+
+/** Крепление рычага на правом боку: хромированная коробка с бликом и тёмная втулка посередине. */
+function drawLeverMount(g: Phaser.GameObjects.Graphics, mount: Box): void {
+  const { left, top } = topLeft(mount);
+  g.fillStyle(CHROME);
+  g.fillRoundedRect(left, top, mount.width, mount.height, 8);
+  g.fillStyle(CHROME_LIGHT);
+  g.fillRect(left + 6, top + 5, mount.width - 12, 4); // блик
+  g.fillStyle(0x1f2937);
+  g.fillCircle(mount.x, mount.y, 11); // втулка: отсюда растёт рычаг
+}
+
+/**
+ * Рычаг из двух картинок: хромированная штанга (низ — точка вращения) и красный шарик.
+ * Шарик отдельно, чтобы при рывке штанга укорачивалась, а шарик оставался круглым.
+ */
+export function createLeverTextures(scene: Phaser.Scene, rodLength: number): void {
+  if (!scene.textures.exists(LEVER_ROD_TEXTURE)) {
     const g = scene.add.graphics();
-    g.fillStyle(0xffffff);
-    g.fillCircle(32, 32, 32);
-    g.generateTexture(BOKEH_TEXTURE, 64, 64);
+    g.fillStyle(CHROME);
+    g.fillRoundedRect(0, 0, 10, rodLength, 4); // штанга
+    g.fillStyle(CHROME_LIGHT);
+    g.fillRect(2, 0, 3, rodLength); // блик на штанге
+    g.generateTexture(LEVER_ROD_TEXTURE, 10, rodLength);
     g.destroy();
   }
-  const colors = [0xfbbf24, 0xf472b6, 0xa78bfa, 0x60a5fa];
-  for (let i = 0; i < 14; i++) {
-    const radius = Phaser.Math.Between(18, 50);
-    const light = scene.add
-      .image(Phaser.Math.Between(0, 960), Phaser.Math.Between(0, 640), BOKEH_TEXTURE)
-      .setScale(radius / 32)
-      .setTint(colors[i % colors.length])
-      .setAlpha(0.03);
-    scene.tweens.add({
-      targets: light,
-      alpha: 0.1,
-      duration: Phaser.Math.Between(1500, 3500),
-      delay: Phaser.Math.Between(0, 2000),
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut',
-    });
+  if (!scene.textures.exists(LEVER_BALL_TEXTURE)) {
+    const g = scene.add.graphics();
+    g.fillStyle(0x1f2937);
+    g.fillCircle(22, 22, 21); // ободок шарика
+    g.fillStyle(0xdc2626);
+    g.fillCircle(22, 22, 18); // шарик
+    g.fillStyle(0xfca5a5);
+    g.fillCircle(16, 15, 6); // блик
+    g.generateTexture(LEVER_BALL_TEXTURE, 44, 44);
+    g.destroy();
   }
 }
 
-/** Корпус автомата вокруг сетки: тень, красный корпус с золотой рамкой и тёмное окно. */
-export function drawCabinet(scene: Phaser.Scene, x: number, y: number, width: number, height: number): void {
-  scene.add.rectangle(x + 6, y + 8, width, height, 0x000000, 0.4).setRounded(26); // тень
-  scene.add.rectangle(x, y, width, height, 0x7f1d1d).setRounded(26).setStrokeStyle(6, 0xf59e0b); // корпус
-  scene.add.rectangle(x, y, width - 20, height - 20, 0x020617).setRounded(18); // окно для сетки
+/**
+ * Записка с долгом на canvas: листок в линейку, красное поле, скотч, «ДОЛГ» и сумма.
+ * Надписи рисуются прямо на листке, поэтому записку можно повернуть одной картинкой.
+ * Сумма меняется раз в раунд — тогда записка перерисовывается заново (canvas маленький, это дёшево).
+ */
+export function drawNoteTexture(scene: Phaser.Scene, width: number, height: number, debt: number): void {
+  // Текстура уже есть — её создала эта же функция, значит это canvas: берём его и рисуем заново.
+  const texture = scene.textures.exists(NOTE_TEXTURE)
+    ? (scene.textures.get(NOTE_TEXTURE) as Phaser.Textures.CanvasTexture)
+    : scene.textures.createCanvas(NOTE_TEXTURE, width, height);
+  if (!texture) return;
+  const ctx = texture.context;
+  ctx.clearRect(0, 0, width, height);
+  drawNotePaper(ctx, width, height);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = NOTE_INK;
+  ctx.font = `bold 18px ${FONT}`;
+  ctx.fillText('ДОЛГ', width / 2, height / 2 - 16);
+
+  // Сумма: уменьшаем шрифт, пока она не влезет на листок.
+  const text = String(debt);
+  let size = NOTE_DEBT_FONT_SIZE;
+  ctx.font = `bold ${size}px ${FONT}`;
+  while (ctx.measureText(text).width > width - 32 && size > 16) {
+    size -= 2;
+    ctx.font = `bold ${size}px ${FONT}`;
+  }
+  ctx.fillStyle = NOTE_DEBT_INK;
+  ctx.fillText(text, width / 2, height / 2 + 22);
+  texture.refresh(); // передать нарисованное в видеокарту
 }
 
-/** Лампочки по верхнему и нижнему краю корпуса. Порядок — по кругу: верх слева направо, низ справа налево. */
+/** Листок записки: тень на стене, бумага, линейки, поле и скотч. */
+function drawNotePaper(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+  ctx.fillRect(5, NOTE_TAPE + 5, width - 5, height - NOTE_TAPE - 5); // тень на стене
+  ctx.fillStyle = '#eee5cc';
+  ctx.fillRect(0, NOTE_TAPE, width - 5, height - NOTE_TAPE - 5); // листок
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(147, 197, 253, 0.7)';
+  for (let y = NOTE_TAPE + 28; y < height - 10; y += 16) {
+    ctx.beginPath();
+    ctx.moveTo(3, y + 0.5);
+    ctx.lineTo(width - 8, y + 0.5);
+    ctx.stroke(); // линейка
+  }
+  ctx.strokeStyle = 'rgba(248, 113, 113, 0.7)';
+  ctx.beginPath();
+  ctx.moveTo(18.5, NOTE_TAPE);
+  ctx.lineTo(18.5, height - 5);
+  ctx.stroke(); // красное поле
+  ctx.fillStyle = 'rgba(254, 243, 199, 0.7)';
+  ctx.fillRect(width / 2 - 30, 0, 60, NOTE_TAPE * 2); // скотч
+}
+
+/** Лампочки по верхнему и нижнему краю окна экрана. Порядок — по кругу: верх слева направо, низ справа налево. */
 export function createLamps(scene: Phaser.Scene, x: number, y: number, width: number, height: number): Phaser.GameObjects.Arc[] {
   const xs: number[] = [];
   for (let lampX = x - width / 2 + 24; lampX <= x + width / 2 - 24; lampX += 26) xs.push(lampX);
@@ -119,41 +265,8 @@ export function createLamps(scene: Phaser.Scene, x: number, y: number, width: nu
   return [...top, ...bottom];
 }
 
-/** Панель в стиле автомата: тёмный фон, золотая рамка и красная плашка под заголовок сверху. Возвращает обе части. */
-export function drawPanel(
-  scene: Phaser.Scene,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-): Phaser.GameObjects.Rectangle[] {
-  const body = scene.add.rectangle(x, y, width, height, PANEL_FILL, 0.92).setRounded(14).setStrokeStyle(3, PANEL_BORDER);
-  const header = scene.add.rectangle(x, y - height / 2 + 18, width - 10, 26, PANEL_HEADER).setRounded(8);
-  return [body, header];
-}
-
-/** Табличка под надписью (например, «НА КОНУ»): тёмная, с золотой рамкой. */
-export function drawPlaque(scene: Phaser.Scene, x: number, y: number, width: number, height: number): void {
-  scene.add.rectangle(x, y, width, height, PANEL_FILL, 0.92).setRounded(12).setStrokeStyle(2, PANEL_BORDER);
-}
-
-/** Иконки кнопок: рычаг автомата («крутить») и стопка монет («забрать»). Рисуются один раз. */
+/** Иконка кнопки «забрать» — стопка монет. Рисуется один раз. */
 export function createIconTextures(scene: Phaser.Scene): void {
-  if (!scene.textures.exists(LEVER_ICON)) {
-    const g = scene.add.graphics();
-    g.fillStyle(0x94a3b8);
-    g.fillRoundedRect(8, 31, 24, 8, 3); // основание
-    g.fillStyle(0xe2e8f0);
-    g.fillRect(17, 12, 6, 21); // ручка
-    g.fillStyle(0x1f2937);
-    g.fillCircle(20, 10, 9); // тёмный ободок шарика
-    g.fillStyle(0xef4444);
-    g.fillCircle(20, 10, 7); // красный шарик
-    g.fillStyle(0xfecaca);
-    g.fillCircle(17, 7, 2.5); // блик
-    g.generateTexture(LEVER_ICON, 40, 40);
-    g.destroy();
-  }
   if (!scene.textures.exists(COINS_ICON)) {
     const g = scene.add.graphics();
     for (let i = 0; i < 3; i++) {
