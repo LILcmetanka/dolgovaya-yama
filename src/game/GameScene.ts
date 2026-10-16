@@ -15,13 +15,14 @@ import {
 } from './rules';
 import { evaluateGrid, PATTERNS, type PatternHit, type SpinResult } from './patterns';
 import {
-  COIN_TEXTURE,
-  COINS_ICON,
-  createCoinTexture,
-  createIconTextures,
+  CHIP_STACK_TEXTURE,
+  CHIP_TEXTURE,
+  createChipTextures,
   createLamps,
   createLeverTextures,
   createPatternTextures,
+  createRedButtonTexture,
+  createShutterTexture,
   createSymbolTextures,
   drawMachineBody,
   drawNoteTexture,
@@ -32,6 +33,8 @@ import {
   LEVER_ROD_TEXTURE,
   NOTE_TEXTURE,
   patternTexture,
+  RED_BUTTON_TEXTURE,
+  SHUTTER_TEXTURE,
   symbolTexture,
   type Box,
 } from './decor';
@@ -69,12 +72,24 @@ const PATTERN_STEP_Y = 36;
 const SPIN_LAMP_Y = 492;
 const SPIN_LAMP_STEP = 26;
 const SPIN_LAMP_RADIUS = 8;
-// Временная кнопка «ЗАБРАТЬ»: в шаге 3 её заменит лоток.
-const TAKE_BUTTON_X = 590;
-const TAKE_BUTTON_Y = 552;
-const BUTTON_WIDTH = 240;
-const BUTTON_HEIGHT = 64;
-const BUTTON_PRESS = 6; // на сколько px кнопка вдавливается (столько же видно её тени)
+// Окошко выплаты на корпусе: когда на кону что-то есть, шторка поднимается — за ней стопка фишек, «× сумма» и красная кнопка.
+const PAYOUT_WINDOW: Box = { x: 565, y: 552, width: 290, height: 70 };
+const SHUTTER_INSET = 4; // шторка чуть меньше окошка, чтобы не вылезать за скруглённые углы
+const SHUTTER_OPEN_SCALE = 0.1; // поднятая шторка свёрнута в узкую полоску сверху
+const CHIP_STACK_X = 462;
+const CHIP_STACK_BOTTOM_Y = 574; // нижняя фишка стопки
+const CHIP_STACK_STEP = 6; // каждая следующая фишка в стопке выше на столько px
+const PAYOUT_TEXT_X = 500; // «× 400» — правее стопки
+const RED_BUTTON_X = 664;
+const RED_BUTTON_Y = 554;
+// Высота стопки: 1 фишка и ещё по одной за каждый порог — долю долга раунда, которую набрал кон.
+// 4 фишки — кона уже хватает на долг, 6 — больше не бывает (кон вчетверо больше долга).
+const CHIP_STACK_STEPS = [0.25, 0.5, 1, 2, 4];
+const BOARD_CHIP_X = DISPLAY.x - 84; // фишка на табло — сюда летят забранные фишки
+// Кнопка «ЗАНОВО» на экране проигрыша.
+const BUTTON_WIDTH = 170;
+const BUTTON_HEIGHT = 60;
+const BUTTON_SHADOW = 6; // тень кнопки сдвинута вниз на столько px
 
 // Анимация прокрутки: время в мс, расстояние в px.
 const FLICKER_DELAY = 60; // как часто меняются символы, пока столбец крутится
@@ -95,6 +110,11 @@ const GAME_OVER_DELAY = 700; // пауза перед экраном проиг�
 const RESTART_SPACE_DELAY = 800; // Пробел перезапускает игру не раньше, чем через столько
 const NOTE_FLIP_TIME = 140; // половина переворота записки
 const MULTIPLIER_FLASH_TIME = 600; // сколько окошко множителя горит красным после черепов
+const SHUTTER_TIME = 300; // шторка поднимается или опускается
+const CHIPS_FLY_TIME = 500; // фишки летят из окошка в табло
+const CHIPS_FLY_STAGGER = 70; // фишки взлетают друг за другом, сверху стопки
+const CHIPS_BURN_TIME = 450; // фишки в окошке сгорают
+const RED_BUTTON_PRESS_SCALE = 0.88; // нажатая красная кнопка чуть уменьшается — «вдавливается»
 
 // Лампочки на корпусе.
 const LAMP_TICK = 90; // как часто обновляются бегущие огни, мс
@@ -103,12 +123,13 @@ const LAMP_GOLD = 0xfde047;
 const LAMP_RED = 0xef4444;
 const LAMP_GREEN = 0x4ade80;
 const SPIN_LAMP_RIM = 0x1c1917; // ободок лампочки прокрутки
+const BURN_COLOR = 0xff5a1f; // горящие фишки в окошке
 
 const LOW_SPINS = 3; // столько прокруток или меньше — оставшиеся лампочки красные
 const RECORD_KEY = 'dolgovaya-yama-record'; // ключ рекорда в localStorage
 
 // Слои: чем больше число, тем выше лежит объект.
-const COIN_DEPTH = 5;
+const CHIP_DEPTH = 5;
 const POPUP_DEPTH = 10;
 const BANNER_DEPTH = 20;
 const GAME_OVER_DEPTH = 30;
@@ -118,7 +139,6 @@ const SKULL_BORDER = 0xef4444; // рамка паттерна из черепо�
 const WIN_BORDER = 0xfde047; // рамка выигравшего паттерна
 const SPIN_COLOR = 0xea580c; // кнопка «ЗАНОВО»
 const BUTTON_BORDER = 0xfbbf24;
-const TAKE_COLOR = 0x16a34a;
 const GOLD_TEXT = '#fde047';
 const GREEN_TEXT = '#4ade80';
 const RED_TEXT = '#f87171';
@@ -135,15 +155,11 @@ const LED_STYLE = {
   shadow: { color: '#f59e0b', blur: 12, fill: true },
 };
 
-/**
- * Кнопка: тень стоит на месте, а «лицо» — контейнер с корпусом, бликом, иконкой и надписями.
- * Контейнер двигает всё вместе: нажатие опускает лицо на тень. y — где кнопка стоит, когда не нажата.
- */
+/** Кнопка: тень стоит на месте, а «лицо» — контейнер с корпусом, бликом и надписями. */
 interface Button {
   shadow: Phaser.GameObjects.Rectangle;
   face: Phaser.GameObjects.Container;
   label: Phaser.GameObjects.Text;
-  y: number;
 }
 
 /** «+12» или, если множитель больше 1, «+4 ×3 = +12». */
@@ -159,6 +175,16 @@ function cellX(col: number): number {
 /** Центр клетки по вертикали: ряды стоят вокруг GRID_Y. */
 function cellY(row: number): number {
   return GRID_Y + (row - (GRID_ROWS - 1) / 2) * CELL_STEP;
+}
+
+/** Сколько фишек в стопке окошка: одна и ещё по одной за каждый порог CHIP_STACK_STEPS — долю долга, которую набрал кон. */
+function chipsInStack(pot: number, debt: number): number {
+  return 1 + CHIP_STACK_STEPS.filter((step) => pot >= step * debt).length;
+}
+
+/** Где лежит фишка стопки: нижняя на CHIP_STACK_BOTTOM_Y, каждая следующая выше на CHIP_STACK_STEP. */
+function stackChipY(index: number): number {
+  return CHIP_STACK_BOTTOM_Y - index * CHIP_STACK_STEP;
 }
 
 /** Когда останавливается столбец: левый первым, каждый следующий на STOP_STEP позже. */
@@ -209,6 +235,7 @@ export class GameScene extends Phaser.Scene {
   private isRoundOver = false; // долг закрыт, висит «ДОЛГ ЗАКРЫТ!» — ждём следующий раунд
   private isGameOver = false; // прокрутки кончились, а долг не закрыт
   private canRestartWithSpace = false; // Пробел на экране проигрыша срабатывает не сразу
+  private isWindowOpen = false; // шторка окошка выплаты поднята
 
   // Бегущие огни вокруг экрана.
   private lampTick = 0; // сколько раз огни уже обновились
@@ -222,13 +249,17 @@ export class GameScene extends Phaser.Scene {
   private patternFrames: Phaser.GameObjects.Rectangle[] = []; // рамки схем на стекле, в порядке PATTERNS
   private lamps: Phaser.GameObjects.Arc[] = []; // бегущие огни вокруг экрана
   private spinLamps: Phaser.GameObjects.Arc[] = []; // лампочки прокруток: одна на прокрутку
-  private coinEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private chipEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
   private boardText!: Phaser.GameObjects.Text; // табло: сколько внесено
   private multiplierText!: Phaser.GameObjects.Text; // окошко множителя серии
   private note!: Phaser.GameObjects.Image; // записка с долгом: бумажка с надписями одной картинкой
   private leverRod!: Phaser.GameObjects.Image; // штанга рычага, низ — точка вращения
   private leverBall!: Phaser.GameObjects.Image; // шарик на конце штанги
-  private takeButton!: Button;
+  private shutter!: Phaser.GameObjects.Image; // шторка окошка выплаты: scaleY 1 — опущена, SHUTTER_OPEN_SCALE — поднята
+  private stackChips: Phaser.GameObjects.Image[] = []; // стопка фишек в окошке, снизу вверх
+  private payoutText!: Phaser.GameObjects.Text; // «× 400» — сколько фишек на кону
+  private redButton!: Phaser.GameObjects.Image; // красная кнопка «забрать» — без надписей
+  private payoutHint!: Phaser.GameObjects.Text; // подсказка «Enter» под окошком, видна, когда оно открыто
 
   constructor() {
     super('GameScene');
@@ -237,11 +268,12 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     this.resetState();
     drawRoom(this);
-    createCoinTexture(this);
-    createIconTextures(this);
+    createChipTextures(this);
     createLeverTextures(this, LEVER_ROD_LENGTH);
     createSymbolTextures(this, SYMBOLS, CELL_SIZE, CELL_RADIUS);
     createPatternTextures(this, PATTERNS);
+    createShutterTexture(this, PAYOUT_WINDOW.width - 2 * SHUTTER_INSET, PAYOUT_WINDOW.height - 2 * SHUTTER_INSET);
+    createRedButtonTexture(this);
     this.drawNote();
     this.drawMachine();
     this.drawBoard();
@@ -249,9 +281,9 @@ export class GameScene extends Phaser.Scene {
     this.drawGrid();
     this.drawSpinLamps();
     this.drawMultiplier();
-    this.drawTakeButton();
+    this.drawPayoutWindow();
     this.drawLever();
-    this.createCoinEmitter();
+    this.createChipEmitter();
     this.setupKeyboard();
     this.refreshHud();
   }
@@ -268,6 +300,7 @@ export class GameScene extends Phaser.Scene {
     this.isRoundOver = false;
     this.isGameOver = false;
     this.canRestartWithSpace = false;
+    this.isWindowOpen = false;
     this.lampTick = 0;
     this.lampSpeed = LAMP_IDLE_SPEED;
     this.lampColor = LAMP_GOLD;
@@ -294,15 +327,16 @@ export class GameScene extends Phaser.Scene {
       screen: SCREEN,
       belly: BELLY,
       multiplierWindow: MULTIPLIER_WINDOW,
+      payoutWindow: PAYOUT_WINDOW,
       leverMount: LEVER_MOUNT,
     });
     this.lamps = createLamps(this, SCREEN.x, SCREEN.y, SCREEN.width, SCREEN.height);
     this.time.addEvent({ delay: LAMP_TICK, loop: true, callback: () => this.tickLamps() });
   }
 
-  /** Табло сверху: монетка и сколько внесено в долг. Сюда летят забранные деньги. */
+  /** Табло сверху: фишка и сколько внесено в долг. Сюда летят забранные фишки. */
   private drawBoard(): void {
-    this.add.image(DISPLAY.x - 84, DISPLAY.y, COIN_TEXTURE).setScale(1.5);
+    this.add.image(BOARD_CHIP_X, DISPLAY.y, CHIP_TEXTURE).setScale(1.3);
     this.boardText = this.addText(DISPLAY.x + 12, DISPLAY.y, '', LED_STYLE).setOrigin(0.5);
   }
 
@@ -354,9 +388,24 @@ export class GameScene extends Phaser.Scene {
     this.multiplierText = this.addText(MULTIPLIER_WINDOW.x, MULTIPLIER_WINDOW.y, '', LED_STYLE).setOrigin(0.5);
   }
 
-  /** Временная кнопка «ЗАБРАТЬ» на корпусе: на ней виден кон. В шаге 3 её заменит лоток. */
-  private drawTakeButton(): void {
-    this.takeButton = this.makeButton(TAKE_BUTTON_X, TAKE_BUTTON_Y, TAKE_COLOR, 'Enter', () => this.take(), COINS_ICON);
+  /**
+   * Окошко выплаты: стопка фишек (пока спрятана), «× сумма», красная кнопка «забрать» и поверх — шторка.
+   * Пустой кон — шторка опущена; кон есть — шторка поднята, и всё видно.
+   */
+  private drawPayoutWindow(): void {
+    this.stackChips = [];
+    for (let index = 0; index <= CHIP_STACK_STEPS.length; index++) {
+      this.stackChips.push(this.add.image(CHIP_STACK_X, stackChipY(index), CHIP_STACK_TEXTURE).setVisible(false));
+    }
+    this.payoutText = this.addText(PAYOUT_TEXT_X, PAYOUT_WINDOW.y, '', { ...LED_STYLE, fontSize: '26px' }).setOrigin(0, 0.5);
+    this.redButton = this.add.image(RED_BUTTON_X, RED_BUTTON_Y, RED_BUTTON_TEXTURE);
+    this.redButton.setInteractive({ useHandCursor: true });
+    this.redButton.on('pointerdown', () => this.take());
+    // Шторка висит от верха окошка: scaleY уменьшается — и она сворачивается вверх.
+    const shutterTop = PAYOUT_WINDOW.y - PAYOUT_WINDOW.height / 2 + SHUTTER_INSET;
+    this.shutter = this.add.image(PAYOUT_WINDOW.x, shutterTop, SHUTTER_TEXTURE).setOrigin(0.5, 0);
+    const hintY = PAYOUT_WINDOW.y + PAYOUT_WINDOW.height / 2 + 12;
+    this.payoutHint = this.addText(RED_BUTTON_X, hintY, 'Enter', { fontSize: '13px', color: HINT_TEXT }).setOrigin(0.5).setVisible(false);
   }
 
   /** Рычаг справа: штанга и шарик на её конце. Дёрнуть — кликом по рычагу или Пробелом. Под креплением — подсказка клавиши. */
@@ -373,35 +422,25 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Кнопка автомата: тень, корпус с золотой рамкой, блик сверху, иконка (если есть),
-   * крупная надпись и под ней клавиша. Нажимается и мышью, и пальцем.
+   * Кнопка: тень, корпус с золотой рамкой, блик сверху, крупная надпись и под ней клавиша.
+   * Нажимается и мышью, и пальцем.
    */
-  private makeButton(x: number, y: number, color: number, keyHint: string, onPress: () => void, icon?: string): Button {
-    const shadow = this.add.rectangle(x, y + BUTTON_PRESS, BUTTON_WIDTH, BUTTON_HEIGHT, 0x000000, 0.45).setRounded(18);
+  private makeButton(x: number, y: number, color: number, keyHint: string, onPress: () => void): Button {
+    const shadow = this.add.rectangle(x, y + BUTTON_SHADOW, BUTTON_WIDTH, BUTTON_HEIGHT, 0x000000, 0.45).setRounded(18);
     // Всё остальное рисуем относительно центра кнопки и кладём в контейнер.
     const box = this.add.rectangle(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT, color).setRounded(18).setStrokeStyle(3, BUTTON_BORDER);
     box.setInteractive({ useHandCursor: true });
     box.on('pointerdown', onPress);
     const gloss = this.add.rectangle(0, -BUTTON_HEIGHT / 4, BUTTON_WIDTH - 16, BUTTON_HEIGHT / 2 - 8, 0xffffff, 0.16).setRounded(12);
-    const textX = icon ? 20 : 0; // с иконкой надписи сдвинуты вправо
-    const label = this.addText(textX, -9, '', {
+    const label = this.addText(0, -9, '', {
       fontSize: '22px',
       fontStyle: 'bold',
       stroke: 'rgba(0, 0, 0, 0.35)',
       strokeThickness: 3,
     }).setOrigin(0.5);
-    const key = this.addText(textX, 21, keyHint, { fontSize: '13px', color: 'rgba(255, 255, 255, 0.75)' }).setOrigin(0.5);
-    const parts: Phaser.GameObjects.GameObject[] = [box, gloss, label, key];
-    if (icon) parts.push(this.add.image(-BUTTON_WIDTH / 2 + 32, 0, icon));
-    const face = this.add.container(x, y, parts);
-    return { shadow, face, label, y };
-  }
-
-  /** Кнопка «вдавливается»: лицо опускается на тень и возвращается. */
-  private pressButton(button: Button): void {
-    this.tweens.killTweensOf(button.face);
-    button.face.y = button.y;
-    this.tweens.add({ targets: button.face, y: button.y + BUTTON_PRESS, duration: 70, yoyo: true });
+    const key = this.addText(0, 21, keyHint, { fontSize: '13px', color: 'rgba(255, 255, 255, 0.75)' }).setOrigin(0.5);
+    const face = this.add.container(x, y, [box, gloss, label, key]);
+    return { shadow, face, label };
   }
 
   /** this.add.text с нашим шрифтом (в нём есть шрифты эмодзи). */
@@ -419,12 +458,12 @@ export class GameScene extends Phaser.Scene {
     this.cells[row][col].setTexture(symbolTexture(symbol));
   }
 
-  /** Обновить табло, окошко множителя, кнопку и лампочки по текущему состоянию. */
+  /** Обновить табло, окошко множителя, окошко выплаты и лампочки по текущему состоянию. */
   private refreshHud(): void {
     this.boardText.setText(String(this.paid));
     this.multiplierText.setText(`×${multiplierForStreak(this.streak)}`);
-    this.takeButton.label.setText(`ЗАБРАТЬ ${this.pot}`);
-    this.setButtonEnabled(this.takeButton, this.canAct() && this.pot > 0);
+    this.payoutText.setText(`× ${this.pot}`);
+    this.redButton.setAlpha(this.canAct() ? 1 : 0.6); // пока крутится — кнопка тусклее
     this.refreshSpinLamps();
   }
 
@@ -432,13 +471,6 @@ export class GameScene extends Phaser.Scene {
   private refreshSpinLamps(): void {
     const litColor = this.spinsLeft <= LOW_SPINS ? LAMP_RED : LAMP_GOLD;
     this.spinLamps.forEach((lamp, index) => lamp.setFillStyle(index < this.spinsLeft ? litColor : LAMP_OFF));
-  }
-
-  /** Недоступная кнопка затемнена. Сами действия всё равно проверяют, можно ли их сделать. */
-  private setButtonEnabled(button: Button, enabled: boolean): void {
-    const alpha = enabled ? 1 : 0.35;
-    button.shadow.setAlpha(alpha);
-    button.face.setAlpha(alpha);
   }
 
   // ---------- Обратная связь ----------
@@ -526,10 +558,10 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  /** Монетки-частицы: сами не летят, только по команде explode() — веером вверх, потом падают. */
-  private createCoinEmitter(): void {
-    this.coinEmitter = this.add
-      .particles(0, 0, COIN_TEXTURE, {
+  /** Фишки-частицы: сами не летят, только по команде explode() — веером вверх, потом падают. */
+  private createChipEmitter(): void {
+    this.chipEmitter = this.add
+      .particles(0, 0, CHIP_TEXTURE, {
         speed: { min: 180, max: 380 },
         angle: { min: 210, max: 330 },
         gravityY: 700,
@@ -538,12 +570,12 @@ export class GameScene extends Phaser.Scene {
         rotate: { min: 0, max: 360 },
         emitting: false,
       })
-      .setDepth(COIN_DEPTH);
+      .setDepth(CHIP_DEPTH);
   }
 
-  /** Монетки из сетки: чем больше выигрыш, тем больше монет (но не больше 40). */
-  private burstCoins(gain: number): void {
-    this.coinEmitter.explode(Math.min(6 + Math.floor(gain / 5), 40), CENTER_X, GRID_Y);
+  /** Фишки из сетки: чем больше выигрыш, тем больше фишек (но не больше 40). */
+  private burstChips(gain: number): void {
+    this.chipEmitter.explode(Math.min(6 + Math.floor(gain / 5), 40), CENTER_X, GRID_Y);
   }
 
   /** Надпись всплывает над сеткой: поднимается и тает. */
@@ -562,9 +594,9 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  /** «+36» летит с кнопки «ЗАБРАТЬ» в табло, там брызгают монетки и табло подпрыгивает. */
+  /** «+36» летит из окошка выплаты в табло, там брызгают фишки и табло подпрыгивает. */
   private flyToBoard(amount: number): void {
-    const label = this.addText(TAKE_BUTTON_X, TAKE_BUTTON_Y, `+${amount}`, { ...POPUP_STYLE, color: GREEN_TEXT })
+    const label = this.addText(PAYOUT_TEXT_X + 40, PAYOUT_WINDOW.y, `+${amount}`, { ...POPUP_STYLE, color: GREEN_TEXT })
       .setOrigin(0.5)
       .setDepth(POPUP_DEPTH);
     this.tweens.add({
@@ -576,7 +608,7 @@ export class GameScene extends Phaser.Scene {
       ease: 'Cubic.easeIn',
       onComplete: () => {
         label.destroy();
-        this.coinEmitter.explode(8, DISPLAY.x, DISPLAY.y); // монетки брызгают из табло
+        this.chipEmitter.explode(8, DISPLAY.x, DISPLAY.y); // фишки брызгают из табло
         this.pulseText(this.boardText);
       },
     });
@@ -769,7 +801,10 @@ export class GameScene extends Phaser.Scene {
     this.flashAndShake();
     this.flashLamps(LAMP_RED, 700);
     this.flashMultiplierRed();
-    if (lost > 0) this.showPopup(`−${lost}`, RED_TEXT); // сколько сгорело с кона
+    if (lost > 0) {
+      this.showPopup(`−${lost}`, RED_TEXT); // сколько сгорело с кона
+      this.burnChips();
+    }
   }
 
   /** Выигрыш паттернов × множитель идёт на кон. Пусто — ничего не происходит. */
@@ -779,9 +814,111 @@ export class GameScene extends Phaser.Scene {
     this.pot += gain;
     this.highlightHits(result.hits, WIN_BORDER);
     this.showPopup(formatWin(result.win, multiplier, gain), GOLD_TEXT);
-    this.burstCoins(gain);
+    this.burstChips(gain);
     this.flashLamps(LAMP_GOLD, 900);
-    this.pulseText(this.takeButton.label, 1.2); // кон на кнопке «ЗАБРАТЬ» вырос
+    this.openWindow();
+    this.refreshChipStack();
+    this.pulseText(this.payoutText, 1.2); // сумма в окошке выросла
+  }
+
+  // ---------- Окошко выплаты ----------
+
+  /** Шторка поднимается, если ещё опущена: видно стопку фишек, сумму и красную кнопку. */
+  private openWindow(): void {
+    if (this.isWindowOpen) return;
+    this.isWindowOpen = true;
+    this.payoutHint.setVisible(true);
+    this.tweens.killTweensOf(this.shutter);
+    this.tweens.add({ targets: this.shutter, scaleY: SHUTTER_OPEN_SCALE, duration: SHUTTER_TIME, ease: 'Quad.easeOut' });
+  }
+
+  /** Шторка опускается. delay — сколько подождать, пока фишки улетят или сгорят. */
+  private closeWindow(delay: number): void {
+    this.isWindowOpen = false;
+    this.payoutHint.setVisible(false);
+    this.tweens.killTweensOf(this.shutter);
+    this.tweens.add({ targets: this.shutter, scaleY: 1, delay, duration: SHUTTER_TIME, ease: 'Bounce.easeOut' });
+  }
+
+  /** Стопка растёт вместе с коном (см. chipsInStack). Новая фишка падает на стопку сверху. */
+  private refreshChipStack(): void {
+    const count = chipsInStack(this.pot, this.debt);
+    this.stackChips.forEach((chip, index) => {
+      const isNew = index < count && !chip.visible;
+      chip.setVisible(index < count);
+      if (isNew) {
+        const y = stackChipY(index);
+        this.tweens.add({ targets: chip, y: { from: y - 24, to: y }, duration: 250, ease: 'Bounce.easeOut' });
+      }
+    });
+  }
+
+  /** «Забрали»: фишки по очереди, сверху стопки, летят в табло, следом «+36». Пустое окошко закрывается. */
+  private flyChipsToBoard(amount: number): void {
+    if (this.shutter.scaleY !== SHUTTER_OPEN_SCALE) {
+      // Шторка ещё не поднялась (выигрыш на последней прокрутке забирается сразу) — пусть поднимется, потом фишки полетят.
+      this.isWindowOpen = true;
+      this.tweens.killTweensOf(this.shutter);
+      this.tweens.add({
+        targets: this.shutter,
+        scaleY: SHUTTER_OPEN_SCALE,
+        duration: SHUTTER_TIME,
+        ease: 'Quad.easeOut',
+        onComplete: () => this.flyChipsToBoard(amount),
+      });
+      return;
+    }
+    let flying = 0;
+    for (let index = this.stackChips.length - 1; index >= 0; index--) {
+      const chip = this.stackChips[index];
+      if (!chip.visible) continue;
+      this.tweens.killTweensOf(chip);
+      this.tweens.add({
+        targets: chip,
+        x: BOARD_CHIP_X,
+        y: DISPLAY.y,
+        scale: 0.6,
+        delay: flying * CHIPS_FLY_STAGGER,
+        duration: CHIPS_FLY_TIME,
+        ease: 'Cubic.easeIn',
+        onComplete: () => this.putChipBack(index),
+      });
+      flying += 1;
+    }
+    this.flyToBoard(amount);
+    this.closeWindow(flying * CHIPS_FLY_STAGGER + CHIPS_FLY_TIME); // шторка ждёт, пока фишки не долетят
+  }
+
+  /** Черепа: фишки в окошке вспыхивают огнём, поднимаются дымом и тают. Пустое окошко закрывается. */
+  private burnChips(): void {
+    this.stackChips.forEach((chip, index) => {
+      if (!chip.visible) return;
+      this.tweens.killTweensOf(chip);
+      chip.setTint(BURN_COLOR).setTintMode(Phaser.TintModes.FILL);
+      this.tweens.add({
+        targets: chip,
+        y: chip.y - 16,
+        alpha: 0,
+        duration: CHIPS_BURN_TIME,
+        ease: 'Quad.easeIn',
+        onComplete: () => this.putChipBack(index),
+      });
+    });
+    this.closeWindow(CHIPS_BURN_TIME);
+  }
+
+  /** Фишка возвращается на своё место в стопке — спрятанная и обычного цвета, до следующего выигрыша. */
+  private putChipBack(index: number): void {
+    const chip = this.stackChips[index];
+    chip.setVisible(false).setPosition(CHIP_STACK_X, stackChipY(index)).setScale(1).setAlpha(1);
+    chip.clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
+  }
+
+  /** Красная кнопка коротко вдавливается. */
+  private pressRedButton(): void {
+    this.tweens.killTweensOf(this.redButton);
+    this.redButton.setScale(1);
+    this.tweens.add({ targets: this.redButton, scale: RED_BUTTON_PRESS_SCALE, duration: 70, yoyo: true });
   }
 
   // ---------- Забрать, долг и раунды ----------
@@ -789,19 +926,19 @@ export class GameScene extends Phaser.Scene {
   /** «Забрать»: кон уходит в долг. Бесплатно, но множитель снова ×1. */
   private take(): void {
     if (!this.canAct() || this.pot === 0) return;
-    this.pressButton(this.takeButton);
+    this.pressRedButton();
     this.payPot();
     if (this.isDebtPaid()) this.closeDebt();
     this.refreshHud();
   }
 
-  /** Кон переходит во «внесено» и летит в табло, серия обрывается. */
+  /** Кон переходит во «внесено»: фишки из окошка летят в табло, серия обрывается. */
   private payPot(): void {
     const amount = this.pot;
     this.paid += amount;
     this.pot = 0;
     this.streak = 0;
-    this.flyToBoard(amount);
+    this.flyChipsToBoard(amount);
   }
 
   /** Долг закрыт, как только внесено не меньше долга. */

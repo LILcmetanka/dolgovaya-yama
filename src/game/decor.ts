@@ -3,8 +3,8 @@ import { patternSize, type Pattern } from './patterns';
 import { GRID_COLUMNS, GRID_ROWS, isSkull, type SlotSymbol } from './rules';
 
 /**
- * Украшения «Долговой ямы»: тёмная комната, корпус автомата, рычаг, записка, лампочки, монетка,
- * клетки символов и схемы паттернов. Логики игры здесь нет. Картинок в проекте тоже нет — всё рисуется кодом.
+ * Украшения «Долговой ямы»: тёмная комната, корпус автомата, рычаг, записка, лампочки, фишки,
+ * окошко выплаты (шторка и красная кнопка), клетки символов и схемы паттернов. Логики игры здесь нет. Картинок в проекте тоже нет — всё рисуется кодом.
  * Неподвижное рисуется один раз и «запекается» в текстуру: дальше это одна картинка, и игра идёт даже на слабом компьютере.
  */
 
@@ -13,8 +13,10 @@ export const FONT = 'system-ui, "Segoe UI Emoji", "Apple Color Emoji", "Noto Col
 /** Цвет выключенной лампочки. */
 export const LAMP_OFF = 0x431407;
 /** Имена текстур, нарисованных кодом. */
-export const COIN_TEXTURE = 'coin';
-export const COINS_ICON = 'icon-coins';
+export const CHIP_TEXTURE = 'chip'; // фишка анфас: на табло и в брызгах
+export const CHIP_STACK_TEXTURE = 'chip-stack'; // фишка сбоку-сверху: из таких складывается стопка
+export const SHUTTER_TEXTURE = 'shutter';
+export const RED_BUTTON_TEXTURE = 'red-button';
 export const LEVER_ROD_TEXTURE = 'lever-rod';
 export const LEVER_BALL_TEXTURE = 'lever-ball';
 export const NOTE_TEXTURE = 'note';
@@ -31,6 +33,12 @@ const TRIM_COLOR = 0xb45309; // бронзовая окантовка
 const CHROME = 0x94a3b8;
 const CHROME_LIGHT = 0xe2e8f0;
 const SCREEN_GLASS = 0x020617; // почти чёрное стекло под сеткой
+/** Фишка казино: красная с белыми насечками по краю. */
+const CHIP_SIZE = 28; // фишка анфас, px
+const CHIP_RED = '#dc2626';
+const CHIP_SIDE = 0x991b1b; // бок фишки в стопке — темнее
+const CHIP_TOP = 0xdc2626;
+const CHIP_NOTCHES = 6; // белые насечки по краю
 /** Записка с долгом. */
 const NOTE_TAPE = 12; // скотч заходит на листок сверху, px
 const NOTE_INK = '#334155'; // «ДОЛГ»
@@ -62,6 +70,7 @@ export interface MachineLayout {
   screen: Box; // окно вокруг сетки 5×3
   belly: Box; // панель под экраном: лампочки прокруток, окошко множителя, кнопка
   multiplierWindow: Box; // окошко множителя серии
+  payoutWindow: Box; // окошко выплаты: за шторкой фишки на кону и красная кнопка
   leverMount: Box; // крепление рычага на правом боку
 }
 
@@ -117,6 +126,7 @@ function bakeMachineBody(scene: Phaser.Scene, layout: MachineLayout): void {
   drawScreenFrame(g, layout.screen);
   drawInset(g, layout.belly, 0x240808, 0x7c2d12);
   drawInset(g, layout.multiplierWindow, 0x050505, TRIM_COLOR);
+  drawInset(g, layout.payoutWindow, 0x050505, TRIM_COLOR);
   g.generateTexture(MACHINE_TEXTURE, 960, 640);
   g.destroy();
 }
@@ -256,6 +266,102 @@ function drawNotePaper(ctx: CanvasRenderingContext2D, width: number, height: num
   ctx.fillRect(width / 2 - 30, 0, 60, NOTE_TAPE * 2); // скотч
 }
 
+/**
+ * Фишки: анфас (на табло и в брызгах) — на canvas, чтобы нарисовать «1»;
+ * и сбоку-сверху (из таких складывается стопка в окошке выплаты).
+ */
+export function createChipTextures(scene: Phaser.Scene): void {
+  if (!scene.textures.exists(CHIP_TEXTURE)) {
+    const texture = scene.textures.createCanvas(CHIP_TEXTURE, CHIP_SIZE, CHIP_SIZE);
+    if (texture) {
+      drawChip(texture.context, CHIP_SIZE);
+      texture.refresh(); // передать нарисованное в видеокарту
+    }
+  }
+  if (!scene.textures.exists(CHIP_STACK_TEXTURE)) {
+    const g = scene.add.graphics();
+    g.fillStyle(CHIP_SIDE);
+    g.fillEllipse(18, 11, 36, 12); // нижний край
+    g.fillRect(0, 5, 36, 6); // бок
+    g.fillStyle(0xffffff);
+    for (const x of [5, 16, 27]) g.fillRect(x, 6, 4, 6); // белые насечки на боку
+    g.fillStyle(CHIP_TOP);
+    g.fillEllipse(18, 5, 36, 10); // верхняя грань
+    g.lineStyle(1.5, 0xffffff);
+    g.strokeEllipse(18, 5, 22, 6); // белое кольцо на грани
+    g.generateTexture(CHIP_STACK_TEXTURE, 36, 18);
+    g.destroy();
+  }
+}
+
+/** Фишка анфас на canvas: красный круг, белые насечки по краю, белое кольцо и «1» посередине. */
+function drawChip(ctx: CanvasRenderingContext2D, size: number): void {
+  const center = size / 2;
+  ctx.fillStyle = CHIP_RED;
+  ctx.beginPath();
+  ctx.arc(center, center, center, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  for (let i = 0; i < CHIP_NOTCHES; i++) {
+    // Насечку рисуем у верхнего края и поворачиваем вокруг центра фишки.
+    ctx.save();
+    ctx.translate(center, center);
+    ctx.rotate((i * 2 * Math.PI) / CHIP_NOTCHES);
+    ctx.fillRect(-2, -center, 4, size * 0.2);
+    ctx.restore();
+  }
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(center, center, center * 0.58, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.font = `bold ${Math.round(size * 0.45)}px ${FONT}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('1', center, center + 1);
+}
+
+/** Шторка окошка выплаты: металлические планки с тенью между ними и нижняя планка с ручкой. */
+export function createShutterTexture(scene: Phaser.Scene, width: number, height: number): void {
+  if (scene.textures.exists(SHUTTER_TEXTURE)) return;
+  const g = scene.add.graphics();
+  const slat = 8; // высота одной планки, px
+  g.fillStyle(0x6b7280);
+  g.fillRect(0, 0, width, height);
+  for (let y = 0; y < height; y += slat) {
+    g.fillStyle(0x9ca3af);
+    g.fillRect(0, y, width, 1); // светлый край планки
+    g.fillStyle(0x4b5563);
+    g.fillRect(0, y + slat - 2, width, 2); // тень под планкой
+  }
+  g.fillStyle(0x374151);
+  g.fillRect(0, height - 7, width, 7); // нижняя планка
+  g.fillStyle(0x9ca3af);
+  g.fillRect(width / 2 - 18, height - 5, 36, 3); // ручка
+  g.generateTexture(SHUTTER_TEXTURE, width, height);
+  g.destroy();
+}
+
+/** Большая красная кнопка без надписей, как «ядерная»: металлическое кольцо, тёмный зазор и красный купол с бликом. */
+export function createRedButtonTexture(scene: Phaser.Scene): void {
+  if (scene.textures.exists(RED_BUTTON_TEXTURE)) return;
+  const g = scene.add.graphics();
+  g.fillStyle(0x000000, 0.4);
+  g.fillCircle(31, 33, 27); // тень
+  g.fillStyle(0x6b7280);
+  g.fillCircle(30, 30, 27); // металлическое кольцо
+  g.fillStyle(0x1f2937);
+  g.fillCircle(30, 30, 22); // зазор вокруг купола
+  g.fillStyle(0x991b1b);
+  g.fillCircle(30, 32, 19); // низ купола в тени
+  g.fillStyle(0xdc2626);
+  g.fillCircle(30, 29, 18); // купол
+  g.fillStyle(0xfca5a5, 0.8);
+  g.fillEllipse(24, 22, 12, 7); // блик
+  g.generateTexture(RED_BUTTON_TEXTURE, 62, 62);
+  g.destroy();
+}
+
 /** Лампочки по верхнему и нижнему краю окна экрана. Порядок — по кругу: верх слева направо, низ справа налево. */
 export function createLamps(scene: Phaser.Scene, x: number, y: number, width: number, height: number): Phaser.GameObjects.Arc[] {
   const xs: number[] = [];
@@ -263,36 +369,6 @@ export function createLamps(scene: Phaser.Scene, x: number, y: number, width: nu
   const top = xs.map((lampX) => scene.add.circle(lampX, y - height / 2, 5, LAMP_OFF));
   const bottom = [...xs].reverse().map((lampX) => scene.add.circle(lampX, y + height / 2, 5, LAMP_OFF));
   return [...top, ...bottom];
-}
-
-/** Иконка кнопки «забрать» — стопка монет. Рисуется один раз. */
-export function createIconTextures(scene: Phaser.Scene): void {
-  if (!scene.textures.exists(COINS_ICON)) {
-    const g = scene.add.graphics();
-    for (let i = 0; i < 3; i++) {
-      const y = 29 - i * 8;
-      g.fillStyle(0x92400e);
-      g.fillEllipse(20, y + 3, 30, 12); // ребро монеты
-      g.fillStyle(0xfbbf24);
-      g.fillEllipse(20, y, 30, 12); // монета
-    }
-    g.generateTexture(COINS_ICON, 40, 40);
-    g.destroy();
-  }
-}
-
-/** Текстура монетки: рисуем кругами и сохраняем как картинку в памяти. После рестарта сцены она уже есть. */
-export function createCoinTexture(scene: Phaser.Scene): void {
-  if (scene.textures.exists(COIN_TEXTURE)) return;
-  const g = scene.add.graphics();
-  g.fillStyle(0xb45309);
-  g.fillCircle(10, 10, 10); // тёмный ободок
-  g.fillStyle(0xfbbf24);
-  g.fillCircle(10, 10, 8); // золото
-  g.fillStyle(0xfef3c7);
-  g.fillCircle(7, 7, 2.5); // блик
-  g.generateTexture(COIN_TEXTURE, 20, 20);
-  g.destroy();
 }
 
 /** Имя текстуры символа, например 'symbol-cherry'. */
