@@ -17,6 +17,8 @@ export const CHIP_TEXTURE = 'chip'; // фишка анфас: на табло и
 export const CHIP_STACK_TEXTURE = 'chip-stack'; // фишка сбоку-сверху: из таких складывается стопка
 export const SHUTTER_TEXTURE = 'shutter';
 export const RED_BUTTON_TEXTURE = 'red-button';
+export const HAND_OPEN_TEXTURE = 'hand-open'; // рука Коллектора ладонью вверх
+export const HAND_FIST_TEXTURE = 'hand-fist'; // та же рука кулаком
 export const LEVER_ROD_TEXTURE = 'lever-rod';
 export const LEVER_BALL_TEXTURE = 'lever-ball';
 export const NOTE_TEXTURE = 'note';
@@ -44,6 +46,15 @@ const NOTE_TAPE = 12; // скотч заходит на листок сверх�
 const NOTE_INK = '#334155'; // «ДОЛГ»
 const NOTE_DEBT_INK = '#991b1b'; // сумма — красной ручкой
 const NOTE_DEBT_FONT_SIZE = 44; // сумма крупно; длинная сумма уменьшается, чтобы влезть на листок
+const NOTE_CHECK_COLOR = '#16a34a'; // галочка «фишек хватает»
+/** Рука Коллектора: рукав тёмного пальто, белая манжета, серая кожа. */
+const HAND_WIDTH = 420;
+const HAND_HEIGHT = 150;
+const SLEEVE_COLOR = 0x1c1917;
+const SLEEVE_FOLD = 0x292524;
+const CUFF_COLOR = 0xd6d3d1;
+const SKIN_COLOR = 0xb9a58c;
+const SKIN_SHADE = 0x8f7d66;
 /** Клетка сетки: рамка обычного символа и рамка черепа. */
 const CELL_BORDER = 0xe2e8f0;
 const SKULL_CELL_BORDER = 0xef4444;
@@ -214,7 +225,7 @@ export function createLeverTextures(scene: Phaser.Scene, rodLength: number): voi
  * Надписи рисуются прямо на листке, поэтому записку можно повернуть одной картинкой.
  * Сумма меняется раз в раунд — тогда записка перерисовывается заново (canvas маленький, это дёшево).
  */
-export function drawNoteTexture(scene: Phaser.Scene, width: number, height: number, debt: number): void {
+export function drawNoteTexture(scene: Phaser.Scene, width: number, height: number, debt: number, isEnough: boolean): void {
   // Текстура уже есть — её создала эта же функция, значит это canvas: берём его и рисуем заново.
   const texture = scene.textures.exists(NOTE_TEXTURE)
     ? (scene.textures.get(NOTE_TEXTURE) as Phaser.Textures.CanvasTexture)
@@ -240,7 +251,21 @@ export function drawNoteTexture(scene: Phaser.Scene, width: number, height: numb
   }
   ctx.fillStyle = NOTE_DEBT_INK;
   ctx.fillText(text, width / 2, height / 2 + 22);
+  if (isEnough) drawNoteCheck(ctx, width, height);
   texture.refresh(); // передать нарисованное в видеокарту
+}
+
+/** Зелёная галочка в правом нижнем углу записки: фишек на табло хватает на долг. */
+function drawNoteCheck(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+  ctx.strokeStyle = NOTE_CHECK_COLOR;
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(width * 0.66, height * 0.72);
+  ctx.lineTo(width * 0.75, height * 0.84);
+  ctx.lineTo(width * 0.93, height * 0.56);
+  ctx.stroke();
 }
 
 /** Листок записки: тень на стене, бумага, линейки, поле и скотч. */
@@ -360,6 +385,51 @@ export function createRedButtonTexture(scene: Phaser.Scene): void {
   g.fillEllipse(24, 22, 12, 7); // блик
   g.generateTexture(RED_BUTTON_TEXTURE, 62, 62);
   g.destroy();
+}
+
+/** Рука Коллектора: раскрытая ладонью вверх (ждёт долг) и кулаком (забрал или злится). Рукав уходит за правый край. */
+export function createHandTextures(scene: Phaser.Scene): void {
+  if (!scene.textures.exists(HAND_OPEN_TEXTURE)) bakeHand(scene, HAND_OPEN_TEXTURE, drawOpenHand);
+  if (!scene.textures.exists(HAND_FIST_TEXTURE)) bakeHand(scene, HAND_FIST_TEXTURE, drawFist);
+}
+
+/** Рукав и запястье одинаковые, кисть рисует drawHand — и всё в текстуру key. */
+function bakeHand(scene: Phaser.Scene, key: string, drawHand: (g: Phaser.GameObjects.Graphics) => void): void {
+  const g = scene.add.graphics();
+  g.fillStyle(SLEEVE_COLOR);
+  g.fillRoundedRect(232, 26, 200, 98, 18); // рукав пальто, уходит за правый край
+  g.fillStyle(SLEEVE_FOLD);
+  g.fillRect(232, 26, 200, 8); // складка сверху
+  g.fillStyle(CUFF_COLOR);
+  g.fillRoundedRect(214, 40, 26, 70, 6); // манжета
+  g.fillStyle(SKIN_COLOR);
+  g.fillRect(180, 56, 40, 42); // запястье
+  drawHand(g);
+  g.generateTexture(key, HAND_WIDTH, HAND_HEIGHT);
+  g.destroy();
+}
+
+/** Раскрытая ладонь вверх: ладонь, четыре пальца к игроку и большой палец сверху. */
+function drawOpenHand(g: Phaser.GameObjects.Graphics): void {
+  g.fillStyle(SKIN_COLOR);
+  g.fillRoundedRect(112, 50, 80, 56, 14); // ладонь
+  g.fillRoundedRect(40, 52, 82, 13, 6); // указательный
+  g.fillRoundedRect(28, 67, 94, 13, 6); // средний
+  g.fillRoundedRect(36, 82, 86, 13, 6); // безымянный
+  g.fillRoundedRect(54, 96, 68, 11, 5); // мизинец
+  g.fillRoundedRect(122, 34, 52, 16, 7); // большой палец
+  g.fillStyle(SKIN_SHADE);
+  g.fillRect(118, 54, 3, 50); // складка у основания пальцев
+}
+
+/** Кулак: пальцы поджаты, видны костяшки, большой палец поверх. */
+function drawFist(g: Phaser.GameObjects.Graphics): void {
+  g.fillStyle(SKIN_COLOR);
+  g.fillRoundedRect(96, 46, 98, 64, 16); // кулак
+  g.fillStyle(SKIN_SHADE);
+  for (const y of [56, 70, 84, 98]) g.fillCircle(104, y, 7); // костяшки
+  g.fillStyle(SKIN_COLOR);
+  g.fillRoundedRect(110, 40, 60, 16, 7); // большой палец
 }
 
 /** Лампочки по верхнему и нижнему краю окна экрана. Порядок — по кругу: верх слева направо, низ справа налево. */

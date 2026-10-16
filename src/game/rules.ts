@@ -8,7 +8,7 @@ export const SPINS_PER_ROUND = 12;
 /** Долг первого раунда. */
 export const DEBT_START = 30;
 /** Во сколько раз долг растёт с каждым раундом. */
-export const DEBT_GROWTH = 1.5;
+export const DEBT_GROWTH = 1.8;
 /** До скольких округляется долг. */
 export const DEBT_ROUND_TO = 10;
 /** На сколько растёт множитель с каждой прокруткой подряд. */
@@ -74,7 +74,7 @@ export function spinGrid(): Grid {
   return grid;
 }
 
-/** Долг раунда N = DEBT_START × DEBT_GROWTH^(N−1), округлённый до DEBT_ROUND_TO: 30, 50, 70, 100, 150… */
+/** Долг раунда N = DEBT_START × DEBT_GROWTH^(N−1), округлённый до DEBT_ROUND_TO: 30, 50, 100, 170, 310… */
 export function debtForRound(round: number): number {
   const exact = DEBT_START * DEBT_GROWTH ** (round - 1);
   return Math.round(exact / DEBT_ROUND_TO) * DEBT_ROUND_TO;

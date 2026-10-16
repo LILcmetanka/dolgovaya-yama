@@ -18,6 +18,7 @@ import {
   CHIP_STACK_TEXTURE,
   CHIP_TEXTURE,
   createChipTextures,
+  createHandTextures,
   createLamps,
   createLeverTextures,
   createPatternTextures,
@@ -28,6 +29,8 @@ import {
   drawNoteTexture,
   drawRoom,
   FONT,
+  HAND_FIST_TEXTURE,
+  HAND_OPEN_TEXTURE,
   LAMP_OFF,
   LEVER_BALL_TEXTURE,
   LEVER_ROD_TEXTURE,
@@ -86,7 +89,19 @@ const RED_BUTTON_Y = 554;
 // 4 фишки — кона уже хватает на долг, 6 — больше не бывает (кон вчетверо больше долга).
 const CHIP_STACK_STEPS = [0.25, 0.5, 1, 2, 4];
 const BOARD_CHIP_X = DISPLAY.x - 84; // фишка на табло — сюда летят забранные фишки
-// Кнопка «ЗАНОВО» на экране проигрыша.
+// Расплата в конце раунда: вид уезжает вправо, к темноте за краем комнаты, оттуда тянется рука Коллектора.
+const TURN_SCROLL = 380; // на столько px уезжает вид — табло остаётся видно у левого края
+const DARKNESS: Box = { x: 1200, y: CENTER_Y, width: 480, height: 640 }; // темнота справа от комнаты
+const HAND_Y = 330;
+const HAND_IN_X = 1560; // рука спрятана в темноте за правым краем вида
+const HAND_OUT_X = 1170; // рука протянута к игроку
+const HAND_PALM_X = HAND_OUT_X - 58; // ладонь протянутой руки — сюда летят фишки
+const HAND_PALM_Y = HAND_Y - 22;
+const DEMAND_Y = HAND_Y - 100; // над ладонью: «фишка × долг»
+const PAYMENT_CHIPS = 6; // сколько фишек летит в ладонь при расплате (для красоты: сумма может быть любой)
+// Конец забега: на экране автомата GOOD LUCK, ниже счёт и кнопка «ЗАНОВО».
+const GOOD_LUCK_SCORE_Y = 500;
+const GOOD_LUCK_BUTTON_Y = 566;
 const BUTTON_WIDTH = 170;
 const BUTTON_HEIGHT = 60;
 const BUTTON_SHADOW = 6; // тень кнопки сдвинута вниз на столько px
@@ -104,9 +119,14 @@ const LEVER_HOLD_TIME = 60; // сколько рычаг держится вни
 const LEVER_BALL_GROW = 0.15; // внизу шарик ближе к игроку — на столько крупнее (на каждую единицу укорочения штанги)
 
 // Обратная связь: время в мс.
-const BANNER_DELAY = 400; // пауза, чтобы «+36» долетело до табло, перед «ДОЛГ ЗАКРЫТ!»
-const DEBT_CLOSED_TIME = 1000; // сколько держится «ДОЛГ ЗАКРЫТ!»
-const GAME_OVER_DELAY = 700; // пауза перед экраном проигрыша, чтобы увидеть последнюю прокрутку
+const COLLECT_DELAY = 1300; // после последней прокрутки: пусть фишки долетят до табло, потом расплата
+const TURN_TIME = 600; // вид уезжает вбок или возвращается
+const HAND_MOVE_TIME = 450; // рука выдвигается из темноты или уходит обратно
+const HAND_HOLD_TIME = 300; // кулак с фишками задерживается, прежде чем уйти
+const HAND_WAIT_TIME = 1200; // фишек не хватает: рука ждёт столько, потом экран гаснет
+const BLACKOUT_TIME = 700; // экран гаснет и загорается снова
+const GOOD_LUCK_BLINK_TIME = 500; // GOOD LUCK мигает
+const NEW_ROUND_LAMPS_TIME = 1000; // долг отдан — огни бегут зелёным
 const RESTART_SPACE_DELAY = 800; // Пробел перезапускает игру не раньше, чем через столько
 const NOTE_FLIP_TIME = 140; // половина переворота записки
 const MULTIPLIER_FLASH_TIME = 600; // сколько окошко множителя горит красным после черепов
@@ -131,7 +151,6 @@ const RECORD_KEY = 'dolgovaya-yama-record'; // ключ рекорда в localS
 // Слои: чем больше число, тем выше лежит объект.
 const CHIP_DEPTH = 5;
 const POPUP_DEPTH = 10;
-const BANNER_DEPTH = 20;
 const GAME_OVER_DEPTH = 30;
 
 // Внешний вид.
@@ -226,14 +245,16 @@ export class GameScene extends Phaser.Scene {
   // при scene.restart() поля класса сами не сбрасываются.
   private round = 0; // номер раунда: какой по счёту долг закрываем
   private debt = 0; // долг этого раунда
-  private paid = 0; // сколько уже внесено в этот долг
+  private balance = 0; // фишки на табло — твои; из них в конце раунда отдаётся долг
   private spinsLeft = 0; // сколько прокруток осталось в раунде
   private pot = 0; // кон: выиграно, но ещё не внесено — паттерн из черепов сжигает его
   private streak = 0; // серия: сколько прокруток подряд без паттерна из черепов и без «забрать»
   private record = 0; // рекорд: больше всего закрытых долгов за одну игру
   private isSpinning = false; // сетка крутится — ввод игнорируется
-  private isRoundOver = false; // долг закрыт, висит «ДОЛГ ЗАКРЫТ!» — ждём следующий раунд
-  private isGameOver = false; // прокрутки кончились, а долг не закрыт
+  private isRoundOver = false; // прокрутки кончились — идёт расплата с Коллектором, крутить и забирать нельзя
+  private isGameOver = false; // долг не отдан — GOOD LUCK, конец забега
+  private isAwaitingPayment = false; // рука протянута и фишек хватает — ждём «отдать» (клик по руке или Enter)
+  private isNoteChecked = false; // на записке галочка: фишек на табло хватает на долг
   private canRestartWithSpace = false; // Пробел на экране проигрыша срабатывает не сразу
   private isWindowOpen = false; // шторка окошка выплаты поднята
 
@@ -250,7 +271,7 @@ export class GameScene extends Phaser.Scene {
   private lamps: Phaser.GameObjects.Arc[] = []; // бегущие огни вокруг экрана
   private spinLamps: Phaser.GameObjects.Arc[] = []; // лампочки прокруток: одна на прокрутку
   private chipEmitter!: Phaser.GameObjects.Particles.ParticleEmitter;
-  private boardText!: Phaser.GameObjects.Text; // табло: сколько внесено
+  private boardText!: Phaser.GameObjects.Text; // табло: сколько у тебя фишек
   private multiplierText!: Phaser.GameObjects.Text; // окошко множителя серии
   private note!: Phaser.GameObjects.Image; // записка с долгом: бумажка с надписями одной картинкой
   private leverRod!: Phaser.GameObjects.Image; // штанга рычага, низ — точка вращения
@@ -260,6 +281,9 @@ export class GameScene extends Phaser.Scene {
   private payoutText!: Phaser.GameObjects.Text; // «× 400» — сколько фишек на кону
   private redButton!: Phaser.GameObjects.Image; // красная кнопка «забрать» — без надписей
   private payoutHint!: Phaser.GameObjects.Text; // подсказка «Enter» под окошком, видна, когда оно открыто
+  private hand!: Phaser.GameObjects.Image; // рука Коллектора в темноте справа
+  private demandChip!: Phaser.GameObjects.Image; // над ладонью: фишка…
+  private demandText!: Phaser.GameObjects.Text; // …и «× долг»
 
   constructor() {
     super('GameScene');
@@ -274,6 +298,7 @@ export class GameScene extends Phaser.Scene {
     createPatternTextures(this, PATTERNS);
     createShutterTexture(this, PAYOUT_WINDOW.width - 2 * SHUTTER_INSET, PAYOUT_WINDOW.height - 2 * SHUTTER_INSET);
     createRedButtonTexture(this);
+    createHandTextures(this);
     this.drawNote();
     this.drawMachine();
     this.drawBoard();
@@ -283,6 +308,7 @@ export class GameScene extends Phaser.Scene {
     this.drawMultiplier();
     this.drawPayoutWindow();
     this.drawLever();
+    this.drawCollector();
     this.createChipEmitter();
     this.setupKeyboard();
     this.refreshHud();
@@ -291,7 +317,7 @@ export class GameScene extends Phaser.Scene {
   private resetState(): void {
     this.round = 1;
     this.debt = debtForRound(1);
-    this.paid = 0;
+    this.balance = 0;
     this.spinsLeft = SPINS_PER_ROUND;
     this.pot = 0;
     this.streak = 0;
@@ -300,6 +326,8 @@ export class GameScene extends Phaser.Scene {
     this.isRoundOver = false;
     this.isGameOver = false;
     this.canRestartWithSpace = false;
+    this.isAwaitingPayment = false;
+    this.isNoteChecked = false;
     this.isWindowOpen = false;
     this.lampTick = 0;
     this.lampSpeed = LAMP_IDLE_SPEED;
@@ -314,7 +342,7 @@ export class GameScene extends Phaser.Scene {
    * Надписи нарисованы прямо на бумажке: Phaser 4 обрезает текст в повёрнутом контейнере, а картинку — нет.
    */
   private drawNote(): void {
-    drawNoteTexture(this, NOTE.width, NOTE.height, this.debt);
+    drawNoteTexture(this, NOTE.width, NOTE.height, this.debt, false);
     this.note = this.add.image(NOTE.x, NOTE.y, NOTE_TEXTURE).setAngle(NOTE_ANGLE);
   }
 
@@ -334,7 +362,7 @@ export class GameScene extends Phaser.Scene {
     this.time.addEvent({ delay: LAMP_TICK, loop: true, callback: () => this.tickLamps() });
   }
 
-  /** Табло сверху: фишка и сколько внесено в долг. Сюда летят забранные фишки. */
+  /** Табло сверху: фишка и сколько у тебя фишек. Сюда летят забранные фишки, отсюда в конце раунда отдаётся долг. */
   private drawBoard(): void {
     this.add.image(BOARD_CHIP_X, DISPLAY.y, CHIP_TEXTURE).setScale(1.3);
     this.boardText = this.addText(DISPLAY.x + 12, DISPLAY.y, '', LED_STYLE).setOrigin(0.5);
@@ -421,6 +449,18 @@ export class GameScene extends Phaser.Scene {
     this.addText(LEVER_MOUNT.x, hintY, 'Пробел', { fontSize: '13px', color: HINT_TEXT }).setOrigin(0.5);
   }
 
+  /** Темнота справа от комнаты и рука Коллектора в ней (пока спрятана). Над ладонью — «фишка × долг». */
+  private drawCollector(): void {
+    this.add.rectangle(DARKNESS.x, DARKNESS.y, DARKNESS.width, DARKNESS.height, 0x000000);
+    this.hand = this.add.image(HAND_IN_X, HAND_Y, HAND_OPEN_TEXTURE);
+    this.hand.setInteractive({ useHandCursor: true });
+    this.hand.on('pointerdown', () => this.payDebt());
+    this.demandChip = this.add.image(HAND_PALM_X - 44, DEMAND_Y, CHIP_TEXTURE).setScale(1.2).setAlpha(0);
+    this.demandText = this.addText(HAND_PALM_X - 24, DEMAND_Y, '', { ...LED_STYLE, fontSize: '28px' })
+      .setOrigin(0, 0.5)
+      .setAlpha(0);
+  }
+
   /**
    * Кнопка: тень, корпус с золотой рамкой, блик сверху, крупная надпись и под ней клавиша.
    * Нажимается и мышью, и пальцем.
@@ -460,7 +500,7 @@ export class GameScene extends Phaser.Scene {
 
   /** Обновить табло, окошко множителя, окошко выплаты и лампочки по текущему состоянию. */
   private refreshHud(): void {
-    this.boardText.setText(String(this.paid));
+    this.boardText.setText(String(this.balance));
     this.multiplierText.setText(`×${multiplierForStreak(this.streak)}`);
     this.payoutText.setText(`× ${this.pot}`);
     this.redButton.setAlpha(this.canAct() ? 1 : 0.6); // пока крутится — кнопка тусклее
@@ -554,7 +594,10 @@ export class GameScene extends Phaser.Scene {
       duration: NOTE_FLIP_TIME,
       yoyo: true,
       ease: 'Quad.easeIn',
-      onYoyo: () => drawNoteTexture(this, NOTE.width, NOTE.height, this.debt),
+      onYoyo: () => {
+        this.isNoteChecked = this.hasEnoughForDebt();
+        drawNoteTexture(this, NOTE.width, NOTE.height, this.debt, this.isNoteChecked);
+      },
     });
   }
 
@@ -641,55 +684,23 @@ export class GameScene extends Phaser.Scene {
     camera.shake(250, 0.008);
   }
 
-  /** Крупное «ДОЛГ ЗАКРЫТ!» поверх сетки: выскакивает и через DEBT_CLOSED_TIME тает. */
-  private showDebtClosedBanner(): void {
-    this.flashLamps(LAMP_GREEN, DEBT_CLOSED_TIME);
-    const strip = this.add.rectangle(CENTER_X, GRID_Y, 960, 150, 0x052e16, 0.92).setDepth(BANNER_DEPTH);
-    const label = this.addText(CENTER_X, GRID_Y, 'ДОЛГ ЗАКРЫТ!', {
-      fontSize: '72px',
-      fontStyle: 'bold',
-      color: GREEN_TEXT,
-      stroke: '#052e16',
-      strokeThickness: 8,
-    })
-      .setOrigin(0.5)
-      .setDepth(BANNER_DEPTH)
-      .setScale(0.5);
-    this.tweens.add({ targets: label, scale: 1, duration: 300, ease: 'Back.easeOut' });
-    this.tweens.add({
-      targets: [strip, label],
-      alpha: 0,
-      delay: DEBT_CLOSED_TIME,
-      duration: 250,
-      onComplete: () => {
-        strip.destroy();
-        label.destroy();
-      },
-    });
-  }
-
-  /** Экран проигрыша: затемнение, итог, рекорд и кнопка «ЗАНОВО». */
-  private showGameOverScreen(): void {
-    const shade = this.add.rectangle(CENTER_X, CENTER_Y, 960, 640, 0x000000, 0.9);
+  /** Конец забега: всё темнеет, экран автомата чёрный, на нём мигает GOOD LUCK. Ниже — счёт, рекорд и «ЗАНОВО». */
+  private showGoodLuck(): void {
+    const shade = this.add.rectangle(CENTER_X, CENTER_Y, 960, 640, 0x000000, 0.6);
     shade.setInteractive(); // ловит клики, чтобы кнопки под затемнением не нажимались
-    const title = this.addText(CENTER_X, 200, 'ДОЛГ НЕ ЗАКРЫТ — ты в яме', {
-      fontSize: '42px',
-      fontStyle: 'bold',
+    const screen = this.add.rectangle(SCREEN.x, SCREEN.y, SCREEN.width, SCREEN.height, 0x000000).setRounded(16);
+    const title = this.addText(SCREEN.x, SCREEN.y, 'GOOD LUCK', {
+      ...LED_STYLE,
+      fontSize: '64px',
       color: RED_TEXT,
+      shadow: { color: '#ef4444', blur: 18, fill: true },
     }).setOrigin(0.5);
-    const score = this.addText(CENTER_X, 272, `Закрыто долгов: ${this.closedDebts()}`, {
-      fontSize: '30px',
-    }).setOrigin(0.5);
-    const record = this.addText(CENTER_X, 318, `Рекорд: ${this.record}`, {
-      fontSize: '24px',
-      color: GOLD_TEXT,
-    }).setOrigin(0.5);
-    const restart = this.makeButton(CENTER_X, 430, SPIN_COLOR, 'R / Пробел', () => this.restartGame());
+    const scoreText = `Долгов закрыто: ${this.closedDebts()} · Рекорд: ${this.record}`;
+    const score = this.addText(CENTER_X, GOOD_LUCK_SCORE_Y, scoreText, { fontSize: '20px', color: GOLD_TEXT }).setOrigin(0.5);
+    const restart = this.makeButton(CENTER_X, GOOD_LUCK_BUTTON_Y, SPIN_COLOR, 'R / Пробел', () => this.restartGame());
     restart.label.setText('ЗАНОВО');
-
-    const parts = [shade, title, score, record, restart.shadow, restart.face];
-    for (const part of parts) part.setDepth(GAME_OVER_DEPTH).setAlpha(0);
-    this.tweens.add({ targets: parts, alpha: 1, duration: 400 });
+    for (const part of [shade, screen, title, score, restart.shadow, restart.face]) part.setDepth(GAME_OVER_DEPTH);
+    this.tweens.add({ targets: title, alpha: 0.3, duration: GOOD_LUCK_BLINK_TIME, yoyo: true, repeat: -1 }); // мигает
 
     this.time.delayedCall(RESTART_SPACE_DELAY, () => {
       this.canRestartWithSpace = true;
@@ -700,7 +711,7 @@ export class GameScene extends Phaser.Scene {
 
   private setupKeyboard(): void {
     this.onKey('SPACE', () => this.onSpace());
-    this.onKey('ENTER', () => this.take());
+    this.onKey('ENTER', () => this.onEnter());
     this.onKey('R', () => {
       if (this.isGameOver) this.restartGame();
     });
@@ -717,6 +728,12 @@ export class GameScene extends Phaser.Scene {
   private onSpace(): void {
     if (!this.isGameOver) this.spin();
     else if (this.canRestartWithSpace) this.restartGame();
+  }
+
+  /** Enter: рука протянута — отдать долг, иначе — забрать кон. */
+  private onEnter(): void {
+    if (this.isAwaitingPayment) this.payDebt();
+    else this.take();
   }
 
   /** Можно ли сейчас крутить или забирать. */
@@ -923,68 +940,142 @@ export class GameScene extends Phaser.Scene {
 
   // ---------- Забрать, долг и раунды ----------
 
-  /** «Забрать»: кон уходит в долг. Бесплатно, но множитель снова ×1. */
+  /** «Забрать»: кон уходит на табло. Бесплатно, но множитель снова ×1. */
   private take(): void {
     if (!this.canAct() || this.pot === 0) return;
     this.pressRedButton();
     this.payPot();
-    if (this.isDebtPaid()) this.closeDebt();
     this.refreshHud();
   }
 
-  /** Кон переходит во «внесено»: фишки из окошка летят в табло, серия обрывается. */
+  /** Кон переходит на табло: фишки из окошка летят туда, серия обрывается. */
   private payPot(): void {
     const amount = this.pot;
-    this.paid += amount;
+    this.balance += amount;
     this.pot = 0;
     this.streak = 0;
     this.flyChipsToBoard(amount);
+    this.refreshNoteCheck();
   }
 
-  /** Долг закрыт, как только внесено не меньше долга. */
-  private isDebtPaid(): boolean {
-    return this.paid >= this.debt;
+  /** Хватает ли фишек на табло, чтобы отдать долг этого раунда. */
+  private hasEnoughForDebt(): boolean {
+    return this.balance >= this.debt;
   }
 
-  /** Долг закрыт: «+36» долетает до табло, на секунду крупно «ДОЛГ ЗАКРЫТ!», потом следующий раунд. */
-  private closeDebt(): void {
+  /** Галочка на записке появляется, как только фишек на табло хватает на долг. Записка при этом подпрыгивает. */
+  private refreshNoteCheck(): void {
+    const enough = this.hasEnoughForDebt();
+    if (enough === this.isNoteChecked) return;
+    this.isNoteChecked = enough;
+    drawNoteTexture(this, NOTE.width, NOTE.height, this.debt, enough);
+    this.tweens.add({ targets: this.note, scale: 1.12, duration: 120, yoyo: true, ease: 'Quad.easeOut' });
+  }
+
+  /** Прокрутки кончились: кон забирается сам, ввод закрыт, а когда фишки долетят до табло — расплата. */
+  private endOfSpins(): void {
     this.isRoundOver = true;
-    this.time.delayedCall(BANNER_DELAY, () => this.showDebtClosedBanner());
-    this.time.delayedCall(BANNER_DELAY + DEBT_CLOSED_TIME, () => this.startNextRound());
+    if (this.pot > 0) this.payPot();
+    this.time.delayedCall(COLLECT_DELAY, () => this.turnToCollector());
   }
 
-  /**
-   * Следующий раунд: новый долг на записке, множитель ×1, излишек идёт в новый долг.
-   * Излишка хватает и на новый долг — он тоже закрывается, иначе прокрутки снова полные.
-   */
+  // ---------- Расплата с Коллектором ----------
+
+  /** Вид уезжает вбок — к темноте, из которой тянется рука. */
+  private turnToCollector(): void {
+    this.tweens.add({
+      targets: this.cameras.main,
+      scrollX: TURN_SCROLL,
+      duration: TURN_TIME,
+      ease: 'Sine.easeInOut',
+      onComplete: () => this.reachOutHand(),
+    });
+  }
+
+  /** Рука выдвигается ладонью вверх, над ней — сколько отдать. Хватает — ждём «отдать», не хватает — GOOD LUCK. */
+  private reachOutHand(): void {
+    const enough = this.hasEnoughForDebt();
+    this.hand.setTexture(HAND_OPEN_TEXTURE);
+    this.demandText.setText(`× ${this.debt}`).setColor(enough ? LED_COLOR : RED_TEXT);
+    this.tweens.add({ targets: this.hand, x: HAND_OUT_X, duration: HAND_MOVE_TIME, ease: 'Cubic.easeOut' });
+    this.tweens.add({ targets: [this.demandChip, this.demandText], alpha: 1, delay: HAND_MOVE_TIME, duration: 200 });
+    this.time.delayedCall(HAND_MOVE_TIME, () => {
+      if (enough) this.isAwaitingPayment = true; // теперь можно кликнуть по руке или нажать Enter
+      else this.time.delayedCall(HAND_WAIT_TIME, () => this.goodLuck());
+    });
+  }
+
+  /** Отдать долг: фишки летят с табло в ладонь, остаток остаётся на табло. */
+  private payDebt(): void {
+    if (!this.isAwaitingPayment) return;
+    this.isAwaitingPayment = false;
+    this.balance -= this.debt;
+    this.refreshHud();
+    this.flyChipsToHand();
+    this.time.delayedCall(PAYMENT_CHIPS * CHIPS_FLY_STAGGER + CHIPS_FLY_TIME, () => this.takeHandAway());
+  }
+
+  /** Фишки по одной летят с табло в ладонь и пропадают в ней. */
+  private flyChipsToHand(): void {
+    for (let index = 0; index < PAYMENT_CHIPS; index++) {
+      const chip = this.add.image(DISPLAY.x, DISPLAY.y, CHIP_TEXTURE).setScale(1.3);
+      this.tweens.add({
+        targets: chip,
+        x: HAND_PALM_X,
+        y: HAND_PALM_Y,
+        scale: 0.8,
+        delay: index * CHIPS_FLY_STAGGER,
+        duration: CHIPS_FLY_TIME,
+        ease: 'Cubic.easeIn',
+        onComplete: () => chip.destroy(),
+      });
+    }
+  }
+
+  /** Рука сжимает фишки в кулак и уходит в темноту, вид возвращается к автомату — новый раунд. */
+  private takeHandAway(): void {
+    this.hand.setTexture(HAND_FIST_TEXTURE);
+    this.tweens.add({ targets: [this.demandChip, this.demandText], alpha: 0, duration: 200 });
+    this.tweens.add({ targets: this.hand, x: HAND_IN_X, delay: HAND_HOLD_TIME, duration: HAND_MOVE_TIME, ease: 'Cubic.easeIn' });
+    this.tweens.add({
+      targets: this.cameras.main,
+      scrollX: 0,
+      delay: HAND_HOLD_TIME + HAND_MOVE_TIME,
+      duration: TURN_TIME,
+      ease: 'Sine.easeInOut',
+      onComplete: () => this.startNextRound(),
+    });
+  }
+
+  /** Новый раунд: долг больше (записка переворачивается), прокрутки снова полные, множитель ×1. */
   private startNextRound(): void {
     this.isRoundOver = false;
-    this.paid -= this.debt; // остаётся излишек
     this.round += 1;
     this.debt = debtForRound(this.round);
     this.streak = 0;
+    this.spinsLeft = SPINS_PER_ROUND;
     this.updateRecord();
     this.flipNote();
-    if (this.isDebtPaid()) {
-      this.closeDebt();
-    } else {
-      this.spinsLeft = SPINS_PER_ROUND; // оставшиеся прокрутки прошлого раунда сгорают
-      this.popSpinLamps();
-    }
+    this.popSpinLamps();
+    this.flashLamps(LAMP_GREEN, NEW_ROUND_LAMPS_TIME);
     this.refreshHud();
   }
 
-  /** Прокрутки кончились: кон забирается сам. Хватило на долг — следующий раунд, иначе конец игры. */
-  private endOfSpins(): void {
-    if (this.pot > 0) this.payPot();
-    if (this.isDebtPaid()) this.closeDebt();
-    else this.gameOver();
-  }
-
-  /** Конец игры: ввод закрыт, через короткую паузу — экран проигрыша. */
-  private gameOver(): void {
+  /** Фишек не хватает: рука сжимается в кулак, экран гаснет, а когда загорается — на автомате GOOD LUCK. */
+  private goodLuck(): void {
     this.isGameOver = true;
-    this.time.delayedCall(GAME_OVER_DELAY, () => this.showGameOverScreen());
+    this.hand.setTexture(HAND_FIST_TEXTURE);
+    const camera = this.cameras.main;
+    camera.shake(300, 0.01);
+    camera.fadeOut(BLACKOUT_TIME, 0, 0, 0);
+    camera.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      camera.setScroll(0, 0); // вид снова на автомате
+      this.hand.setX(HAND_IN_X);
+      this.demandChip.setAlpha(0);
+      this.demandText.setAlpha(0);
+      this.showGoodLuck();
+      camera.fadeIn(BLACKOUT_TIME);
+    });
   }
 
   /** Счёт — сколько долгов закрыто. */
