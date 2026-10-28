@@ -23,6 +23,7 @@ const KEY_Y = MONITOR_SCREEN.y + MONITOR_SCREEN.height / 2 + 15; // подска
 const TURN_TIME = 600; // вид поворачивается к монитору или обратно
 const POWER_TIME = 300; // экран разгорается или тускнеет
 const BLINK_TIME = 400;
+const CALL_ALPHA = 0.6; // есть новое — притушенный экран разгорается до такой яркости и гаснет снова: видно и от автомата
 
 /** Что делает особый символ — надпись монитора; числа в ней — из правил, поэтому монитор не врёт, даже если их поменять. */
 function symbolNote(symbol: SlotSymbol): string {
@@ -157,16 +158,21 @@ export class SymbolMonitor {
     drawMonitorScreen(this.scene, MONITOR_SCREEN.width, MONITOR_SCREEN.height, prices, notes, jackpot);
   }
 
-  /** Лампочка над экраном мигает: на мониторе есть то, чего ты ещё не видел. */
+  /** Лампочка над экраном мигает, а притушенный экран разгорается и гаснет: на мониторе есть то, чего ты ещё не видел. */
   private blinkLamp(): void {
     this.scene.tweens.killTweensOf(this.lamp);
     this.lamp.setFillStyle(LAMP_GOLD).setAlpha(1);
     this.scene.tweens.add({ targets: this.lamp, alpha: 0.2, duration: BLINK_TIME, yoyo: true, repeat: -1 });
+    if (!this.screen || this.isOpen) return; // в конструкторе экрана ещё нет — его зажжёт сам конструктор
+    this.scene.tweens.killTweensOf(this.screen);
+    this.screen.setAlpha(DIM_ALPHA);
+    this.scene.tweens.add({ targets: this.screen, alpha: CALL_ALPHA, duration: BLINK_TIME * 2, ease: 'Sine.easeInOut', yoyo: true, repeat: -1 });
   }
 
   /** Лампочка гаснет: монитор прочитан. */
   private stopLamp(): void {
     this.scene.tweens.killTweensOf(this.lamp);
     this.lamp.setFillStyle(LAMP_OFF).setAlpha(1);
+    this.scene.tweens.killTweensOf(this.screen); // и экран больше не мигает
   }
 }

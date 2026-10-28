@@ -21,7 +21,7 @@ export const PHASES: Phase[] = [
   {
     number: 2,
     fromDebts: GAME_CONFIG.phase2Debts, // после первого долга
-    skullFactor: GAME_CONFIG.phase2SkullFactor, // паттерн из черепов 16% → 29% прокруток
+    skullFactor: GAME_CONFIG.phase2SkullFactor, // паттерн из черепов 16% → ~22% прокруток
     multiplierBonus: GAME_CONFIG.phase2MultiplierBonus, // множитель ×1, ×3, ×5…
   },
 ];

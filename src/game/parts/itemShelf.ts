@@ -16,6 +16,8 @@ const FLY_TIME = 450; // предмет летит из лотка на полк
 const PLANKS_FALL_TIME = 600; // доски слетают с купленной клетки
 const SHAKE_TIME = 50; // один рывок тряски «нельзя»
 const SPEND_TIME = 400; // включённый предмет сработал: летит к месту и тает
+const NEW_ITEM_SCALE = 1.15; // купленный предмет «дышит» (увеличивается во столько раз), пока его не нажмут: видно, что он нажимается
+const NEW_ITEM_BREATH = 550; // один вдох, мс
 
 /** Включённые предметы у экрана: щит, чеснок и ×3, у каждого свой ряд. Сигарета действует сразу — её там нет. */
 type EffectId = 'shield' | 'garlic' | 'triple';
@@ -123,8 +125,22 @@ export class ItemShelf {
       onComplete: () => {
         flying.destroy();
         target.setTexture(itemTexture(item)).setVisible(true);
-        pulse(this.scene, target, 1.15, ITEM_ON_SHELF_SCALE);
+        this.breathe(target);
       },
+    });
+  }
+
+  /** Купленный предмет «дышит» в клетке, пока его не нажмут (включить или «нельзя» — тряска это останавливает). */
+  private breathe(target: Phaser.GameObjects.Image): void {
+    this.scene.tweens.killTweensOf(target);
+    target.setScale(ITEM_ON_SHELF_SCALE);
+    this.scene.tweens.add({
+      targets: target,
+      scale: ITEM_ON_SHELF_SCALE * NEW_ITEM_SCALE,
+      duration: NEW_ITEM_BREATH,
+      ease: 'Sine.easeInOut',
+      yoyo: true,
+      repeat: -1,
     });
   }
 
@@ -132,7 +148,8 @@ export class ItemShelf {
   takeItem(slot: number, toX: number, toY: number, landed: () => void): void {
     this.shelfItems[slot] = null;
     const item = this.items[slot];
-    item.setVisible(false);
+    this.scene.tweens.killTweensOf(item); // перестал «дышать»
+    item.setScale(ITEM_ON_SHELF_SCALE).setVisible(false);
     const flying = this.scene.add.image(item.x, item.y, item.texture.key).setScale(ITEM_ON_SHELF_SCALE).setDepth(POPUP_DEPTH);
     this.scene.tweens.add({
       targets: flying,
@@ -160,8 +177,8 @@ export class ItemShelf {
 
   /** Тряска «нельзя»: влево-вправо и на место. */
   private shake(target: Phaser.GameObjects.Image, homeX: number): void {
-    this.scene.tweens.killTweensOf(target);
-    target.setX(homeX);
+    this.scene.tweens.killTweensOf(target); // и «дышать» перестаёт: на предмет уже нажимали
+    target.setX(homeX).setScale(ITEM_ON_SHELF_SCALE);
     this.scene.tweens.add({ targets: target, x: homeX + 6, duration: SHAKE_TIME, yoyo: true, repeat: 2, onComplete: () => target.setX(homeX) });
   }
 

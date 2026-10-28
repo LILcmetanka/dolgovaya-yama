@@ -22,7 +22,7 @@ const TEXTS = {
   newSymbol: { ru: 'НОВЫЙ СИМВОЛ', en: 'NEW SYMBOL' },
   warning: { ru: 'ВНИМАНИЕ', en: 'WARNING' },
   phase: { ru: 'ФАЗА', en: 'PHASE' }, // «ФАЗА 2» на стекле
-  debtCovered: { ru: 'НА ДОЛГ ХВАТАЕТ', en: 'DEBT COVERED' }, // на стекле: фишек на табло хватает на долг
+  debtCovered: { ru: 'ДАЛЬШЕ — ПРИБЫЛЬ', en: "NOW IT'S PROFIT" }, // на стекле: на долг хватает — дальше крутишь себе в плюс
   pause: { ru: 'ПАУЗА', en: 'PAUSE' }, // над знаком паузы
   closedSlot: { ru: 'Закрытое место', en: 'Locked slot' },
   closedSlotHow: { ru: 'Открывается за фишки в магазине', en: 'Opens for chips in the shop' },
