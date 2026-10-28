@@ -6,3 +6,6 @@ dist/
 !.vscode/extensions.json
 CLAUDE.md
 DESIGN.md
+LES/
+QUESTIONS.md
+HANDOFF.md
