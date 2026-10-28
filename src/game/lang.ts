@@ -41,6 +41,7 @@ const TEXTS = {
   liveBullet: { ru: 'Боевой', en: 'Live round' },
   blankBullet: { ru: 'Холостой', en: 'Blank' },
   bulletsWhat: { ru: 'Столько в барабане, порядок неизвестен', en: 'This many in the cylinder, order unknown' },
+  nextBullet: { ru: 'Выстрелит следующим', en: 'Fires next' }, // лупа показала следующий патрон
   shootCollector: { ru: 'В Коллектора', en: 'At the Collector' },
   shootCollectorWhat: { ru: 'Боевой — ты выжил, холостой — его ход', en: 'Live — you survive, blank — his turn' },
   shootSelf: { ru: 'В себя', en: 'At yourself' },

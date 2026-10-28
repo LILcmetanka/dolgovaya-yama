@@ -80,6 +80,7 @@ export class GameScene extends ShotScene {
       () => this.playRoulette(),
       (target) => this.shoot(target),
       (index) => this.giveAmulet(index),
+      () => this.useMagnifier(this.magnifierSlot()),
       this.tooltip,
       this.sfx,
     );

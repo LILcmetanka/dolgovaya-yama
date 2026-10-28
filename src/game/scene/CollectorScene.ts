@@ -3,13 +3,14 @@ import {
   canTradeAmulet,
   collectorTarget,
   loadCylinder,
+  nextBullet,
   randomLiveCount,
   ROULETTES_PER_RUN,
   shooterAfterBlank,
   type Bullet,
   type Side,
 } from '../collectorGame';
-import { DISPLAY } from '../layout';
+import { DISPLAY, MAGNIFIER_SPOT } from '../layout';
 import { GREEN_TEXT, LAMP_RED } from '../theme';
 import { SaveScene } from './SaveScene';
 
@@ -31,12 +32,14 @@ const ROULETTE_TENSION = 1; // во время рулетки сердце в м
 export abstract class CollectorScene extends SaveScene {
   private cylinder: Bullet[] = []; // патроны в барабане по порядку выстрелов; пусто — рулетка не идёт
   private liveRounds = 0; // сколько боевых зарядит Коллектор — их видно на столе ещё до игры
+  private hasPeeked = false; // в этот ход уже посмотрел в лупу
 
   /** Новый забег: рулетка не идёт. */
   protected resetState(): void {
     super.resetState();
     this.cylinder = [];
     this.liveRounds = 0;
+    this.hasPeeked = false;
   }
 
   /** Во время рулетки сердце в музыке бьётся быстрее всего. */
@@ -186,10 +189,37 @@ export abstract class CollectorScene extends SaveScene {
     this.revolverTable.spin(() => this.playerTurn());
   }
 
-  /** Твой ход: кнопки-цели — в Коллектора (↑) или в себя (↓). */
+  /** Твой ход: кнопки-цели — в Коллектора (↑) или в себя (↓); есть лупа — она на столе, можно посмотреть следующий патрон. */
   private playerTurn(): void {
     this.isAiming = true;
+    this.hasPeeked = false;
     this.revolverTable.showAim(true);
+    const slot = this.magnifierSlot();
+    this.revolverTable.showMagnifier(slot < 0 ? null : slot + 1); // её клавиша — номер места на полке
+  }
+
+  /** Место первой лупы на полке; лупы нет — −1. */
+  protected magnifierSlot(): number {
+    return this.shelf.findIndex((item) => item?.id === 'magnifier');
+  }
+
+  /**
+   * Лупа с места полки slot (клик по ней на столе или её клавиша): в твой ход рулетки показывает следующий патрон,
+   * лупа тратится (летит с полки на стол). Не твой ход или уже посмотрел — лупа на полке трясётся.
+   */
+  protected useMagnifier(slot: number): void {
+    if (slot < 0) return;
+    if (!this.isAiming || this.hasPeeked) {
+      this.sfx.play('deny');
+      this.itemShelf.deny(slot);
+      return;
+    }
+    this.hasPeeked = true;
+    this.shelf[slot] = null;
+    this.sfx.play('item');
+    this.tooltip.hide();
+    this.itemShelf.takeItem(slot, MAGNIFIER_SPOT.x, MAGNIFIER_SPOT.y, () => {});
+    this.revolverTable.reveal(nextBullet(this.cylinder));
   }
 
   /** Ты стреляешь в target: кнопка-цель, ↑ или ↓. */

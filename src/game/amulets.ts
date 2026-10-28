@@ -1,6 +1,6 @@
 import type { PatternHit } from './patterns';
 import type { Words } from './lang';
-import { isSkull, type SlotSymbol } from './rules';
+import { isSkull, MULTIPLIER_STEP, type SlotSymbol } from './rules';
 
 /**
  * Амулеты: постоянные на весь забег, стоят в гнёздах на корпусе автомата и меняют его правила.
@@ -45,7 +45,7 @@ export const BELL_SPINS = 2; // колокольчик: столько прок�
 export const FALSE_START_STREAK = 2; // фальстарт: раунд начинается с такой серии — ×3
 export const PIGGY_COINS = 2; // копилка: прокрутка без выигрыша кладёт на кон столько × множитель
 export const INSURANCE_SHARE = 1; // страховка: такая доля сгоревшего кона всё равно уходит на табло
-export const BOOST_STEP = 2; // разгон: на столько растёт множитель с каждой прокруткой
+export const BOOST_BONUS = 1; // разгон: множитель растёт на столько больше за прокрутку (обычный шаг — MULTIPLIER_STEP)
 export const VEST_SHIELDS = 1; // бронежилет: столько паттернов из черепов за раунд не сжигают кон
 export const CUT_FACTOR = 2; // огранка: 💎 выпадает во столько раз чаще
 export const INTEREST_SHARE = 0.5; // проценты: после расплаты фишки на табло растут на такую долю
@@ -90,7 +90,7 @@ export const AMULETS: Amulet[] = [
   {
     id: 'boost', sign: '⚡',
     name: { ru: 'Разгон', en: 'Boost' },
-    description: { ru: 'Множитель растёт на 2', en: 'Multiplier grows by 2' },
+    description: { ru: `Множитель за прокрутку растёт на ${BOOST_BONUS} больше`, en: `Multiplier grows by ${BOOST_BONUS} more each spin` },
     rarity: 'rare',
   },
   {
@@ -207,9 +207,9 @@ export function winFactor(owned: AmuletId[], bones: number): number {
   return factor;
 }
 
-/** На сколько растёт множитель серии с каждой прокруткой: с разгоном — на 2. */
+/** На сколько растёт множитель серии с каждой прокруткой: обычно на MULTIPLIER_STEP (ручка в GAME_CONFIG), с разгоном — на BOOST_BONUS больше. */
 export function multiplierStep(owned: AmuletId[]): number {
-  return owns(owned, 'boost') ? BOOST_STEP : 1;
+  return MULTIPLIER_STEP + (owns(owned, 'boost') ? BOOST_BONUS : 0);
 }
 
 /** С какой серии начинается раунд: с фальстартом — сразу ×3. */

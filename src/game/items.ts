@@ -7,7 +7,8 @@ import { isSkull, type SlotSymbol } from './rules';
  * Что делает каждый предмет в игре — в RoundScene.activateItem().
  */
 
-export type ItemId = 'cigarette' | 'shield' | 'garlic' | 'triple' | 'bullet'; // патрон — не из торгового автомата (shot.ts)
+// Патрон и лупа — не из торгового автомата: патрон — за билеты (shot.ts), лупа — из барабана (collectorGame.ts).
+export type ItemId = 'cigarette' | 'shield' | 'garlic' | 'triple' | 'bullet' | 'magnifier';
 
 /** Предмет на полке. */
 export interface Item {
