@@ -29,6 +29,9 @@ import type { Tooltip } from '../parts/tooltip';
 
 const RECORD_KEY = 'dolgovaya-yama-record'; // ключ рекорда в localStorage
 const ANGRY_TENSION = 0.25; // фаза 2: столько тревоги добавляется — сердце в музыке бьётся чаще
+// Записка светится (долг можно отдать раньше) только на последних прокрутках: если она горит сразу, её нажимают
+// и не докручивают раунд себе в плюс (практика 3). Отдать раньше (D или клик) можно и до этого.
+const PAY_EARLY_GLOW_SPINS = 3;
 
 /** Рекорд из localStorage. Если хранилище недоступно — 0, игра работает и так. */
 function loadRecord(): number {
@@ -245,11 +248,12 @@ export abstract class BaseScene extends Phaser.Scene {
   }
 
   /**
-   * Можно ли отдать долг раньше конца раунда — тогда записка светится: фишек на табло хватает, а раунд идёт
-   * (не расплата и не магазин, не Дилер, не перемотка, не конец забега). Пока крутится, записка светится, но клик подождёт.
+   * Светится ли записка (долг можно отдать раньше конца раунда): фишек на табло хватает, раунд идёт (не расплата и не магазин,
+   * не Дилер, не перемотка, не конец забега) и прокруток осталось мало — PAY_EARLY_GLOW_SPINS. Пока крутится, записка светится, но клик подождёт.
    */
   protected canPayEarly(): boolean {
-    return this.hasEnoughForDebt() && !this.isRoundOver && !this.isDealing && !this.isGameOver && !this.isRewinding;
+    const isRoundGoing = !this.isRoundOver && !this.isDealing && !this.isGameOver && !this.isRewinding;
+    return this.hasEnoughForDebt() && isRoundGoing && this.spinsLeft <= PAY_EARLY_GLOW_SPINS;
   }
 
   /** Можно ли вставить кассету — тогда она светится: Коллектор пришёл, а фишек не хватает, и на кассете есть запись. */
