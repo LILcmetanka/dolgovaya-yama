@@ -48,6 +48,7 @@ export class GameScene extends ShotScene {
   private corner!: CornerButtons; // значки в углу: настройки, «звук выключен», во весь экран
   private pauseScreen!: PauseScreen; // экран паузы
   private settingsPanel!: SettingsPanel; // настройки на экране паузы
+  private languageAtPause!: Lang; // язык, какой был, когда встали на паузу: после «▶» записка переворачивается, только если он другой
 
   constructor() {
     super('GameScene');
@@ -146,6 +147,7 @@ export class GameScene extends ShotScene {
   private pauseGame(): void {
     if (this.isPaused || this.isRewinding || this.isGameOver) return;
     this.isPaused = true;
+    this.languageAtPause = lang();
     this.tweens.pauseAll();
     this.time.paused = true;
     this.sfx.setPaused(true);
@@ -163,6 +165,7 @@ export class GameScene extends ShotScene {
     this.sfx.setPaused(false);
     this.time.paused = false;
     this.tweens.resumeAll();
+    if (lang() !== this.languageAtPause) this.collector.flipNote(this.debt, this.hasEnoughForDebt());
   }
 
   // ---------- Настройки: громкость звуков, громкость музыки, язык ----------
@@ -194,6 +197,8 @@ export class GameScene extends ShotScene {
   /**
    * L или RU/EN на панели: сменить язык. Подсказки, новости и экран DEATH берут язык, когда появляются,
    * а постоянные надписи меняем сразу: «Пробел» у рычага, в магазине и у стола Коллектора, «ДОЛГ» на записке (она переворачивается).
+   * На паузе твины стоят, и каждое нажатие копило бы переворот записки: RU → EN → RU — и после «▶» она переворачивалась
+   * без смены языка. Поэтому на паузе записку не трогаем — её переворачивает resumeGame, если язык и правда другой.
    */
   private toggleLanguage(): void {
     toggleLang();
@@ -204,7 +209,7 @@ export class GameScene extends ShotScene {
     this.revolverTable.relabel();
     this.pauseScreen.relabel();
     this.monitor.relabel();
-    this.collector.flipNote(this.debt, this.hasEnoughForDebt());
+    if (!this.isPaused) this.collector.flipNote(this.debt, this.hasEnoughForDebt());
   }
 
   // ---------- Монитор символов ----------
