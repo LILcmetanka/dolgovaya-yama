@@ -122,7 +122,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected amuletRack!: AmuletRack; // гнёзда с амулетами на верхушке корпуса
   protected shop!: Shop; // комната слева и торговый автомат
   protected cassette!: Cassette; // кассета в магазине и видеомагнитофон у монитора
-  protected amuletCase!: AmuletCase; // витрина амулетов над торговым автоматом
+  protected amuletCase!: AmuletCase; // чемодан с амулетами над торговым автоматом
   protected drum!: Drum; // «барабан» в магазине: колесо с призами за фишки
   protected revolverTable!: RevolverTable; // стол Коллектора: рулетка с револьвером и лоток для откупа амулетом
   protected bulletStand!: BulletStand; // патрон на стене магазина: его покупают за билеты

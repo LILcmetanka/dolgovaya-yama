@@ -4,10 +4,6 @@ import type { MachineCharacter } from './characters';
 import type { Item } from './items';
 import { t } from './lang';
 import {
-  AMULET_CASE,
-  AMULET_CASE_ICON_Y,
-  AMULET_CASE_PRICE_Y,
-  amuletCaseX,
   BELLY,
   BODY,
   CENTER_X,
@@ -968,17 +964,17 @@ function drawSignTriangles(g: Phaser.GameObjects.Graphics, bases: number[], dire
 }
 
 /**
- * Комната слева от автомата: витрина амулетов на стене и торговый автомат под ней — одна картинка (неподвижное).
- * Предметы, амулеты, ценники и номера кладут поверх части Shop и AmuletCase.
+ * Комната слева от автомата: стена и торговый автомат — одна картинка (неподвижное). Чемодан с амулетами на стене рисует AmuletCase.
+ * Предметы и ценники кладут поверх части Shop.
  */
-export function drawShopRoom(scene: Phaser.Scene, rows: number, places: number): void {
-  if (!scene.textures.exists(SHOP_ROOM_TEXTURE)) bakeShopRoom(scene, rows, places);
+export function drawShopRoom(scene: Phaser.Scene, rows: number): void {
+  if (!scene.textures.exists(SHOP_ROOM_TEXTURE)) bakeShopRoom(scene, rows);
   const { left, top } = topLeft(LEFT_ROOM);
   scene.add.image(left, top, SHOP_ROOM_TEXTURE).setOrigin(0);
 }
 
 /** Комната слева — в текстуру SHOP_ROOM_TEXTURE. Координаты частей — мировые (из layout.ts), их сдвигаем к началу картинки. */
-function bakeShopRoom(scene: Phaser.Scene, rows: number, places: number): void {
+function bakeShopRoom(scene: Phaser.Scene, rows: number): void {
   const { left: roomLeft, top: roomTop } = topLeft(LEFT_ROOM);
   const local = (box: Box): Box => ({ ...box, x: box.x - roomLeft, y: box.y - roomTop });
   const g = scene.add.graphics();
@@ -1002,41 +998,12 @@ function bakeShopRoom(scene: Phaser.Scene, rows: number, places: number): void {
     g.lineStyle(52, 0x000000, 0.14);
     g.strokeRect(inset, inset, width - 2 * inset, 640 - 2 * inset);
   }
-  const placeXs = Array.from({ length: places }, (_, place) => amuletCaseX(place, places) - roomLeft);
-  drawAmuletCase(g, local(AMULET_CASE), placeXs, AMULET_CASE_ICON_Y - roomTop, AMULET_CASE_PRICE_Y - roomTop);
   const coinSlot = { x: VENDING_COIN_SLOT.x - roomLeft, y: VENDING_COIN_SLOT.y - roomTop };
   drawVendingMachine(g, vending, local(VENDING_GLASS), local(VENDING_BIN), coinSlot, rows, {
     goodX: VENDING_GOOD_X - roomLeft,
     priceX: VENDING_PRICE_X - roomLeft,
   });
   bake(g, SHOP_ROOM_TEXTURE, width, 640);
-}
-
-/** Витрина амулетов на стене: деревянная рама, красный бархат, таблички под ценники, лампа сверху. */
-function drawAmuletCase(g: Phaser.GameObjects.Graphics, box: Box, placeXs: number[], iconY: number, priceY: number): void {
-  const { left, top } = topLeft(box);
-  for (let i = 3; i >= 1; i--) {
-    g.fillStyle(0xfde68a, 0.035); // тёплый свет лампы на стене
-    g.fillEllipse(box.x, top + 30, 160 + i * 60, 90 + i * 40);
-  }
-  g.fillStyle(0x000000, 0.5);
-  g.fillRoundedRect(left + 10, top + 8, box.width, box.height, 10); // тень на стене
-  g.fillStyle(0x3b2412);
-  g.fillRoundedRect(left, top, box.width, box.height, 10); // рама
-  g.fillStyle(0x5b3a1e);
-  g.fillRect(left + 8, top + 4, box.width - 16, 3); // светлый край рамки
-  g.fillStyle(0x3f0a0a);
-  g.fillRoundedRect(left + 10, top + 10, box.width - 20, box.height - 20, 6); // бархат
-  for (const x of placeXs) {
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(x, iconY + 27, 48, 10); // тень под амулетом
-    g.fillStyle(0x1c0505);
-    g.fillRoundedRect(x - 34, priceY - 12, 68, 24, 5); // табличка для ценника
-  }
-  g.fillStyle(0xffffff, 0.05);
-  g.fillTriangle(left + 10, top + 70, left + 80, top + 10, left + 120, top + 10); // блик на стекле
-  g.fillStyle(0x94a3b8);
-  g.fillRoundedRect(box.x - 40, top - 7, 80, 8, 3); // лампа над витриной
 }
 
 /** Где в ряду торгового автомата предмет и ценник (мировые x, сдвинутые к началу картинки). */

@@ -106,9 +106,9 @@ export abstract class ShopScene extends DealerScene {
     return this.slots - 1;
   }
 
-  /** Купить место витрины амулетов: амулет, билет за фишки или гнездо. */
+  /** Купить место чемодана с амулетами: амулет, билет за фишки или гнездо. */
   protected buyFromCase(place: number): void {
-    if (!this.isShopping) return;
+    if (!this.isShopping || !this.amuletCase.isOpen) return; // чемодан ещё закрыт — покупать нечего
     if (place === TICKET_PLACE) this.buyTicket();
     else if (place === SOCKET_PLACE) this.buySocket();
     else this.buyAmulet(place);

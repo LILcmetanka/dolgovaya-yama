@@ -126,9 +126,9 @@ export const EFFECTS_STEP = 54;
 // Магазин — слева от комнаты: после расплаты вид уезжает туда. Полка и табло остаются видны.
 export const SHOP_SCROLL = -360 - ROOM_SIDE; // левый край вида в магазине
 export const LEFT_ROOM: Box = { x: -240 - ROOM_SIDE, y: CENTER_Y, width: 480, height: 640 }; // продолжение комнаты слева
-// Витрина амулетов на стене: 2 амулета, билет и гнездо — в ряд.
+// Чемодан с амулетами на стене: 2 амулета, билет и гнездо — в ряд. Над ним поднимается крышка (до верха комнаты).
 export const AMULET_CASE_PLACES = AMULET_OFFER_SIZE + 2;
-export const AMULET_CASE: Box = { x: -200 - ROOM_SIDE, y: 104, width: 312, height: 152 };
+export const AMULET_CASE: Box = { x: -200 - ROOM_SIDE, y: 116, width: 312, height: 128 }; // низ чемодана, где лежат вещи
 export const AMULET_CASE_STEP = 76; // от места до места
 export const AMULET_CASE_ICON_Y = 82; // амулеты и билет: вместе с ценниками — посередине бархата
 export const AMULET_CASE_PRICE_Y = 136; // ценники под ними

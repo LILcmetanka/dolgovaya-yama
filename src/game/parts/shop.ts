@@ -13,7 +13,6 @@ import {
 import { ITEMS, OFFER_SIZE, type Item } from '../items';
 import { t } from '../lang';
 import {
-  AMULET_CASE_PLACES,
   BOARD_CHIP_X,
   DISPLAY,
   HOME_SCROLL,
@@ -47,7 +46,7 @@ const DROP_TIME = 350; // покупка падает в лоток
 const SHAKE_TIME = 50; // один рывок тряски «не хватает фишек»
 
 /**
- * Магазин: комната слева, витрина амулетов на стене (её товар — часть AmuletCase) и торговый автомат под ней.
+ * Магазин: комната слева, чемодан с амулетами на стене (его рисует AmuletCase) и торговый автомат под ним.
  * В рядах торгового автомата — предметы с ценниками, в нижнем ряду — место на полке.
  * Клик по ряду (или клавиша с его номером, её ловит сцена) — купить. При наведении — подсказка.
  */
@@ -66,7 +65,7 @@ export class Shop {
     createItemTextures(scene, ITEMS, ITEM_SIZE);
     createShelfTextures(scene, SHELF_CELL);
     createLeaveButtonTexture(scene);
-    drawShopRoom(scene, ROWS, AMULET_CASE_PLACES);
+    drawShopRoom(scene, ROWS);
 
     for (let row = 0; row < ROWS; row++) {
       const y = vendingRowY(row, ROWS);
