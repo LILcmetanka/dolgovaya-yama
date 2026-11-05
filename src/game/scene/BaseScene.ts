@@ -24,7 +24,7 @@ import type { PayoutWindow } from '../parts/payoutWindow';
 import type { RevolverTable } from '../parts/revolverTable';
 import type { Shop } from '../parts/shop';
 import type { SlotScreen } from '../parts/slotScreen';
-import type { SymbolMonitor } from '../parts/symbolMonitor';
+import type { WallScreen } from '../parts/wallScreen';
 import type { Tooltip } from '../parts/tooltip';
 
 const RECORD_KEY = 'dolgovaya-yama-record'; // ключ рекорда в localStorage
@@ -107,7 +107,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isGameOver = false; // долг не отдан — DEATH, конец забега
   protected isRewinding = false; // кассету вставили — плёнка перематывается, потом сцена перезапустится с записью
   protected isPaused = false; // пауза (Esc, P, ⏸): анимации, таймеры и звук стоят
-  protected isAtMonitor = false; // вид повёрнут к монитору символов — крутить и забирать нельзя
+  protected isAtMonitor = false; // большой экран на стене открыт — крутить и забирать нельзя
   protected canRestartWithSpace = false; // Пробел на экране DEATH срабатывает не сразу
 
   // Звук создаётся один раз вместе со сценой и живёт весь сеанс: при scene.restart() он тот же (аудиоконтекстов в браузере мало).
@@ -131,7 +131,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected dealerTable!: DealerTable; // стол Дилера поверх экрана
   protected atmosphere!: Atmosphere; // пыль, полосы на экране, мигание света, тёмные края от тревоги
   protected tooltip!: Tooltip; // подсказка при наведении мыши
-  protected monitor!: SymbolMonitor; // монитор символов у правой стены: цены и что делает каждый символ
+  protected monitor!: WallScreen; // экран на стене справа: символы, паттерны, как играть
   protected effects!: Effects; // брызги фишек, всплывающие надписи, вспышка с тряской
 
   /** Начало забега: первый долг, пустое табло, 2 места на полке и 2 гнезда, ничего не включено, автомат обычный. */

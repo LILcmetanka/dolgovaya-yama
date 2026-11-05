@@ -23,7 +23,7 @@ import { addRotateHint } from './parts/rotateHint';
 import { SettingsPanel } from './parts/settingsPanel';
 import { Shop } from './parts/shop';
 import { SlotScreen } from './parts/slotScreen';
-import { SymbolMonitor } from './parts/symbolMonitor';
+import { WallScreen } from './parts/wallScreen';
 import { Tooltip } from './parts/tooltip';
 import { ShotScene } from './scene/ShotScene';
 import { MAX_SLOTS } from './items';
@@ -37,7 +37,6 @@ const VENDING_KEYS = 4; // сколько клавиш у торгового а�
 const CASE_KEYS = 4; // сколько клавиш у витрины амулетов; за ними — кассета (9) и барабан (0)
 const TAPE_KEY = VENDING_KEYS + CASE_KEYS; // номер клавиши кассеты в NUMBER_KEYS
 const MUSIC_TICK = 100; // как часто музыка планирует удары «сердца» вперёд, мс
-const MONITOR_SOUND_DELAY = 0.6; // монитор щёлкает, когда вид к нему повернулся, с
 
 /**
  * Единственная сцена игры «Долговая яма» — верхний слой: создаёт части автомата и разбирает клавиши.
@@ -61,7 +60,7 @@ export class GameScene extends ShotScene {
     this.setupCamera();
     drawRoom(this);
     const machineBody = drawMachineBody(this); // тело корпуса — его красит MachineBadge в цвет автомата
-    this.monitor = new SymbolMonitor(this, this.round, () => this.toggleMonitor()); // мебель комнаты: под рычагом и рукой Коллектора
+    this.monitor = new WallScreen(this, this.round, () => this.toggleMonitor()); // мебель комнаты: под рычагом и рукой Коллектора
     this.tooltip = new Tooltip(this);
     this.screen = new SlotScreen(this, this.sfx);
     this.brokenScreen = new BrokenScreen(this); // поверх сетки: дыра и трещины после выстрела в автомат
@@ -135,7 +134,8 @@ export class GameScene extends ShotScene {
 
   /** Esc, P или значок ⚙: пауза с настройками или продолжить. */
   private togglePause(): void {
-    if (this.isPaused) this.resumeGame();
+    if (this.isAtMonitor) this.lookBack(); // Esc сначала закрывает большой экран на стене
+    else if (this.isPaused) this.resumeGame();
     else this.pauseGame();
   }
 
@@ -209,29 +209,28 @@ export class GameScene extends ShotScene {
     if (!this.isPaused) this.collector.flipNote(this.debt, this.hasEnoughForDebt());
   }
 
-  // ---------- Монитор символов ----------
+  // ---------- Экран на стене ----------
 
-  /** → или клик по монитору: повернуться к монитору или обратно к автомату. */
+  /** → или клик по экрану на стене: открыть большой экран или закрыть. */
   private toggleMonitor(): void {
     if (this.isAtMonitor) this.lookBack();
     else this.lookAtMonitor();
   }
 
-  /** Повернуться к монитору справа — там цены символов и что делает каждый. Только между прокрутками: пока смотришь, крутить нельзя. */
+  /** Открыть большой экран со вкладками (символы, паттерны, как играть). Только между прокрутками: пока он открыт, крутить нельзя. */
   private lookAtMonitor(): void {
     if (!this.canAct()) return;
     this.isAtMonitor = true;
     this.tooltip.hide();
-    this.sfx.play('turn');
-    this.sfx.play('monitor', MONITOR_SOUND_DELAY);
+    this.sfx.play('monitor');
     this.monitor.open();
     this.refreshHud();
   }
 
-  /** Назад к автомату (Пробел, ←, → или клик по монитору); повернулся — снова можно крутить. */
+  /** Закрыть большой экран (клик мимо, ✕, Esc, Пробел, ← или →); снова можно крутить. */
   private lookBack(): void {
     if (!this.isAtMonitor) return;
-    this.sfx.play('turn');
+    this.sfx.play('monitor');
     this.monitor.close(() => {
       this.isAtMonitor = false;
       this.refreshHud();
@@ -256,7 +255,7 @@ export class GameScene extends ShotScene {
     this.onKey('UP', () => this.onUp());
     this.onKey('DOWN', () => this.onDown());
     this.onKey('PLUS', () => this.guess('equal')); // у Дилера — «=»: в Phaser клавиша «= / +» зовётся PLUS (код 187)
-    this.onKey('RIGHT', () => this.toggleMonitor()); // монитор — справа
+    this.onKey('RIGHT', () => this.toggleMonitor()); // экран на стене — справа
     this.onKey('LEFT', () => this.lookBack());
   }
 

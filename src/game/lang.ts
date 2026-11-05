@@ -23,6 +23,22 @@ const TEXTS = {
   phase: { ru: 'ФАЗА', en: 'PHASE' }, // «ФАЗА 2» на стекле
   debtCovered: { ru: 'ДАЛЬШЕ — ПРИБЫЛЬ', en: "NOW IT'S PROFIT" }, // на стекле: на долг хватает — дальше крутишь себе в плюс
   pause: { ru: 'ПАУЗА', en: 'PAUSE' }, // над знаком паузы
+  // Экран на стене (WallScreen): вкладки и их надписи.
+  tabSymbols: { ru: 'СИМВОЛЫ', en: 'SYMBOLS' },
+  tabPatterns: { ru: 'ПАТТЕРНЫ', en: 'PATTERNS' },
+  tabHowTo: { ru: 'КАК ИГРАТЬ', en: 'HOW TO PLAY' },
+  patternsNote: {
+    ru: 'Паттерн платит: цена символа × число под ним. Ряд считается по самому длинному отрезку.',
+    en: 'A pattern pays the symbol price × the number under it. In a row only the longest run counts.',
+  },
+  howToGoal: {
+    ru: 'Цель. Отдать долг, пока не кончились прокрутки. Каждый раунд долг больше.\n\nКрути автомат: паттерны из одинаковых символов добавляют фишки в кон. Каждая прокрутка подряд поднимает множитель кона. Череп сжигает кон, пока ты его не забрал.\n\nЗабрать: кон уходит на табло, множитель сбрасывается.\n\nФишек на долг хватает: отдай его записке или руке Коллектора, потом магазин. Не хватает: у Коллектора можно отдать амулет, сыграть в рулетку (раз за забег) или вставить кассету.',
+    en: 'Goal. Pay the debt before you run out of spins. The debt grows every round.\n\nSpin the machine: patterns of matching symbols add chips to the pot. Each spin in a row raises the pot multiplier. A skull burns the pot until you take it.\n\nTake: the pot goes to the board, the multiplier resets.\n\nEnough chips for the debt: hand it to the note or the Collector, then the shop. Not enough: at the Collector you can give an amulet, play roulette (once per run) or insert the tape.',
+  },
+  howToKeys: {
+    ru: 'Клавиши\nПробел: крутить, назад из магазина\nEnter: забрать кон, отдать долг\nD: отдать долг раньше\n1–8: предмет с полки\n→ или клик: этот экран\nEsc или P: пауза\nM: звук\nL: язык\n\nВ магазине\n1–4: торговый автомат\n5–8: чемодан с амулетами\n9: кассета, 0: барабан, «-»: патрон',
+    en: 'Keys\nSpace: spin, leave the shop\nEnter: take the pot, pay the debt\nD: pay the debt early\n1–8: shelf item\n→ or click: this screen\nEsc or P: pause\nM: sound\nL: language\n\nIn the shop\n1–4: vending machine\n5–8: amulet suitcase\n9: tape, 0: drum, "-": bullet',
+  },
   closedSlot: { ru: 'Закрытое место', en: 'Locked slot' },
   closedSlotHow: { ru: 'Открывается за фишки в магазине', en: 'Opens for chips in the shop' },
   shelfSlot: { ru: 'Место на полке', en: 'Shelf slot' },

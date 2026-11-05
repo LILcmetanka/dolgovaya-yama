@@ -1849,12 +1849,12 @@ export function createFullscreenTexture(scene: Phaser.Scene): void {
  * экран — canvas: цены платящих символов, что делают особые, внизу — что даёт джекпот. Экран перерисовывается,
  * когда в автомат входят новые символы или меняется язык (это раз в раунд — дёшево).
  */
-export const KIOSK_TEXTURE = 'monitor-kiosk';
+export const WALL_TV_TEXTURE = 'wall-tv';
 export const MONITOR_SCREEN_TEXTURE = 'monitor-screen';
-export const KIOSK_GLOW = 30; // отсвет выходит за корпус на столько с каждой стороны — картинка больше корпуса
-const KIOSK_DARK = 0x0b1120; // бок, гнездо лампочки, решётка динамика, подставка
-const KIOSK_FRONT = 0x1e293b; // лицевая часть
-const KIOSK_TRIM = 0x475569;
+export const WALL_TV_GLOW = 30; // отсвет выходит за корпус на столько с каждой стороны — картинка больше корпуса
+const WALL_TV_DARK = 0x0b1120;
+const WALL_TV_FRONT = 0x1e293b;
+const WALL_TV_TRIM = 0x475569;
 const MONITOR_BG = '#03161c'; // кинескоп: тёмный, с холодным отсветом к середине
 const MONITOR_INK = '#cffafe'; // надписи
 const MONITOR_LINE = 'rgba(103, 232, 249, 0.3)'; // разделители
@@ -1886,42 +1886,31 @@ export interface MonitorNote {
   isNew: boolean;
 }
 
-/** Корпус терминала (и экран, и всё вокруг) — в текстуру KIOSK_TEXTURE. Координаты частей — мировые, их сдвигаем к началу картинки. */
-export function createKioskTexture(scene: Phaser.Scene, kiosk: Box, screen: Box): void {
-  if (scene.textures.exists(KIOSK_TEXTURE)) return;
-  const width = kiosk.width + 2 * KIOSK_GLOW;
-  const height = kiosk.height + 2 * KIOSK_GLOW;
-  const { left: kioskLeft, top: kioskTop } = topLeft(kiosk);
-  const left = KIOSK_GLOW;
-  const top = KIOSK_GLOW;
-  const screenLeft = screen.x - screen.width / 2 - kioskLeft + KIOSK_GLOW;
-  const screenTop = screen.y - screen.height / 2 - kioskTop + KIOSK_GLOW;
+/** Маленький телевизор на стене (корпус, стекло, отсвет на стене) — в текстуру WALL_TV_TEXTURE. Что на стекле, пишет WallScreen. */
+export function createWallTvTexture(scene: Phaser.Scene, tv: Box): void {
+  if (scene.textures.exists(WALL_TV_TEXTURE)) return;
+  const width = tv.width + 2 * WALL_TV_GLOW;
+  const height = tv.height + 2 * WALL_TV_GLOW;
+  const left = WALL_TV_GLOW;
+  const top = WALL_TV_GLOW;
   const g = scene.add.graphics();
   for (let i = 0; i < 5; i++) {
-    g.fillStyle(0x22d3ee, 0.025); // холодный отсвет экрана на стене
-    g.fillEllipse(width / 2, screenTop + screen.height / 2, width - i * 40, screen.height + 40 - i * 50);
+    g.fillStyle(0x22d3ee, 0.025); // холодный отсвет стекла на стене
+    g.fillEllipse(width / 2, height / 2, width - i * 14, height - i * 12);
   }
   g.fillStyle(0x000000, 0.5);
-  g.fillRoundedRect(left + 10, top + 8, kiosk.width, kiosk.height - 8, 16); // тень на стене
-  g.fillStyle(KIOSK_DARK);
-  g.fillRoundedRect(left, top, kiosk.width, kiosk.height, 16); // левый бок в тени
-  g.fillStyle(KIOSK_FRONT);
-  g.fillRoundedRect(left + 12, top, kiosk.width - 12, kiosk.height, 16);
-  g.lineStyle(3, KIOSK_TRIM);
-  g.strokeRoundedRect(left + 18, top + 6, kiosk.width - 24, kiosk.height - 12, 12);
-  g.fillStyle(KIOSK_DARK);
-  g.fillCircle(width / 2, top + 12, 7); // гнездо лампочки над экраном
-  g.fillStyle(0x64748b);
-  g.fillRoundedRect(screenLeft - 9, screenTop - 9, screen.width + 18, screen.height + 18, 14); // хромированная рамка экрана
+  g.fillRoundedRect(left + 6, top + 6, tv.width, tv.height, 10); // тень на стене
+  g.fillStyle(WALL_TV_DARK);
+  g.fillRoundedRect(left, top, tv.width, tv.height, 10);
+  g.fillStyle(WALL_TV_FRONT);
+  g.fillRoundedRect(left + 3, top + 3, tv.width - 6, tv.height - 6, 8);
+  g.lineStyle(2, WALL_TV_TRIM);
+  g.strokeRoundedRect(left + 6, top + 6, tv.width - 12, tv.height - 12, 6);
   g.fillStyle(0x020617);
-  g.fillRoundedRect(screenLeft - 5, screenTop - 5, screen.width + 10, screen.height + 10, 12); // тёмное стекло
-  const grilleTop = screenTop + screen.height + 24;
-  g.fillStyle(KIOSK_DARK);
-  for (let row = 0; row < 3; row++) {
-    for (let col = 0; col < 9; col++) g.fillRoundedRect(width / 2 - 70 + col * 16, grilleTop + row * 7, 12, 4, 2); // решётка динамика
-  }
-  g.fillRoundedRect(left - 6, top + kiosk.height - 16, kiosk.width + 12, 16, 4); // подставка на полу
-  bake(g, KIOSK_TEXTURE, width, height);
+  g.fillRoundedRect(left + 10, top + 10, tv.width - 20, tv.height - 28, 6); // тёмное стекло
+  g.fillStyle(WALL_TV_DARK);
+  for (let col = 0; col < 5; col++) g.fillRoundedRect(left + tv.width - 54 + col * 8, top + tv.height - 14, 5, 3, 1); // решётка динамика
+  bake(g, WALL_TV_TEXTURE, width, height);
 }
 
 /** Экран монитора на canvas MONITOR_SCREEN_TEXTURE (width×height): цены, особые символы, внизу — джекпот. Рисуется заново целиком. */
