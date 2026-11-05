@@ -1,4 +1,5 @@
 import { amuletPrice, randomAmuletOffer, socketPrice, ticketPrice } from '../amulets';
+import { amuletKey, itemKey, see, WHO_COLLECTOR } from '../codex';
 import { characterDebt } from '../characters';
 import { canWin, DRUM_SECTORS, drumChips, drumPrice, prizeItem, randomSector, type DrumPrize } from '../drum';
 import { itemPrice, MAX_SLOTS, randomOffer, slotPrice } from '../items';
@@ -39,6 +40,7 @@ export abstract class ShopScene extends DealerScene {
     const amuletOffer = randomAmuletOffer(this.amuletIds());
     this.amuletOffer = amuletOffer;
     this.isTicketForSale = true;
+    this.seeInShop(offer.map((item) => itemKey(item.id)), amuletOffer.map((amulet) => amuletKey(amulet.id)));
     this.drumSpins = 0; // в новом магазине барабан снова дешёвый
     this.amuletCase.fill({
       amulets: amuletOffer,
@@ -52,6 +54,12 @@ export abstract class ShopScene extends DealerScene {
       this.isShopping = true;
       this.refreshShop();
     });
+  }
+
+  /** В магазине показали предметы и амулеты (и Коллектор уже приходил): всё это теперь на экране на стене; впервые — там мигает «NEW». */
+  private seeInShop(...keys: string[][]): void {
+    const isNew = [WHO_COLLECTOR, ...keys.flat()].map(see).some(Boolean); // see — для каждого ключа, поэтому без короткого замыкания
+    if (isNew) this.monitor.notify('new');
   }
 
   /** Купить ряд торгового автомата row: предмет — на свободное место полки, нижний ряд — ещё одно место. */

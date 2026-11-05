@@ -1,3 +1,4 @@
+import { see, WHO_DEALER } from '../codex';
 import { canGuessWin, dealerStake, isGuessRight, randomCard, winFactor, type Guess } from '../dealerGame';
 import { PAYOUT_WINDOW } from '../layout';
 import { LAMP_PURPLE } from '../theme';
@@ -28,6 +29,7 @@ export abstract class DealerScene extends RoundScene {
 
   /** Выпал кубик: Дилер садится за стол, открывает карту. Ушёл — done(). */
   protected startDealerGame(done: () => void): void {
+    if (see(WHO_DEALER)) this.monitor.notify('new'); // Дилер появился впервые — он на экране на стене
     this.isDealing = true;
     this.dealerDone = done;
     this.dealerStakeNow = dealerStake(this.pot, this.debt);

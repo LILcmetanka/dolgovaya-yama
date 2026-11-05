@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { drawMachineBody, drawRoom } from './decor';
 import { lang, toggleLang, type Lang } from './lang';
 import { HOME_SCROLL, ZOOM } from './layout';
+import { amuletKey, itemKey, see } from './codex';
 import { AmuletCase } from './parts/amuletCase';
 import { AmuletRack } from './parts/amuletRack';
 import { Atmosphere } from './parts/atmosphere';
@@ -221,10 +222,17 @@ export class GameScene extends ShotScene {
   private lookAtMonitor(): void {
     if (!this.canAct()) return;
     this.isAtMonitor = true;
+    this.seeOwned();
     this.tooltip.hide();
     this.sfx.play('monitor');
     this.monitor.open();
     this.refreshHud();
+  }
+
+  /** Что лежит на полке и в гнёздах, то уже встречено (барабан, откат кассетой) — для вкладки «Предметы». */
+  private seeOwned(): void {
+    for (const item of this.shelf) if (item) see(itemKey(item.id));
+    for (const amulet of this.amulets) see(amuletKey(amulet.id));
   }
 
   /** Закрыть большой экран (клик мимо, ✕, Esc, Пробел, ← или →); снова можно крутить. */

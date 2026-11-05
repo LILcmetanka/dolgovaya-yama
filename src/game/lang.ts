@@ -27,6 +27,19 @@ const TEXTS = {
   tabSymbols: { ru: 'СИМВОЛЫ', en: 'SYMBOLS' },
   tabPatterns: { ru: 'ПАТТЕРНЫ', en: 'PATTERNS' },
   tabHowTo: { ru: 'КАК ИГРАТЬ', en: 'HOW TO PLAY' },
+  tabWho: { ru: 'КТО ЕСТЬ КТО', en: "WHO'S WHO" },
+  tabItems: { ru: 'ПРЕДМЕТЫ', en: 'ITEMS' },
+  tabEmpty: { ru: 'Пока ничего не встретил', en: 'Nothing met yet' },
+  whoCollector: { ru: 'Коллектор', en: 'Collector' },
+  whoCollectorWhat: {
+    ru: 'Приходит за долгом. Фишек не хватает: отдай амулет, сыграй с ним в рулетку (раз за забег) или вставь кассету',
+    en: "Comes for the debt. Short on chips: give an amulet, play roulette (once per run) or insert the tape",
+  },
+  whoDealer: { ru: 'Дилер', en: 'Dealer' },
+  whoDealerWhat: {
+    ru: 'Приходит, когда выпал кубик 🎲. Угадай, следующая карта больше, меньше или такая же: «>» и «<» ×1,5, «=» ×8. Не угадал: кон сгорает',
+    en: 'Comes when the 🎲 drops. Guess if the next card is higher, lower or the same: ">" and "<" ×1.5, "=" ×8. Wrong: the pot burns',
+  },
   patternsNote: {
     ru: 'Паттерн платит: цена символа × число под ним. Ряд считается по самому длинному отрезку.',
     en: 'A pattern pays the symbol price × the number under it. In a row only the longest run counts.',

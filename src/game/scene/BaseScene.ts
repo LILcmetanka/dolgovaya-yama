@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { multiplierStep, START_SOCKETS, type Amulet, type AmuletId } from '../amulets';
+import { resetCodex } from '../codex';
 import { ORDINARY, type MachineCharacter } from '../characters';
 import { noEffects, START_SLOTS, type Item, type ItemEffects, type ShopItem } from '../items';
 import { PHASES, type Phase } from '../phases';
@@ -266,6 +267,7 @@ export abstract class BaseScene extends Phaser.Scene {
    * и «заново» снова откатило бы забег.
    */
   protected restartGame(): void {
+    resetCodex(); // новый забег: встреченное забыто
     this.scene.restart({});
   }
 

@@ -1,23 +1,40 @@
 import Phaser from 'phaser';
 import { CROWNS_FOR_FREE_SPINS, FREE_SPINS, JACKPOT_SPINS, JACKPOT_TICKETS } from '../bonus';
 import {
+  amuletTexture,
+  createAmuletTextures,
+  createItemTextures,
   createWallTvTexture,
   drawMonitorScreen,
+  itemTexture,
   MONITOR_SCREEN_TEXTURE,
   type MonitorNote,
   type MonitorPrice,
   WALL_TV_GLOW,
   WALL_TV_TEXTURE,
 } from '../decor';
+import { AMULETS } from '../amulets';
+import { amuletKey, isSeen, itemKey, machineKey, WHO_COLLECTOR, WHO_DEALER } from '../codex';
+import { CHARACTERS, ORDINARY } from '../characters';
+import { MAGNIFIER } from '../collectorGame';
 import { BLOOD_WIN, SPIDER_BITE } from '../evil';
+import { ITEMS } from '../items';
 import { t } from '../lang';
-import { VIEW_CENTER_X, VIEW_WIDTH, WALL_PANEL, WALL_TV } from '../layout';
+import { AMULET_SIZE, ITEM_SIZE, VIEW_CENTER_X, VIEW_WIDTH, WALL_PANEL, WALL_TV } from '../layout';
+import { BULLET } from '../shot';
 import { PATTERNS } from '../patterns';
 import { GRID_COLUMNS, GRID_ROWS, isPaying, isUnlocked, symbolsUnlockedAt, SYMBOLS, TICKET_SCATTER, type SlotSymbol } from '../rules';
 import { addText } from '../theme';
 
 const TV_DIM_ALPHA = 0.35; // в покое на стекле тусклый «?»
-const NEW_COLOR = '#4ade80'; // «NEW»: зелёное
+/** Что мигает на телевизоре: новое (зелёное), злой символ (красное), фаза 2 или новый автомат (жёлтое). Важнее — красное. */
+export type News = 'new' | 'warning' | 'update';
+const NEWS_LOOK: Record<News, { text: string; color: string; size: number }> = {
+  new: { text: 'NEW', color: '#4ade80', size: 22 },
+  warning: { text: 'WARNING', color: '#f87171', size: 15 },
+  update: { text: 'UPDATE', color: '#fde047', size: 16 },
+};
+const NEWS_PRIORITY: News[] = ['new', 'update', 'warning'];
 const BLINK_TIME = 450;
 const OVERLAY_DEPTH = 20; // над игрой, под подсказкой и экранами паузы и DEATH
 const SHADE_ALPHA = 0.8;
@@ -25,7 +42,7 @@ const PANEL_COLOR = 0x03161c; // тот же кинескоп, что у кар�
 const PANEL_LINE = 0x67e8f9;
 const INK = '#cffafe';
 const GOLD = '#fbbf24';
-const TAB_WIDTH = 210;
+const TAB_WIDTH = 168;
 const TAB_HEIGHT = 40;
 const PAD = 20;
 const SYMBOLS_WIDTH = WALL_PANEL.width - 2 * PAD; // картинка вкладки «Символы» — на всю ширину экрана
@@ -36,11 +53,27 @@ const PATTERN_PITCH_X = 130;
 const PATTERN_PITCH_Y = 150;
 const PATTERN_CELL = 16;
 const PATTERN_GAP = 3;
+// Вкладки «Предметы» и «Кто есть кто»: строки в два столбца.
+const ROW_COLUMNS = 2;
+const ROW_WIDTH = 450;
+const ROW_HEIGHT = 52;
+const ROW_ICON = 40;
+const DIM_INK = '#8fc3cc';
 
-type Tab = 'symbols' | 'patterns' | 'howTo';
-const TABS: { id: Tab; label: 'tabSymbols' | 'tabPatterns' | 'tabHowTo' }[] = [
+/** Строка вкладки: значок (картинка или эмодзи), название и описание. */
+interface Row {
+  texture?: string;
+  sign?: string;
+  name: string;
+  description: string;
+}
+
+type Tab = 'symbols' | 'patterns' | 'items' | 'who' | 'howTo';
+const TABS: { id: Tab; label: 'tabSymbols' | 'tabPatterns' | 'tabItems' | 'tabWho' | 'tabHowTo' }[] = [
   { id: 'symbols', label: 'tabSymbols' },
   { id: 'patterns', label: 'tabPatterns' },
+  { id: 'items', label: 'tabItems' },
+  { id: 'who', label: 'tabWho' },
   { id: 'howTo', label: 'tabHowTo' },
 ];
 
@@ -88,12 +121,14 @@ export class WallScreen {
   private isOpen = false; // большой экран открыт
   private isEnabled = true; // по телевизору можно кликнуть
   private isHovered = false; // мышь над телевизором — курсор-рука его
-  private hasNew = false; // есть символы, которых ещё не видел
+  private news: News | null = null; // что мигает на телевизоре, пока экран не откроют
 
   /** round — какой раунд идёт: в «Символах» те, что уже есть в автомате; toggle — кликнули по телевизору или закрыли большой экран. */
   constructor(scene: Phaser.Scene, round: number, toggle: () => void) {
     this.scene = scene;
     createWallTvTexture(scene, WALL_TV);
+    createItemTextures(scene, [...ITEMS, MAGNIFIER, BULLET], ITEM_SIZE);
+    createAmuletTextures(scene, AMULETS, AMULET_SIZE);
     this.tv = scene.add.image(WALL_TV.x, WALL_TV.y, WALL_TV_TEXTURE);
     // Картинка шире корпуса (отсвет на стене) — кликать можно только по самому телевизору.
     const body = new Phaser.Geom.Rectangle(WALL_TV_GLOW, WALL_TV_GLOW, WALL_TV.width, WALL_TV.height);
@@ -107,7 +142,7 @@ export class WallScreen {
     this.buildOverlay(toggle);
     this.content = scene.add.container(0, 0);
     this.round = round;
-    this.hasNew = true; // в начале забега (и после кассеты) экран ещё не видели
+    this.news = 'new'; // в начале забега (и после кассеты) экран ещё не видели
     this.redrawSymbols();
     this.showTab('symbols');
     this.hideOverlay();
@@ -119,9 +154,15 @@ export class WallScreen {
     if (round === this.round) return;
     this.round = round;
     this.redrawSymbols();
-    if (symbolsUnlockedAt(round).length > 0) this.hasNew = true;
-    this.updateGlass();
+    const fresh = symbolsUnlockedAt(round);
+    if (fresh.length > 0) this.notify(fresh.some((symbol) => symbol.isEvil) ? 'warning' : 'new');
     if (this.isOpen) this.showTab(this.tab);
+  }
+
+  /** На телевизоре мигает news, пока экран не откроют. Если уже мигает другое — остаётся важнейшее (красное, жёлтое, зелёное). */
+  notify(news: News): void {
+    if (this.news === null || NEWS_PRIORITY.indexOf(news) > NEWS_PRIORITY.indexOf(this.news)) this.news = news;
+    this.updateGlass();
   }
 
   /** Сменился язык: надписи — на новом. */
@@ -150,7 +191,7 @@ export class WallScreen {
   /** Большой экран открывается на первой вкладке. «NEW» гаснет: новое увидел. */
   open(): void {
     this.isOpen = true;
-    this.hasNew = false;
+    this.news = null;
     this.updateGlass();
     this.showTab('symbols');
     this.setOverlayVisible(true);
@@ -168,8 +209,9 @@ export class WallScreen {
   /** На стекле: «NEW» мигает, пока есть непрочитанное, иначе тусклый «?». */
   private updateGlass(): void {
     this.scene.tweens.killTweensOf(this.glass);
-    if (this.hasNew) {
-      this.glass.setText('NEW').setFontSize(22).setColor(NEW_COLOR).setAlpha(1);
+    if (this.news) {
+      const look = NEWS_LOOK[this.news];
+      this.glass.setText(look.text).setFontSize(look.size).setColor(look.color).setAlpha(1);
       this.scene.tweens.add({ targets: this.glass, alpha: 0.15, duration: BLINK_TIME, yoyo: true, repeat: -1 });
     } else {
       this.glass.setText('?').setFontSize(30).setColor(INK).setAlpha(TV_DIM_ALPHA);
@@ -192,11 +234,11 @@ export class WallScreen {
     const left = WALL_PANEL.x - WALL_PANEL.width / 2;
     const tabY = top + PAD + TAB_HEIGHT / 2;
     TABS.forEach((tab, index) => {
-      const x = left + PAD + TAB_WIDTH / 2 + index * (TAB_WIDTH + 10);
+      const x = left + PAD + TAB_WIDTH / 2 + index * (TAB_WIDTH + 8);
       const box = scene.add.rectangle(x, tabY, TAB_WIDTH, TAB_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.5);
       box.setInteractive({ useHandCursor: true });
       box.on('pointerdown', () => this.showTab(tab.id));
-      const text = addText(scene, x, tabY, t(tab.label), { fontSize: '17px', fontStyle: 'bold', color: INK }).setOrigin(0.5);
+      const text = addText(scene, x, tabY, t(tab.label), { fontSize: '16px', fontStyle: 'bold', color: INK }).setOrigin(0.5);
       this.tabButtons.push({ box, text });
       this.overlay.push(box, text);
     });
@@ -231,6 +273,8 @@ export class WallScreen {
     const top = WALL_PANEL.y - WALL_PANEL.height / 2 + 2 * PAD + TAB_HEIGHT + 4;
     if (tab === 'symbols') this.buildSymbols(left, top);
     else if (tab === 'patterns') this.buildPatterns(left, top);
+    else if (tab === 'items') this.buildItems(left, top);
+    else if (tab === 'who') this.buildWho(left, top);
     else this.buildHowTo(left, top);
   }
 
@@ -265,6 +309,52 @@ export class WallScreen {
       wordWrap: { width: WALL_PANEL.width - 4 * PAD },
     });
     this.content.add(note);
+  }
+
+  /** «Предметы»: предметы с полки и амулеты, которые уже попадались в магазине, на полке или в гнёздах. */
+  private buildItems(left: number, top: number): void {
+    const rows: Row[] = [
+      ...[...ITEMS, MAGNIFIER, BULLET]
+        .filter((item) => isSeen(itemKey(item.id)))
+        .map((item) => ({ texture: itemTexture(item), name: t(item.name), description: t(item.description) })),
+      ...AMULETS.filter((amulet) => isSeen(amuletKey(amulet.id))).map((amulet) => ({
+        texture: amuletTexture(amulet),
+        name: t(amulet.name),
+        description: t(amulet.description),
+      })),
+    ];
+    this.buildRows(left, top, rows);
+  }
+
+  /** «Кто есть кто»: Коллектор, Дилер и автоматы, которые уже стояли на месте. */
+  private buildWho(left: number, top: number): void {
+    const rows: Row[] = [{ sign: '🎰', name: t(ORDINARY.name), description: t(ORDINARY.description) }];
+    if (isSeen(WHO_COLLECTOR)) rows.push({ sign: '💼', name: t('whoCollector'), description: t('whoCollectorWhat') });
+    if (isSeen(WHO_DEALER)) rows.push({ sign: '🎲', name: t('whoDealer'), description: t('whoDealerWhat') });
+    for (const character of CHARACTERS) {
+      if (isSeen(machineKey(character.id))) rows.push({ sign: character.sign, name: t(character.name), description: t(character.description) });
+    }
+    this.buildRows(left, top, rows);
+  }
+
+  /** Строки в два столбца: значок слева, название и описание справа. Нечего показать — «Пока ничего не встретил». */
+  private buildRows(left: number, top: number, rows: Row[]): void {
+    const scene = this.scene;
+    if (rows.length === 0) {
+      this.content.add(addText(scene, left + 10, top + 6, t('tabEmpty'), { fontSize: '18px', color: DIM_INK }));
+      return;
+    }
+    rows.forEach((row, index) => {
+      const x = left + (index % ROW_COLUMNS) * ROW_WIDTH;
+      const y = top + Math.floor(index / ROW_COLUMNS) * ROW_HEIGHT;
+      const iconX = x + ROW_ICON / 2 + 6;
+      const iconY = y + ROW_ICON / 2;
+      if (row.texture) this.content.add(scene.add.image(iconX, iconY, row.texture).setDisplaySize(ROW_ICON, ROW_ICON));
+      else this.content.add(addText(scene, iconX, iconY, row.sign ?? '', { fontSize: '30px' }).setOrigin(0.5));
+      const textX = x + ROW_ICON + 18;
+      this.content.add(addText(scene, textX, y, row.name, { fontSize: '17px', fontStyle: 'bold', color: INK }));
+      this.content.add(addText(scene, textX, y + 22, row.description, { fontSize: '13px', color: DIM_INK, wordWrap: { width: ROW_WIDTH - ROW_ICON - 30 } }));
+    });
   }
 
   /** «Как играть»: слева цель и порядок игры, справа клавиши. */
