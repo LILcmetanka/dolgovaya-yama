@@ -13,23 +13,23 @@ export type DrumPrize = ItemId | 'ticket' | 'slot' | 'chips';
 
 /**
  * Сектора колеса по кругу, по часовой стрелке от верха. Сектора равные — выпадают с равным шансом (фишки — два сектора).
- * Числа подобраны симуляцией (шаг 30): одна-две прокрутки за магазин выгодны, крутить без меры — нет.
+ * Числа подобраны симуляцией (шаг 30): одна-две прокрутки за магазин выгодны, крутить без меры — нет. Шаг 41: «фишки» — цена прокрутки ×2.
  * Лупа — девятый сектор (шаг 35); фишки — последним: секторов нечётно, а цвета соседних (красный, чёрный, у фишек зелёный) не должны совпасть.
  */
 export const DRUM_SECTORS: DrumPrize[] = ['cigarette', 'chips', 'shield', 'ticket', 'garlic', 'magnifier', 'triple', 'slot', 'chips'];
 const DRUM_ITEMS: Item[] = [...ITEMS, MAGNIFIER]; // предметы, которые бывают на колесе
 export const DRUM_PRICE_SHARE = 0.25; // первая прокрутка в магазине стоит такую долю долга следующего раунда
 export const DRUM_PRICE_GROWTH = 2; // каждая следующая прокрутка — во столько раз дороже
-export const DRUM_CHIPS_SHARE = 0.25; // сектор «фишки» даёт такую долю долга: на первой прокрутке — цену назад
+export const DRUM_CHIPS_MULTIPLIER = 2; // сектор «фишки» даёт цену этой прокрутки во столько раз больше — всегда больше, чем заплатил
 
 /** Цена прокрутки: spins — сколько раз уже крутили в этом магазине, debt — долг следующего раунда. */
 export function drumPrice(spins: number, debt: number): number {
   return roundPrice(DRUM_PRICE_SHARE * DRUM_PRICE_GROWTH ** spins * debt);
 }
 
-/** Сколько фишек даёт сектор «фишки». */
-export function drumChips(debt: number): number {
-  return roundPrice(DRUM_CHIPS_SHARE * debt);
+/** Сколько фишек даёт сектор «фишки»: paid — сколько заплатили за эту прокрутку. Цена кратна 5, значит, и выплата. */
+export function drumChips(paid: number): number {
+  return paid * DRUM_CHIPS_MULTIPLIER;
 }
 
 /** Предмет сектора; у билета, места и фишек — null. */

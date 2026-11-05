@@ -186,7 +186,7 @@ export abstract class ShopScene extends DealerScene {
     this.drumSpins += 1;
     this.isShopping = false;
     this.afterPurchase('chips');
-    this.drum.spin(sector, (x, y) => this.winDrum(DRUM_SECTORS[sector], x, y));
+    this.drum.spin(sector, (x, y) => this.winDrum(DRUM_SECTORS[sector], x, y, price));
   }
 
   /** Какие сектора барабана могут выпасть: предмету нужно свободное место на полке, месту — чтобы полки ещё не были полными. */
@@ -196,8 +196,8 @@ export abstract class ShopScene extends DealerScene {
     return DRUM_SECTORS.map((prize) => canWin(prize, hasFreeSlot, canAddSlot));
   }
 
-  /** Колесо встало: приз вылетает из сектора (x, y) — предмет на свободное место полки, билет и фишки на табло, место — доски слетают. */
-  private winDrum(prize: DrumPrize, x: number, y: number): void {
+  /** Колесо встало: приз вылетает из сектора (x, y) — предмет на свободное место полки, билет и фишки на табло, место — доски слетают. paid — цена этой прокрутки: «фишки» выплачивают её ×2. */
+  private winDrum(prize: DrumPrize, x: number, y: number, paid: number): void {
     const item = prizeItem(prize);
     if (item) {
       const slot = this.shelf.indexOf(null); // место есть: иначе предмет не мог выпасть
@@ -209,7 +209,7 @@ export abstract class ShopScene extends DealerScene {
     } else if (prize === 'slot') {
       this.itemShelf.openSlot(this.addSlot());
     } else {
-      const chips = drumChips(this.debt);
+      const chips = drumChips(paid);
       this.balance += chips;
       this.effects.popupAt(x, y - PRIZE_POPUP_RISE, `+${chips}`, GOLD_TEXT);
       this.drum.payOut(x, y, () => this.panel.pulseBoard());
