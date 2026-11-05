@@ -24,11 +24,10 @@ import {
   VENDING_BIN,
   VENDING_COIN_SLOT,
   VENDING_GOOD_X,
-  VENDING_KEY_X,
   VENDING_PRICE_X,
   vendingRowY,
 } from '../layout';
-import { addKeyHint, addText, CHIP_DEPTH, keyHint, LED_COLOR, LED_STYLE, POPUP_DEPTH, RED_TEXT } from '../theme';
+import { addText, CHIP_DEPTH, LED_COLOR, LED_STYLE, POPUP_DEPTH, RED_TEXT } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
 /** Нижний ряд торгового автомата — не предмет, а ещё одно место на полке. */
@@ -57,7 +56,6 @@ export class Shop {
   private readonly goods: Phaser.GameObjects.Image[] = []; // что лежит в ряду; в нижнем — клетка полки
   private readonly priceChips: Phaser.GameObjects.Image[] = []; // ценник: фишка…
   private readonly priceTexts: Phaser.GameObjects.Text[] = []; // …и «× 20»
-  private readonly leaveHint: Phaser.GameObjects.Text; // «Пробел» под кнопкой «назад»
   private prices: (number | null)[] = []; // цена ряда; null — ряд пуст: купили или больше не продаётся
   private items: (Item | null)[] = []; // какой предмет в каком ряду
 
@@ -80,19 +78,12 @@ export class Shop {
       this.priceChips.push(scene.add.image(VENDING_PRICE_X, y, CHIP_TEXTURE).setScale(0.75).setVisible(false));
       const priceStyle = { ...LED_STYLE, fontSize: '19px' };
       this.priceTexts.push(addText(scene, VENDING_PRICE_X + PRICE_TEXT_OFFSET, y, '', priceStyle).setOrigin(0, 0.5));
-      addKeyHint(scene, VENDING_KEY_X, y, String(row + 1));
     }
 
-    // Кнопка «назад к игровому автомату» — стрелка вправо, под ней клавиша.
+    // Кнопка «назад к игровому автомату» — стрелка вправо.
     const leaveButton = scene.add.image(SHOP_LEAVE.x, SHOP_LEAVE.y, LEAVE_BUTTON_TEXTURE);
     leaveButton.setInteractive({ useHandCursor: true });
     leaveButton.on('pointerdown', leave);
-    this.leaveHint = addKeyHint(scene, SHOP_LEAVE.x, SHOP_LEAVE.y + 44, t('space'));
-  }
-
-  /** Сменился язык: подсказка клавиши у кнопки «назад» — на новом. */
-  relabel(): void {
-    this.leaveHint.setText(keyHint(t('space')));
   }
 
   /** Подсказка ряда: что за предмет и что он делает. */

@@ -196,7 +196,7 @@ export class GameScene extends ShotScene {
 
   /**
    * L или RU/EN на панели: сменить язык. Подсказки, новости и экран DEATH берут язык, когда появляются,
-   * а постоянные надписи меняем сразу: «Пробел» у рычага, в магазине и у стола Коллектора, «ДОЛГ» на записке (она переворачивается).
+   * а постоянные надписи меняем сразу: «ПАУЗА», экран монитора, «ДОЛГ» на записке (она переворачивается).
    * На паузе твины стоят, и каждое нажатие копило бы переворот записки: RU → EN → RU — и после «▶» она переворачивалась
    * без смены языка. Поэтому на паузе записку не трогаем — её переворачивает resumeGame, если язык и правда другой.
    */
@@ -204,9 +204,6 @@ export class GameScene extends ShotScene {
     toggleLang();
     this.settingsPanel.showLanguage(lang());
     this.tooltip.hide();
-    this.panel.relabel();
-    this.shop.relabel();
-    this.revolverTable.relabel();
     this.pauseScreen.relabel();
     this.monitor.relabel();
     if (!this.isPaused) this.collector.flipNote(this.debt, this.hasEnoughForDebt());

@@ -1,8 +1,7 @@
 import Phaser from 'phaser';
 import { CHIP_TEXTURE, createChipTextures, createRedButtonTexture, RED_BUTTON_TEXTURE } from '../decor';
-import { BOARD_CHIP_X, DISPLAY, PAYOUT_WINDOW } from '../layout';
+import { BOARD_CHIP_X, DISPLAY } from '../layout';
 import {
-  addKeyHint,
   addText,
   CHIP_DEPTH,
   GREEN_TEXT,
@@ -62,7 +61,7 @@ function lightColor(index: number): number {
  */
 export class PayoutWindow {
   private readonly scene: Phaser.Scene;
-  private readonly lit: Phaser.GameObjects.Container; // всё, что горит, пока на кону что-то есть: фишка, сумма, кнопка, подсказка
+  private readonly lit: Phaser.GameObjects.Container; // всё, что горит, пока на кону что-то есть: фишка, сумма, кнопка
   private readonly chip: Phaser.GameObjects.Image; // фишка слева от суммы
   private readonly payoutText: Phaser.GameObjects.Text; // «× 400» — сколько фишек на кону
   private readonly redButton: Phaser.GameObjects.Image; // красная кнопка «забрать» — без надписей
@@ -84,10 +83,8 @@ export class PayoutWindow {
     this.redButton = scene.add.image(RED_BUTTON_X, RED_BUTTON_Y, RED_BUTTON_TEXTURE);
     this.redButton.setInteractive({ useHandCursor: true });
     this.redButton.on('pointerdown', take);
-    const hintY = PAYOUT_WINDOW.y + PAYOUT_WINDOW.height / 2 + 12;
-    const hint = addKeyHint(scene, RED_BUTTON_X, hintY, 'Enter'); // подсказка под окошком
     // Всё горящее — в одном слое: погасло окошко — слой невидим, и кнопку не нажать.
-    this.lit = scene.add.container(0, 0, [this.chip, this.payoutText, this.redButton, hint]).setVisible(false);
+    this.lit = scene.add.container(0, 0, [this.chip, this.payoutText, this.redButton]).setVisible(false);
   }
 
   /**

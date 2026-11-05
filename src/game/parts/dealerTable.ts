@@ -12,7 +12,7 @@ import {
 import { CARD_MAX, CARD_MIN, type Guess } from '../dealerGame';
 import { SCREEN } from '../layout';
 import type { Sfx } from '../sound';
-import { addKeyHint, addText, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT } from '../theme';
+import { addText, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT } from '../theme';
 
 // Где что на столе (поверх экрана автомата).
 const CARD_LEFT_X = SCREEN.x - 90; // открытая карта
@@ -32,7 +32,6 @@ const GLOW_Y = STACK_Y - 12; // свечение — под серединой �
 const GLOW_MIN = 0.45; // свечение пульсирует: гаснет до такой яркости и разгорается снова
 const STAKE_TEXT_X = STACK_X + 26;
 const STAKE_TEXT_Y = STACK_Y - 10;
-const STOP_KEY_Y = STACK_Y + 22; // «Enter» под стопкой
 const BURN_COLOR = 0xff5a1f; // не угадал — фишки стопки горят огнём (как фишка в окошке выплаты)
 const DEPTH = POPUP_DEPTH - 1; // под всплывающими надписями, но над сеткой
 // Анимации, мс.
@@ -58,9 +57,7 @@ export class DealerTable {
   private readonly stack: Phaser.GameObjects.Container; // стопка фишек — ставка
   private readonly stackChips: Phaser.GameObjects.Image[] = []; // фишки стопки, снизу вверх
   private readonly stakeText: Phaser.GameObjects.Text; // «× 30»
-  private readonly stopKey: Phaser.GameObjects.Text; // «Enter» под стопкой
   private readonly arrows: Phaser.GameObjects.Image[]; // ▲ и ▼
-  private readonly hints: Phaser.GameObjects.Text[]; // ↑ и ↓ у стрелок
   private readonly sfx: Sfx;
   private chipsShown = STACK_START; // сколько фишек в стопке сейчас
 
@@ -80,25 +77,22 @@ export class DealerTable {
     }
     this.stack = scene.add.container(STACK_X, STACK_Y, this.stackChips);
     this.stakeText = addText(scene, STAKE_TEXT_X, STAKE_TEXT_Y, '', LED_STYLE).setOrigin(0, 0.5);
-    this.stopKey = addKeyHint(scene, STACK_X, STOP_KEY_Y, 'Enter').setDepth(DEPTH).setVisible(false);
     this.arrows = [];
-    this.hints = [];
-    for (const [dir, texture, y, key] of [
-      ['higher', ARROW_UP_TEXTURE, ARROW_UP_Y, '↑'],
-      ['lower', ARROW_DOWN_TEXTURE, ARROW_DOWN_Y, '↓'],
+    for (const [dir, texture, y] of [
+      ['higher', ARROW_UP_TEXTURE, ARROW_UP_Y],
+      ['lower', ARROW_DOWN_TEXTURE, ARROW_DOWN_Y],
     ] as const) {
       const arrow = scene.add.image(ARROW_X, y, texture);
       arrow.setInteractive({ useHandCursor: true });
       arrow.on('pointerdown', () => guess(dir));
       this.arrows.push(arrow);
-      this.hints.push(addKeyHint(scene, ARROW_X - 40, y, key, '16px'));
     }
     for (const object of this.objects()) object.setDepth(DEPTH).setVisible(false);
   }
 
-  /** Всё, что есть на столе, пока Дилер за ним сидит (свечение и «Enter» — только когда можно остановиться). */
+  /** Всё, что есть на столе, пока Дилер за ним сидит (свечение — только когда можно остановиться). */
   private objects(): (Phaser.GameObjects.Image | Phaser.GameObjects.Text | Phaser.GameObjects.Container)[] {
-    return [this.felt, this.openCard, this.nextCard, this.stack, this.stakeText, ...this.arrows, ...this.hints];
+    return [this.felt, this.openCard, this.nextCard, this.stack, this.stakeText, ...this.arrows];
   }
 
   /** Дилер садится за стол: ставка (стопка и «× 30»), открытая карта card и карта рубашкой вверх. */
@@ -118,11 +112,10 @@ export class DealerTable {
   }
 
   /**
-   * Можно остановиться (угадал): стопка подпрыгивает и светится, курсор над ней — рука, под ней «Enter».
+   * Можно остановиться (угадал): стопка подпрыгивает и светится, курсор над ней — рука.
    * Нельзя (открывается карта, Дилер уходит) — свечение гаснет.
    */
   showStoppable(isStoppable: boolean): void {
-    this.stopKey.setVisible(isStoppable);
     this.scene.tweens.killTweensOf(this.stackGlow);
     this.stackGlow.setVisible(isStoppable).setAlpha(1);
     if (!isStoppable) {

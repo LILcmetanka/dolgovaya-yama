@@ -13,12 +13,11 @@ import { BLOOD_WIN, SPIDER_BITE } from '../evil';
 import { t } from '../lang';
 import { HOME_SCROLL, MONITOR_KIOSK, MONITOR_SCREEN, MONITOR_SCROLL } from '../layout';
 import { isPaying, isUnlocked, symbolsUnlockedAt, SYMBOLS, TICKET_SCATTER, type SlotSymbol } from '../rules';
-import { addKeyHint, keyHint, LAMP_GOLD, LAMP_OFF } from '../theme';
+import { LAMP_GOLD, LAMP_OFF } from '../theme';
 
 const DIM_ALPHA = 0.2; // от автомата экран притушен: видно, что там что-то есть, а читать — повернувшись
 const LAMP_Y = MONITOR_KIOSK.y - MONITOR_KIOSK.height / 2 + 12; // лампочка над экраном: мигает, пока новое не прочитано
 const LAMP_RADIUS = 5;
-const KEY_Y = MONITOR_SCREEN.y + MONITOR_SCREEN.height / 2 + 15; // подсказка клавиши — под экраном
 // Анимации, мс.
 const TURN_TIME = 600; // вид поворачивается к монитору или обратно
 const POWER_TIME = 300; // экран разгорается или тускнеет
@@ -62,7 +61,6 @@ export class SymbolMonitor {
   private readonly kiosk: Phaser.GameObjects.Image; // корпус терминала — по нему кликают
   private readonly screen: Phaser.GameObjects.Image; // экран: цены и описания одной картинкой
   private readonly lamp: Phaser.GameObjects.Arc; // лампочка над экраном
-  private readonly key: Phaser.GameObjects.Text; // «→» у автомата, «Пробел» у монитора
   private round = 0; // для какого раунда нарисован экран
   private isOpen = false; // вид повёрнут к монитору (или поворачивается)
   private isEnabled = true; // по монитору можно кликнуть
@@ -82,7 +80,6 @@ export class SymbolMonitor {
     this.lamp = scene.add.circle(MONITOR_KIOSK.x, LAMP_Y, LAMP_RADIUS, LAMP_OFF);
     this.showRound(round); // рисует экран на canvas — до картинки экрана
     this.screen = scene.add.image(MONITOR_SCREEN.x, MONITOR_SCREEN.y, MONITOR_SCREEN_TEXTURE).setAlpha(DIM_ALPHA);
-    this.key = addKeyHint(scene, MONITOR_KIOSK.x, KEY_Y, '→');
     this.blinkLamp(); // в начале забега (и после кассеты) монитор ещё не видели
   }
 
@@ -94,10 +91,9 @@ export class SymbolMonitor {
     if (symbolsUnlockedAt(round).length > 0) this.blinkLamp();
   }
 
-  /** Сменился язык: надписи на экране и подсказка клавиши — на новом. */
+  /** Сменился язык: надписи на экране — на новом. */
   relabel(): void {
     this.redraw();
-    this.key.setText(keyHint(this.isOpen ? t('space') : '→'));
   }
 
   /**
@@ -119,7 +115,6 @@ export class SymbolMonitor {
   /** Вид поворачивается к монитору; повернулся — экран разгорается. Лампочка гаснет: новое прочитано. */
   open(): void {
     this.isOpen = true;
-    this.key.setText(keyHint(t('space')));
     this.stopLamp();
     this.turnTo(MONITOR_SCROLL, () => {
       this.scene.tweens.add({ targets: this.screen, alpha: 1, duration: POWER_TIME });
@@ -129,7 +124,6 @@ export class SymbolMonitor {
   /** Экран тускнеет, вид возвращается к автомату — потом done(). */
   close(done: () => void): void {
     this.isOpen = false;
-    this.key.setText(keyHint('→'));
     this.scene.tweens.killTweensOf(this.screen);
     this.scene.tweens.add({ targets: this.screen, alpha: DIM_ALPHA, duration: POWER_TIME });
     this.turnTo(HOME_SCROLL, done);

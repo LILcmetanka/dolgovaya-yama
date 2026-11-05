@@ -100,7 +100,7 @@ export const SHOT_HOLE = { x: 612, y: 282 };
 // Монитор символов — терминал на полу у правой стены, справа от рычага: цены символов и что делает каждый.
 // От автомата видна его левая часть; вид поворачивается к нему (MONITOR_SCROLL), как к магазину, только вправо.
 export const MONITOR_KIOSK: Box = { x: 990, y: 300, width: 290, height: 520 }; // корпус; низ стоит на полу
-export const MONITOR_SCREEN: Box = { x: 990, y: 284, width: 252, height: 420 }; // экран: над ним лампочка, под ним подсказка клавиши
+export const MONITOR_SCREEN: Box = { x: 990, y: 284, width: 252, height: 420 }; // экран: над ним лампочка
 export const MONITOR_SCROLL = 390; // левый край вида у монитора: монитор почти посередине, а рука Коллектора, спрятанная в темноте, ещё не видна
 // Видеомагнитофон — на деревянном ящике перед левым краем монитора: его видно и от автомата, и у Коллектора,
 // и он выше подсказки внизу экрана (у Коллектора она как раз под ним). На него ложится купленная кассета.
@@ -130,19 +130,17 @@ export const LEFT_ROOM: Box = { x: -240 - ROOM_SIDE, y: CENTER_Y, width: 480, he
 export const AMULET_CASE_PLACES = AMULET_OFFER_SIZE + 2;
 export const AMULET_CASE: Box = { x: -200 - ROOM_SIDE, y: 104, width: 312, height: 152 };
 export const AMULET_CASE_STEP = 76; // от места до места
-export const AMULET_CASE_ICON_Y = 92; // амулеты и билет
-export const AMULET_CASE_PRICE_Y = 146; // ценники под ними
-export const AMULET_CASE_KEY_Y = 48; // номера клавиш над ними
+export const AMULET_CASE_ICON_Y = 82; // амулеты и билет: вместе с ценниками — посередине бархата
+export const AMULET_CASE_PRICE_Y = 136; // ценники под ними
 // Торговый автомат под витриной: предметы рядами, справа от предмета — ценник.
 export const VENDING: Box = { x: -210 - ROOM_SIDE, y: 404, width: 280, height: 412 };
 // Витрина и панель со щелью стоят внутри окантовки лицевой части (она от −514 до −248, бок — левее), с равными полями.
 export const VENDING_GLASS: Box = { x: -226 - ROOM_SIDE, y: 384, width: 178, height: 280 }; // витрина: 4 ряда
-export const VENDING_GOOD_X = -273 - ROOM_SIDE; // предмет в ряду
+export const VENDING_GOOD_X = -278 - ROOM_SIDE; // предмет в ряду: спираль под ним — на таком же поле от края витрины, как ценник
 export const VENDING_PRICE_X = -228 - ROOM_SIDE; // ценник: фишка, правее — «× цена»
-export const VENDING_KEY_X = -307 - ROOM_SIDE; // номер ряда — у левого края витрины
 export const VENDING_COIN_SLOT = { x: -104 - ROOM_SIDE, y: 282 }; // щель для фишек на панели справа от витрины
 export const VENDING_BIN: Box = { x: -203 - ROOM_SIDE, y: 566, width: 220, height: 36 }; // лоток внизу, посередине лицевой части: сюда падает покупка
-// «Барабан» — колесо на стене справа от торгового автомата: под ним ценник, над стрелкой — номер клавиши.
+// «Барабан» — колесо на стене справа от торгового автомата: под ним ценник.
 export const DRUM_WHEEL = { x: -160, y: 290 }; // середина колеса
 export const DRUM_RADIUS = 56;
 export const SAVE_TAPE = { x: -35 - ROOM_SIDE, y: 462 }; // кассета — один откат за забег: на стене между торговым автоматом и полкой, над кнопкой «назад»

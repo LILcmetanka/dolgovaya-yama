@@ -15,7 +15,6 @@ const LANG_KEY = 'dolgovaya-yama-lang'; // ключ выбранного язы�
 /** Все надписи игры. Текста на экране минимум — поэтому их так мало. */
 const TEXTS = {
   debt: { ru: 'ДОЛГ', en: 'DEBT' }, // на записке
-  space: { ru: 'Пробел', en: 'Space' }, // подсказка клавиши
   again: { ru: 'ЗАНОВО', en: 'AGAIN' },
   debtsPaid: { ru: 'Долгов закрыто', en: 'Debts paid' },
   best: { ru: 'Рекорд', en: 'Best' },

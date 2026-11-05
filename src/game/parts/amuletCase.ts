@@ -13,7 +13,6 @@ import { AMULET_OFFER_SIZE, AMULETS, type Amulet } from '../amulets';
 import { t } from '../lang';
 import {
   AMULET_CASE_ICON_Y,
-  AMULET_CASE_KEY_Y,
   AMULET_CASE_PLACES,
   AMULET_CASE_PRICE_Y,
   AMULET_SIZE,
@@ -23,7 +22,7 @@ import {
   DISPLAY,
   SOCKET_RADIUS,
 } from '../layout';
-import { addKeyHint, addText, CHIP_DEPTH, LED_COLOR, LED_STYLE, RED_TEXT } from '../theme';
+import { addText, CHIP_DEPTH, LED_COLOR, LED_STYLE, RED_TEXT } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
 /** Места в витрине: сначала амулеты, потом билет за фишки и гнездо за билеты. */
@@ -79,7 +78,6 @@ export class AmuletCase {
       const icon = paysWithChips(place) ? CHIP_TEXTURE : TICKET_TEXTURE;
       this.priceIcons.push(scene.add.image(x - 18, AMULET_CASE_PRICE_Y, icon).setScale(PRICE_ICON_SCALE).setVisible(false));
       this.priceTexts.push(addText(scene, x - 6, AMULET_CASE_PRICE_Y, '', { ...LED_STYLE, fontSize: '16px' }).setOrigin(0, 0.5));
-      addKeyHint(scene, x, AMULET_CASE_KEY_Y, String(place + 5)); // клавиши 5–8
     }
   }
 

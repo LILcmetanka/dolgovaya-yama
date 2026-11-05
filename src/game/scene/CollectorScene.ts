@@ -194,8 +194,7 @@ export abstract class CollectorScene extends SaveScene {
     this.isAiming = true;
     this.hasPeeked = false;
     this.revolverTable.showAim(true);
-    const slot = this.magnifierSlot();
-    this.revolverTable.showMagnifier(slot < 0 ? null : slot + 1); // её клавиша — номер места на полке
+    this.revolverTable.showMagnifier(this.magnifierSlot() >= 0);
   }
 
   /** Место первой лупы на полке; лупы нет — −1. */

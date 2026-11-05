@@ -21,17 +21,15 @@ import {
 } from '../decor';
 import { t } from '../lang';
 import { BOARD_TICKET_X, DISPLAY, SAVE_TAPE, VCR, VCR_CRATE, VIEW_HEIGHT, VIEW_WIDTH } from '../layout';
-import { addKeyHint, addText, CHIP_DEPTH, LAMP_GOLD, LED_COLOR, LED_STYLE, RED_TEXT, TOOLTIP_DEPTH } from '../theme';
+import { addText, CHIP_DEPTH, LAMP_GOLD, LED_COLOR, LED_STYLE, RED_TEXT, TOOLTIP_DEPTH } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
 // Кассета на стене магазина.
 const PRICE_Y = SAVE_TAPE.y + 38; // ценник «билет × 2» — под кассетой
-const KEY_Y = SAVE_TAPE.y - 34; // номер клавиши — над ней
 const PRICE_ICON_SCALE = 0.6;
 const TICKETS_FLYING = 3; // купили: столько билетов летит с табло в кассету (для красоты: цена может быть любой)
-// Видеомагнитофон: купленная кассета стоит на нём над щелью, правее неё — номер клавиши.
+// Видеомагнитофон: купленная кассета стоит на нём над щелью.
 const TAPE_ON_VCR = { x: VCR.x + VCR_SLOT_DX, y: VCR.y - VCR.height / 2 - TAPE_SIZE.height / 2 + 1 };
-const VCR_KEY_X = TAPE_ON_VCR.x + TAPE_SIZE.width / 2 + 14;
 const GLOW_PAD = 7; // свечение кассеты, которую можно вставить, шире её на столько с каждой стороны
 const GLOW_MIN = 0.4; // свечение пульсирует: гаснет до такой яркости и разгорается снова
 const REC_ON = 0xef4444; // лампочка записи горит
@@ -77,11 +75,9 @@ export class Cassette {
   private readonly shopTape: Phaser.GameObjects.Image[]; // кассета на стене магазина и её катушки
   private readonly priceIcon: Phaser.GameObjects.Image; // ценник: билет…
   private readonly priceText: Phaser.GameObjects.Text; // …и «× 2»
-  private readonly shopKey: Phaser.GameObjects.Text; // «9» над кассетой в магазине
   private readonly glow: Phaser.GameObjects.Rectangle; // свечение кассеты на видеомагнитофоне: её можно вставить
   private readonly vcrTape: Phaser.GameObjects.Image; // кассета на видеомагнитофоне — по ней кликают
   private readonly vcrReels: Phaser.GameObjects.Image[]; // её катушки
-  private readonly vcrKey: Phaser.GameObjects.Text; // «9» рядом с ней
   private readonly recLamp: Phaser.GameObjects.Arc; // лампочка записи
   private readonly windowSign: Phaser.GameObjects.Image; // «◀◀» в окошке видеомагнитофона
   private isForSale: boolean; // кассета ещё висит в магазине
@@ -98,14 +94,13 @@ export class Cassette {
     createCrateTexture(scene, VCR_CRATE.width, VCR_CRATE.height);
     createRewindTextures(scene);
 
-    // Кассета на стене магазина: под ней ценник, над ней номер клавиши.
+    // Кассета на стене магазина, под ней ценник.
     const tape = scene.add.image(SAVE_TAPE.x, SAVE_TAPE.y, TAPE_TEXTURE);
     tape.setInteractive({ useHandCursor: true });
     attachHint(tape, hint, () => [t('tape'), t('tapeWhat')], buy);
     this.shopTape = [tape, ...this.addReels(SAVE_TAPE.x, SAVE_TAPE.y)];
     this.priceIcon = scene.add.image(SAVE_TAPE.x - 18, PRICE_Y, TICKET_TEXTURE).setScale(PRICE_ICON_SCALE);
     this.priceText = addText(scene, SAVE_TAPE.x - 6, PRICE_Y, '', { ...LED_STYLE, fontSize: '16px' }).setOrigin(0, 0.5);
-    this.shopKey = addKeyHint(scene, SAVE_TAPE.x, KEY_Y, '9');
     if (!isForSale) this.hideShopTape();
 
     // Ящик и видеомагнитофон на нём. Кассета создаётся раньше корпуса: вставленная, она уходит за его лицевую панель.
@@ -127,7 +122,6 @@ export class Cassette {
       .setScale(WINDOW_SIGN_SCALE)
       .setTint(WINDOW_SIGN_TINT)
       .setVisible(false);
-    this.vcrKey = addKeyHint(scene, VCR_KEY_X, TAPE_ON_VCR.y, '9').setVisible(false);
   }
 
   /** Две катушки в окошке кассеты с серединой (x, y). */
@@ -171,7 +165,7 @@ export class Cassette {
       });
     }
     tape.disableInteractive();
-    for (const part of [this.priceIcon, this.priceText, this.shopKey]) part.setVisible(false);
+    for (const part of [this.priceIcon, this.priceText]) part.setVisible(false);
     this.scene.tweens.add({
       targets: this.shopTape,
       x: `+=${VIEW_WIDTH}`, // за край вида — туда, где стоит видеомагнитофон
@@ -188,7 +182,7 @@ export class Cassette {
   /** Кассеты в магазине больше нет: куплена или уже израсходована. */
   private hideShopTape(): void {
     this.shopTape[0].disableInteractive();
-    for (const part of [...this.shopTape, this.priceIcon, this.priceText, this.shopKey]) part.setVisible(false);
+    for (const part of [...this.shopTape, this.priceIcon, this.priceText]) part.setVisible(false);
   }
 
   // ---------- Видеомагнитофон ----------
@@ -207,11 +201,10 @@ export class Cassette {
     });
   }
 
-  /** Можно ли вставить кассету: да — она светится (свечение пульсирует), рядом «9»; нет — свечение гаснет. */
+  /** Можно ли вставить кассету: да — она светится (свечение пульсирует); нет — свечение гаснет. */
   showUsable(isUsable: boolean): void {
     if (isUsable === this.isUsable) return;
     this.isUsable = isUsable;
-    this.vcrKey.setVisible(isUsable);
     this.scene.tweens.killTweensOf(this.glow);
     this.glow.setVisible(isUsable).setAlpha(1);
     if (!isUsable) return;

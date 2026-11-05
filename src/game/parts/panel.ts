@@ -10,7 +10,6 @@ import {
   LEVER_ROD_TEXTURE,
   TICKET_TEXTURE,
 } from '../decor';
-import { t } from '../lang';
 import {
   BOARD_CHIP_X,
   BOARD_CHIPS_MAX_WIDTH,
@@ -30,9 +29,7 @@ import {
 } from '../layout';
 import { SPINS_PER_ROUND } from '../rules';
 import {
-  addKeyHint,
   addText,
-  keyHint,
   LAMP_GOLD,
   LAMP_OFF,
   LAMP_RED,
@@ -111,7 +108,6 @@ export class MachinePanel {
   private freeLamps: Phaser.GameObjects.Image[] = []; // бесплатные прокрутки за короны — короны в конце ряда лампочек
   private readonly leverRod: Phaser.GameObjects.Image; // штанга рычага, низ — точка вращения
   private readonly leverBall: Phaser.GameObjects.Image; // шарик на конце штанги
-  private readonly leverHint: Phaser.GameObjects.Text; // «Пробел» под рычагом
   private phaseSigns: Phaser.GameObjects.Text[] = []; // знаки фазы 2 под окошком множителя; в фазе 1 их нет
 
   /** pullLever — что делать, когда рычаг дёрнули кликом (Пробел сцена ловит сама). */
@@ -136,7 +132,7 @@ export class MachinePanel {
     // Окошко множителя серии: «×3» — с таким множителем пойдёт следующая прокрутка.
     this.multiplierText = addText(scene, MULTIPLIER_WINDOW.x, MULTIPLIER_WINDOW.y, '', LED_STYLE).setOrigin(0.5);
 
-    // Рычаг справа: штанга и шарик на её конце, под креплением — подсказка клавиши.
+    // Рычаг справа: штанга и шарик на её конце.
     this.leverRod = scene.add.image(LEVER_MOUNT.x, LEVER_MOUNT.y, LEVER_ROD_TEXTURE).setOrigin(0.5, 1);
     this.leverBall = scene.add.image(LEVER_MOUNT.x, LEVER_MOUNT.y, LEVER_BALL_TEXTURE);
     this.placeLeverBall();
@@ -144,13 +140,6 @@ export class MachinePanel {
       part.setInteractive({ useHandCursor: true });
       part.on('pointerdown', pullLever);
     }
-    const hintY = LEVER_MOUNT.y + LEVER_MOUNT.height / 2 + 14;
-    this.leverHint = addKeyHint(scene, LEVER_MOUNT.x, hintY, t('space'));
-  }
-
-  /** Сменился язык: подсказка клавиши под рычагом — на новом. */
-  relabel(): void {
-    this.leverHint.setText(keyHint(t('space')));
   }
 
   /** Ещё count лампочек прокруток в конец ряда; весь ряд снова по центру. pop — новые появляются с подскоком. */

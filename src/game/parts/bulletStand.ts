@@ -3,12 +3,11 @@ import { createItemTextures, createTicketTexture, itemTexture, TICKET_TEXTURE } 
 import { t } from '../lang';
 import { BOARD_TICKET_X, BULLET_STAND, DISPLAY, ITEM_SIZE } from '../layout';
 import { BULLET } from '../shot';
-import { addKeyHint, addText, CHIP_DEPTH, LED_COLOR, LED_STYLE, RED_TEXT } from '../theme';
+import { addText, CHIP_DEPTH, LED_COLOR, LED_STYLE, RED_TEXT } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
 const PRICE_Y = BULLET_STAND.y + 40; // ценник «билет × 3» — под патроном
 const PRICE_TEXT_X = BULLET_STAND.x - 6;
-const KEY_Y = BULLET_STAND.y - 40; // номер клавиши — над ним
 const PRICE_ICON_SCALE = 0.6;
 const TICKETS_FLYING = 3; // купили: столько билетов летит с табло к патрону (для красоты: цена может быть любой)
 // Анимации, мс.
@@ -17,7 +16,7 @@ const PAY_STAGGER = 90;
 const SHAKE_TIME = 50; // один рывок тряски «не хватает»
 
 /**
- * Патрон на стене магазина — для выстрела в автомат: под ним цена в билетах, над ним клавиша «-».
+ * Патрон на стене магазина — для выстрела в автомат: под ним цена в билетах.
  * Клик (или «-» — её ловит сцена) — купить: билеты летят с табло к патрону, а сам патрон сцена отправляет на полку.
  * Патронов сколько угодно, только каждый следующий дороже. Когда что можно, решает сцена.
  */
@@ -35,7 +34,6 @@ export class BulletStand {
     attachHint(bullet, hint, () => [t(BULLET.name), t(BULLET.description)], buy);
     scene.add.image(BULLET_STAND.x - 18, PRICE_Y, TICKET_TEXTURE).setScale(PRICE_ICON_SCALE);
     this.priceText = addText(scene, PRICE_TEXT_X, PRICE_Y, '', { ...LED_STYLE, fontSize: '16px' }).setOrigin(0, 0.5);
-    addKeyHint(scene, BULLET_STAND.x, KEY_Y, '−'); // клавиша «-»; знак минуса шире дефиса — его видно
   }
 
   /** Цена патрона в билетах; не хватает билетов — красная. */

@@ -22,7 +22,7 @@ import { CHAMBERS, MAGNIFIER, type Bullet, type Side } from '../collectorGame';
 import { t, type TextKey } from '../lang';
 import { AIM_AT_COLLECTOR, AIM_AT_SELF, AMULET_SIZE, AMULET_TRAY, BULLETS_Y, MAGNIFIER_SPOT, REVOLVER, ROULETTE_TABLE } from '../layout';
 import type { Sfx } from '../sound';
-import { addKeyHint, keyHint, POPUP_DEPTH } from '../theme';
+import { POPUP_DEPTH } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
 /** Точка в раскладке — например, где кулак Коллектора. */
@@ -34,8 +34,6 @@ interface Point {
 // Где что лежит.
 const BULLET_STEP = 26; // патроны стоят в ряд на сукне: от патрона до патрона
 const SPENT_ALPHA = 0.2; // выстреленный патрон бледнеет
-const PLAY_KEY_Y = ROULETTE_TABLE.y + ROULETTE_TABLE.height / 2 + 14; // «Пробел» — под столом, над лотком
-const AIM_KEY_DX = 40; // ↑ и ↓ — правее кнопок-целей
 const TRAY_STEP = 54; // от амулета до амулета в лотке
 const TRAY_AMULET_SCALE = 1.2;
 const DIM_ALPHA = 0.35; // амулета не хватает на долг — он тусклый
@@ -53,7 +51,6 @@ const SHAKE = 0.012; // боевой: вид трясётся
 const WHITE_FLASH_ALPHA = 0.8; // боевой в тебя: белая вспышка на весь вид
 const BUTTON_PULSE = 1.08; // кнопки-цели «дышат», пока твой ход
 const LOAD_SCALE = 1.4; // выстрел в автомат: твой золотой патрон влетает в револьвер — сначала крупный
-const MAGNIFIER_KEY_DY = 36; // клавиша лупы — под ней
 const LENS_RADIUS = 26; // лупа показала патрон: стекло
 const LENS_RING = 0xfde047;
 const LENS_BULLET_SCALE = 1.6; // патрон под стеклом крупнее
@@ -93,19 +90,15 @@ export class RevolverTable {
   private readonly tray: Phaser.GameObjects.Image;
   private readonly bullets: Phaser.GameObjects.Image[] = []; // патроны в ряд: слева боевые, справа холостые
   private readonly revolver: Phaser.GameObjects.Image;
-  private readonly playKey: Phaser.GameObjects.Text; // «Пробел»: сыграть в рулетку
   private readonly flash: Phaser.GameObjects.Image; // вспышка выстрела
   private readonly aimButtons: Phaser.GameObjects.Image[]; // кнопки-цели: в Коллектора, в себя
-  private readonly aimKeys: Phaser.GameObjects.Text[]; // ↑ и ↓ рядом с ними
   private readonly magnifier: Phaser.GameObjects.Image; // лупа на столе: в твой ход — посмотреть следующий патрон
-  private readonly magnifierKey: Phaser.GameObjects.Text; // её клавиша — номер места на полке
   private readonly lens: Phaser.GameObjects.Arc; // стекло лупы: под ним следующий патрон
   private readonly lensBullet: Phaser.GameObjects.Image;
   private peeked: Bullet = 'live'; // какой патрон показала лупа — для подсказки
   private kinds: Bullet[] = []; // какой патрон стоит в ряду на каком месте
   private spent: boolean[] = []; // какие патроны в ряду уже выстрелили
   private trayAmulets: Phaser.GameObjects.Image[] = []; // копии амулетов игрока в лотке
-  private trayKeys: Phaser.GameObjects.Text[] = []; // номера клавиш под амулетами в лотке
   private readonly hint: Hint;
   private readonly sfx: Sfx;
   private readonly onAmulet: (index: number) => void;
@@ -136,20 +129,14 @@ export class RevolverTable {
     this.revolver = scene.add.image(REVOLVER.x, REVOLVER.y, REVOLVER_TEXTURE).setVisible(false);
     this.revolver.setInteractive({ useHandCursor: true }).disableInteractive();
     attachHint(this.revolver, hint, () => [t('revolver'), t('revolverWhat')], play);
-    this.playKey = addKeyHint(scene, REVOLVER.x, PLAY_KEY_Y, t('space')).setVisible(false);
     this.flash = scene.add.image(0, 0, MUZZLE_FLASH_TEXTURE).setDepth(POPUP_DEPTH).setVisible(false);
     this.aimButtons = [
       this.addAimButton(AIM_AT_COLLECTOR, AIM_COLLECTOR_TEXTURE, 'collector', shoot),
       this.addAimButton(AIM_AT_SELF, AIM_SELF_TEXTURE, 'player', shoot),
     ];
-    this.aimKeys = [
-      addKeyHint(scene, AIM_AT_COLLECTOR.x + AIM_KEY_DX, AIM_AT_COLLECTOR.y, '↑').setDepth(POPUP_DEPTH).setVisible(false),
-      addKeyHint(scene, AIM_AT_SELF.x + AIM_KEY_DX, AIM_AT_SELF.y, '↓').setDepth(POPUP_DEPTH).setVisible(false),
-    ];
     this.magnifier = scene.add.image(MAGNIFIER_SPOT.x, MAGNIFIER_SPOT.y, itemTexture(MAGNIFIER)).setDepth(POPUP_DEPTH).setVisible(false);
     this.magnifier.setInteractive({ useHandCursor: true });
     attachHint(this.magnifier, hint, () => [t(MAGNIFIER.name), t(MAGNIFIER.description)], peek);
-    this.magnifierKey = addKeyHint(scene, MAGNIFIER_SPOT.x, MAGNIFIER_SPOT.y + MAGNIFIER_KEY_DY, '').setDepth(POPUP_DEPTH).setVisible(false);
     this.lens = scene.add.circle(MAGNIFIER_SPOT.x, MAGNIFIER_SPOT.y, LENS_RADIUS, 0x0b1120, 0.85).setStrokeStyle(3, LENS_RING);
     this.lens.setDepth(POPUP_DEPTH).setVisible(false);
     this.lensBullet = scene.add.image(MAGNIFIER_SPOT.x, MAGNIFIER_SPOT.y, BULLET_LIVE_TEXTURE).setDepth(POPUP_DEPTH).setVisible(false);
@@ -185,18 +172,12 @@ export class RevolverTable {
     });
     this.resetRevolver().setVisible(hasRoulette);
     if (hasRoulette) this.revolver.setInteractive();
-    this.playKey.setVisible(hasRoulette);
     this.showTray(amulets, canGive);
   }
 
   /** Револьвер лежит на столе как обычно: боком, стволом вправо, на своём месте. */
   private resetRevolver(): Phaser.GameObjects.Image {
     return this.revolver.setTexture(REVOLVER_TEXTURE).setPosition(REVOLVER.x, REVOLVER.y).setAngle(0).setScale(1).setFlipX(false);
-  }
-
-  /** Сменили язык: «Пробел» под столом — на новом языке. */
-  relabel(): void {
-    this.playKey.setText(keyHint(t('space')));
   }
 
   /** Лоток с копиями амулетов: клик по амулету — отдать его Коллектору; тех, которых не хватит на долг, — тусклые. Нет амулетов — лотка нет. */
@@ -209,21 +190,18 @@ export class RevolverTable {
       image.setInteractive({ useHandCursor: true }).setAlpha(canGive[index] ? 1 : DIM_ALPHA);
       attachHint(image, this.hint, () => [t(amulet.name), t(canGive[index] ? 'giveAmulet' : 'notEnough')], () => this.onAmulet(index));
       this.trayAmulets.push(image);
-      this.trayKeys.push(addKeyHint(this.scene, x, AMULET_TRAY.y + 36, String(index + 1), '12px'));
     });
   }
 
-  /** Убрать копии амулетов и их номера из лотка. */
+  /** Убрать копии амулетов из лотка. */
   private clearTray(): void {
-    for (const object of [...this.trayAmulets, ...this.trayKeys]) object.destroy();
+    for (const object of this.trayAmulets) object.destroy();
     this.trayAmulets = [];
-    this.trayKeys = [];
   }
 
   /** Коллектор крутит барабан: лоток убран, револьвер вертится на сукне — порядок патронов теперь неизвестен. Потом done(). */
   spin(done: () => void): void {
     this.hideTray();
-    this.playKey.setVisible(false);
     this.revolver.disableInteractive(true);
     this.sfx.play('cylinder');
     this.scene.tweens.add({
@@ -245,7 +223,6 @@ export class RevolverTable {
       button.setVisible(isOn).setScale(1);
       if (isOn) this.scene.tweens.add({ targets: button, scale: BUTTON_PULSE, duration: PULSE_TIME, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     }
-    for (const key of this.aimKeys) key.setVisible(isOn);
     if (!isOn) this.hint.hide();
   }
 
@@ -256,7 +233,7 @@ export class RevolverTable {
    */
   shoot(shooter: Side, target: Side, bullet: Bullet, hand: Point, done: () => void): void {
     this.showAim(false);
-    this.showMagnifier(null);
+    this.showMagnifier(false);
     this.hideLens();
     const fire = (): void => {
       this.sfx.play('cock');
@@ -357,7 +334,7 @@ export class RevolverTable {
 
   // ---------- Выстрел в автомат ----------
 
-  /** Выстрел в автомат: стол появляется, на нём только револьвер — без патронов, лотка и «Пробел». */
+  /** Выстрел в автомат: стол появляется, на нём только револьвер — без патронов и лотка. */
   showRevolver(): void {
     this.table.setVisible(true).setAlpha(0);
     this.scene.tweens.add({ targets: this.table, alpha: 1, duration: APPEAR_TIME });
@@ -456,20 +433,17 @@ export class RevolverTable {
   }
 
   /**
-   * Твой ход, и у тебя есть лупа (key — её клавиша, номер места на полке): лупа на столе «дышит», как кнопки-цели.
-   * null — лупы нет или не твой ход.
+   * isOn — твой ход, и у тебя есть лупа: лупа на столе «дышит», как кнопки-цели. Нет — лупы на столе нет.
    */
-  showMagnifier(key: number | null): void {
-    const isOn = key !== null;
+  showMagnifier(isOn: boolean): void {
     this.scene.tweens.killTweensOf(this.magnifier);
     this.magnifier.setVisible(isOn).setScale(1);
-    this.magnifierKey.setText(isOn ? keyHint(String(key)) : '').setVisible(isOn);
     if (isOn) this.scene.tweens.add({ targets: this.magnifier, scale: BUTTON_PULSE, duration: PULSE_TIME, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
   }
 
   /** Лупа показала следующий патрон: вместо неё на столе стекло, под ним патрон крупно — красный боевой или синий холостой. */
   reveal(bullet: Bullet): void {
-    this.showMagnifier(null);
+    this.showMagnifier(false);
     this.peeked = bullet;
     this.lensBullet.setTexture(bullet === 'live' ? BULLET_LIVE_TEXTURE : BULLET_BLANK_TEXTURE).setScale(0).setVisible(true);
     this.lens.setScale(0).setVisible(true);
@@ -486,9 +460,9 @@ export class RevolverTable {
   hide(): void {
     this.hideTray();
     this.showAim(false);
-    this.showMagnifier(null);
+    this.showMagnifier(false);
     this.hideLens();
     this.revolver.disableInteractive(true);
-    for (const object of [this.table, this.revolver, this.playKey, this.flash, ...this.bullets]) object.setVisible(false);
+    for (const object of [this.table, this.revolver, this.flash, ...this.bullets]) object.setVisible(false);
   }
 }

@@ -12,13 +12,11 @@ import {
 } from '../decor';
 import { t } from '../lang';
 import { CENTER_X, CENTER_Y, DARKNESS, DISPLAY, HOME_SCROLL, NOTE, NOTE_ANGLE, SCREEN, TURN_SCROLL, VIEW_WIDTH } from '../layout';
-import { addKeyHint, addText, GAME_OVER_DEPTH, GOLD_TEXT, keyHint, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT } from '../theme';
+import { addText, GAME_OVER_DEPTH, GOLD_TEXT, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT } from '../theme';
 
 // Записка светится, когда долг можно отдать раньше: клик по ней или D.
 const NOTE_GLOW_MIN = 0.3; // свечение пульсирует: гаснет до такой яркости и разгорается снова
 const NOTE_GLOW_TIME = 700; // мс
-const PAY_KEY_X = NOTE.x + 52; // подсказка «D» — под запиской, ближе к правому краю
-const PAY_KEY_Y = NOTE.y + NOTE.height / 2 + 14;
 // Рука Коллектора в темноте справа от комнаты.
 const HAND_Y = 330;
 const HAND_IN_X = DARKNESS.x + 360; // рука спрятана в темноте за правым краем вида
@@ -68,7 +66,6 @@ export class Collector {
   private readonly scene: Phaser.Scene;
   private readonly note: Phaser.GameObjects.Image; // записка с долгом: бумажка с надписями одной картинкой
   private readonly noteGlow: Phaser.GameObjects.Image; // свечение вокруг записки: долг можно отдать раньше
-  private readonly payKey: Phaser.GameObjects.Text; // «D» под запиской
   private readonly hand: Phaser.GameObjects.Image; // рука Коллектора
   private readonly demandChip: Phaser.GameObjects.Image; // над ладонью: фишка…
   private readonly demandText: Phaser.GameObjects.Text; // …и «× долг»
@@ -88,13 +85,12 @@ export class Collector {
 
     // Записка: бумажка, «ДОЛГ» и сумма — одна картинка из decor.ts.
     // Надписи нарисованы прямо на бумажке: Phaser 4 обрезает текст в повёрнутом контейнере, а картинку — нет.
-    // Под запиской — свечение, под ней — «D»: их видно, когда долг можно отдать раньше; тогда по записке можно кликнуть.
+    // Под запиской — свечение: его видно, когда долг можно отдать раньше; тогда по записке можно кликнуть.
     this.noteGlow = scene.add.image(NOTE.x, NOTE.y, NOTE_GLOW_TEXTURE).setAngle(NOTE_ANGLE).setVisible(false);
     drawNoteTexture(scene, NOTE.width, NOTE.height, debt, false);
     this.note = scene.add.image(NOTE.x, NOTE.y, NOTE_TEXTURE).setAngle(NOTE_ANGLE);
     this.note.setInteractive({ useHandCursor: true }).disableInteractive();
     this.note.on('pointerdown', payEarly);
-    this.payKey = addKeyHint(scene, PAY_KEY_X, PAY_KEY_Y, 'D').setVisible(false);
 
     // Темнота справа от комнаты и спрятанная в ней рука; над ладонью — «фишка × долг».
     scene.add.rectangle(DARKNESS.x, DARKNESS.y, DARKNESS.width, DARKNESS.height, 0x000000);
@@ -116,13 +112,12 @@ export class Collector {
   }
 
   /**
-   * Можно ли отдать долг раньше: да — записка светится (свечение пульсирует), курсор над ней — рука, под ней — «D»;
+   * Можно ли отдать долг раньше: да — записка светится (свечение пульсирует), курсор над ней — рука;
    * нет — свечение гаснет и кликнуть нельзя.
    */
   showPayable(isPayable: boolean): void {
     if (isPayable === this.isPayable) return;
     this.isPayable = isPayable;
-    this.payKey.setVisible(isPayable);
     this.scene.tweens.killTweensOf(this.noteGlow);
     this.noteGlow.setVisible(isPayable).setAlpha(1);
     if (!isPayable) {
@@ -292,13 +287,13 @@ export class Collector {
     shade.setInteractive(); // ловит клики, чтобы кнопки под затемнением не нажимались
     const scoreText = `${t('debtsPaid')}: ${closedDebts} · ${t('best')}: ${record}`;
     const score = addText(this.scene, CENTER_X, DEATH_SCORE_Y, scoreText, { fontSize: '20px', color: GOLD_TEXT }).setOrigin(0.5);
-    const button = this.makeButton(CENTER_X, DEATH_BUTTON_Y, t('again'), keyHint(`R / ${t('space')}`), restart);
+    const button = this.makeButton(CENTER_X, DEATH_BUTTON_Y, t('again'), restart);
     for (const part of [shade, score, button.shadow, button.face]) part.setDepth(GAME_OVER_DEPTH);
     this.screenTitle('DEATH', GAME_OVER_DEPTH);
   }
 
-  /** Кнопка: тень, корпус с золотой рамкой, блик сверху, крупная надпись и под ней клавиша (на телефоне — без неё). Нажимается и мышью, и пальцем. */
-  private makeButton(x: number, y: number, text: string, keyLabel: string, onPress: () => void): Button {
+  /** Кнопка: тень, корпус с золотой рамкой, блик сверху и крупная надпись. Нажимается и мышью, и пальцем. */
+  private makeButton(x: number, y: number, text: string, onPress: () => void): Button {
     const shadow = this.scene.add.rectangle(x, y + BUTTON_SHADOW, BUTTON_WIDTH, BUTTON_HEIGHT, 0x000000, 0.45).setRounded(18);
     // Всё остальное рисуем относительно центра кнопки и кладём в контейнер.
     const box = this.scene.add
@@ -310,14 +305,13 @@ export class Collector {
     const gloss = this.scene.add
       .rectangle(0, -BUTTON_HEIGHT / 4, BUTTON_WIDTH - 16, BUTTON_HEIGHT / 2 - 8, 0xffffff, 0.16)
       .setRounded(12);
-    const label = addText(this.scene, 0, keyLabel ? -9 : 0, text, {
+    const label = addText(this.scene, 0, 0, text, {
       fontSize: '22px',
       fontStyle: 'bold',
       stroke: 'rgba(0, 0, 0, 0.35)',
       strokeThickness: 3,
     }).setOrigin(0.5);
-    const key = addText(this.scene, 0, 21, keyLabel, { fontSize: '13px', color: 'rgba(255, 255, 255, 0.75)' }).setOrigin(0.5);
-    const face = this.scene.add.container(x, y, [box, gloss, label, key]);
+    const face = this.scene.add.container(x, y, [box, gloss, label]);
     return { shadow, face };
   }
 }

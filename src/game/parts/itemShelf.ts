@@ -4,13 +4,12 @@ import { createItemTextures, createShelfTextures, itemTexture, SHELF_CELL_TEXTUR
 import { ITEMS, MAX_SLOTS, type Item, type ItemEffects } from '../items';
 import { t } from '../lang';
 import { BULLET } from '../shot';
-import { EFFECTS_STEP, EFFECTS_TOP_Y, EFFECTS_X, ITEM_SIZE, SHELF_CELL, SHELF_COLUMN, shelfX, shelfY } from '../layout';
-import { addKeyHint, addText, POPUP_DEPTH, pulse } from '../theme';
+import { EFFECTS_STEP, EFFECTS_TOP_Y, EFFECTS_X, ITEM_SIZE, SHELF_CELL, shelfX, shelfY } from '../layout';
+import { addText, POPUP_DEPTH, pulse } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
 // Размеры.
 const ITEM_ON_SHELF_SCALE = 0.9; // предмет в клетке чуть меньше ниши
-const KEY_HINT_GAP = 12; // номер клавиши — на столько от клетки: у первой полки справа, у второй слева
 const EFFECT_SCALE = 0.68; // включённый предмет у экрана ещё меньше
 // Анимации, мс.
 const FLY_TIME = 450; // предмет летит из лотка на полку или с полки к экрану
@@ -67,8 +66,6 @@ export class ItemShelf {
       planks.setInteractive();
       attachHint(planks, hint, () => [t('closedSlot'), t('closedSlotHow')]);
       this.planks.push(planks);
-      const side = slot < SHELF_COLUMN ? 1 : -1; // первая полка — номер справа, вторая — слева, снаружи от полок
-      addKeyHint(scene, x + side * (SHELF_CELL / 2 + KEY_HINT_GAP), y, String(slot + 1));
     }
 
     for (const id of EFFECT_IDS) {
