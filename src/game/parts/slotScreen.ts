@@ -15,14 +15,17 @@ import { CELL_RADIUS, CELL_SIZE, cellX, cellY, GLASS, GRID_Y, PHASE_TITLE_Y, SCR
 import { PATTERNS, type PatternHit } from '../patterns';
 import { GRID_COLUMNS, GRID_ROWS, isPaying, randomSymbol, SYMBOLS, type Grid, type SlotSymbol, type WeightOf } from '../rules';
 import type { Sfx } from '../sound';
-import { addText, GOLD_TEXT, GREEN_TEXT, LAMP_GOLD, LAMP_OFF, LAMP_RED, POPUP_DEPTH, POPUP_STYLE, RED_TEXT } from '../theme';
+import { addText, GOLD_TEXT, GREEN_TEXT, LAMP_GOLD, LAMP_OFF, LAMP_RED, LED_STYLE, POPUP_DEPTH, POPUP_STYLE, RED_TEXT } from '../theme';
 
 // Стекло с паттернами: схемы рядами по 7.
 const PATTERN_COLUMNS = 7;
 const PATTERN_STEP_X = 70; // от центра схемы до центра соседней
 const PATTERN_STEP_Y = 36;
-const PATTERN_ICON_OFFSET = -14; // схема — левее середины места, «×N» — правее
-const PATTERN_TEXT_OFFSET = 8;
+const PATTERN_TEXT_GAP = 3; // от схемы до «×N»; схема и «×N» вместе стоят посередине места
+// «×N» — узким шрифтом цифр табло: так и «×10» влезает в рамку, и ширина одна на любом компьютере.
+const PATTERN_TEXT_STYLE = { fontFamily: LED_STYLE.fontFamily, fontSize: '13px', fontStyle: 'bold', color: GOLD_TEXT };
+const PATTERN_FRAME = { width: 64, height: 28 }; // рамка схемы — вокруг схемы и «×N»; от соседней — зазор
+const PATTERN_FRAME_LINE = 2; // толщина рамки
 // Новость «новый символ»: клетка символа крупно над сеткой.
 const NEWS_SCALE = 1.7;
 const NEWS_TIME = 1800; // сколько видно новость, мс
@@ -106,7 +109,7 @@ export class SlotScreen {
   }
 
   /**
-   * Стекло с паттернами над экраном: схема каждого паттерна и его ×, рядами по пять.
+   * Стекло с паттернами над экраном: схема каждого паттерна и его ×, рядами по семь.
    * Цен символов на экране нет — игрок узнаёт их по опыту. Рамка схемы загорается, когда паттерн найден.
    */
   private drawPatternGlass(): Phaser.GameObjects.Rectangle[] {
@@ -116,13 +119,13 @@ export class SlotScreen {
       const row = Math.floor(index / PATTERN_COLUMNS);
       const x = GLASS.x + (col - (PATTERN_COLUMNS - 1) / 2) * PATTERN_STEP_X;
       const y = GLASS.y + (row - (rows - 1) / 2) * PATTERN_STEP_Y;
-      const frame = this.scene.add
-        .rectangle(x, y, PATTERN_STEP_X - 6, PATTERN_STEP_Y - 4)
-        .setRounded(6)
-        .setVisible(false);
-      this.scene.add.image(x + PATTERN_ICON_OFFSET, y, patternTexture(pattern)); // схема слева, «×N» справа
-      const style = { fontSize: '14px', fontStyle: 'bold', color: GOLD_TEXT };
-      addText(this.scene, x + PATTERN_TEXT_OFFSET, y, `×${pattern.multiplier}`, style).setOrigin(0, 0.5);
+      const frame = this.scene.add.rectangle(x, y, PATTERN_FRAME.width, PATTERN_FRAME.height).setRounded(6).setVisible(false);
+      // Схема слева, «×N» справа — вместе посередине рамки.
+      const icon = this.scene.add.image(0, y, patternTexture(pattern)).setOrigin(0, 0.5);
+      const label = addText(this.scene, 0, y, `×${pattern.multiplier}`, PATTERN_TEXT_STYLE).setOrigin(0, 0.5);
+      const left = Math.round(x - (icon.width + PATTERN_TEXT_GAP + label.width) / 2);
+      icon.setX(left);
+      label.setX(left + icon.width + PATTERN_TEXT_GAP);
       return frame;
     });
   }
@@ -243,7 +246,7 @@ export class SlotScreen {
         const top = cellY(row) - CELL_SIZE / 2;
         this.cellHighlights.strokeRoundedRect(left, top, CELL_SIZE, CELL_SIZE, CELL_RADIUS);
       }
-      this.patternFrames[PATTERNS.indexOf(hit.pattern)].setStrokeStyle(3, color).setVisible(true);
+      this.patternFrames[PATTERNS.indexOf(hit.pattern)].setStrokeStyle(PATTERN_FRAME_LINE, color).setVisible(true);
     }
   }
 

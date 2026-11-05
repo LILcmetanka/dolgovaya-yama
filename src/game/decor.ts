@@ -129,6 +129,7 @@ const BODY_CORNER = 30; // скругление углов
 const BODY_SHADOW = { x: 12, y: 10 }; // тень корпуса на стене сдвинута на столько
 const BELLY_SHADE = 0.53; // панель под экраном — тело корпуса, затемнённое на столько: она того же цвета, что автомат
 const TRIM_COLOR = 0xb45309; // бронзовая окантовка
+const TRIM_INSET = 8; // окантовка — на столько внутри края лицевой части, со всех сторон одинаково
 const CHROME = 0x94a3b8;
 const CHROME_LIGHT = 0xe2e8f0;
 const SCREEN_GLASS = 0x020617; // почти чёрное стекло под сеткой
@@ -183,8 +184,8 @@ const RUST_LIGHT = 'rgba(217, 119, 6, 0.7)';
 const RUST_EDGE = 4; // толщина каймы
 const RUST_SPOTS = 22;
 /** Схема паттерна — маленькая сетка 5×3: клетки паттерна золотые, остальные тёмные. */
-const MINI_CELL = 6; // сторона клетки схемы, px
-const MINI_GAP = 2; // промежуток между клетками схемы, px
+const MINI_CELL = 5; // сторона клетки схемы, px
+const MINI_GAP = 1.5; // промежуток между клетками схемы, px (картинка запекается вдвое крупнее — промежуток целый)
 const MINI_ON = 0xfde047;
 const MINI_OFF = 0x334155;
 
@@ -234,16 +235,16 @@ export function drawMachineBody(scene: Phaser.Scene): Phaser.GameObjects.Image {
   if (!scene.textures.exists(MACHINE_SHELL_TEXTURE)) bakeMachineShell(scene);
   if (!scene.textures.exists(MACHINE_TEXTURE)) bakeMachineBody(scene);
   const { left, top } = topLeft(BODY);
-  const shell = scene.add.image(left, top, MACHINE_SHELL_TEXTURE).setOrigin(0);
+  const shell = scene.add.image(left - BODY_SIDE_WIDTH, top, MACHINE_SHELL_TEXTURE).setOrigin(0); // бок — левее лицевой части
   scene.add.image(0, 0, MACHINE_TEXTURE).setOrigin(0);
   return shell;
 }
 
-/** Тело корпуса — в текстуру MACHINE_SHELL_TEXTURE, от его левого верхнего угла. Низ корпуса уходит за край экрана — его не рисуем. */
+/** Тело корпуса — в текстуру MACHINE_SHELL_TEXTURE, от левого верхнего угла бока. Низ корпуса уходит за край экрана — его не рисуем. */
 function bakeMachineShell(scene: Phaser.Scene): void {
   const g = scene.add.graphics();
   drawBodyShell(g, BODY.width, BODY.height);
-  bake(g, MACHINE_SHELL_TEXTURE, BODY.width + BODY_SHADOW.x, 640 - topLeft(BODY).top);
+  bake(g, MACHINE_SHELL_TEXTURE, BODY_SIDE_WIDTH + BODY.width + BODY_SHADOW.x, 640 - topLeft(BODY).top);
 }
 
 /** Детали корпуса — в текстуру MACHINE_TEXTURE: части (их места — в layout.ts) рисуются по очереди, от задних к передним. */
@@ -278,21 +279,25 @@ function topLeft(box: Box): { left: number; top: number } {
   return { left: box.x - box.width / 2, top: box.y - box.height / 2 };
 }
 
-/** Тело корпуса размером width×height от его левого верхнего угла: тень на стене, левый бок и лицевая часть — серым и белым. */
+/**
+ * Тело корпуса от левого верхнего угла бока: тень на стене, левый бок и лицевая часть width×height — серым и белым.
+ * Бок — левее лицевой части, поэтому лицевая часть (и всё на ней) стоит ровно посередине автомата.
+ */
 function drawBodyShell(g: Phaser.GameObjects.Graphics, width: number, height: number): void {
+  const fullWidth = BODY_SIDE_WIDTH + width;
   g.fillStyle(0x000000, 0.5);
-  g.fillRoundedRect(BODY_SHADOW.x, BODY_SHADOW.y, width, height, BODY_CORNER); // тень на стене
+  g.fillRoundedRect(BODY_SHADOW.x, BODY_SHADOW.y, fullWidth, height, BODY_CORNER); // тень на стене
   g.fillStyle(SHELL_SIDE);
-  g.fillRoundedRect(0, 0, width, height, BODY_CORNER);
+  g.fillRoundedRect(0, 0, fullWidth, height, BODY_CORNER);
   g.fillStyle(SHELL_FACE);
-  g.fillRoundedRect(BODY_SIDE_WIDTH, 0, width - BODY_SIDE_WIDTH, height, BODY_CORNER);
+  g.fillRoundedRect(BODY_SIDE_WIDTH, 0, width, height, BODY_CORNER);
 }
 
 /** Бронзовая окантовка по лицевой части корпуса. */
 function drawBodyTrim(g: Phaser.GameObjects.Graphics, body: Box): void {
   const { left, top } = topLeft(body);
   g.lineStyle(4, TRIM_COLOR);
-  g.strokeRoundedRect(left + BODY_SIDE_WIDTH + 8, top + 8, body.width - BODY_SIDE_WIDTH - 16, body.height - 16, 24);
+  g.strokeRoundedRect(left + TRIM_INSET, top + TRIM_INSET, body.width - 2 * TRIM_INSET, body.height - 2 * TRIM_INSET, 24);
 }
 
 /** Утопленная панель: заливка (fillAlpha — её непрозрачность), рамка и узкий блик сверху. */

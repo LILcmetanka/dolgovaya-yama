@@ -40,7 +40,8 @@ export class AmuletRack {
       attachHint(cap, hint, () => [t('closedSocket'), t('closedSocketHow')]);
       this.caps.push(cap);
     }
-    this.bonesLabel = addText(scene, 0, SOCKET_Y + SOCKET_RADIUS + 9, '', {
+    // «+N%» — под гнездом, над стеклом с паттернами (табло опустилось — стекло ближе к гнёздам).
+    this.bonesLabel = addText(scene, 0, SOCKET_Y + SOCKET_RADIUS + 4, '', {
       fontSize: '12px',
       fontStyle: 'bold',
       color: GOLD_TEXT,

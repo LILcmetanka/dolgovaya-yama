@@ -40,8 +40,10 @@ export const CELL_RADIUS = 12; // скругление углов клетки
 const SCREEN_PADDING = 18; // окно экрана шире сетки на столько с каждой стороны
 
 // Части автомата.
-export const BODY: Box = { x: CENTER_X, y: 366, width: 600, height: 720 }; // корпус; низ уходит за край экрана
-export const DISPLAY: Box = { x: CENTER_X, y: 40, width: 260, height: 50 }; // табло: сколько у тебя фишек
+// Корпус — его лицевая часть, ровно посередине; тёмный левый бок рисуется левее (decor.ts). Низ уходит за край экрана.
+export const BODY: Box = { x: CENTER_X, y: 366, width: 600, height: 720 };
+// Табло: сколько у тебя фишек и билетов. Посередине между окантовкой корпуса и стеклом с паттернами — не прилипает к верху.
+export const DISPLAY: Box = { x: CENTER_X, y: 45, width: 260, height: 44 };
 export const GLASS: Box = { x: CENTER_X, y: 116, width: 500, height: 80 }; // стекло с паттернами
 // Новость «ФАЗА 2» на стекле: надпись в верхней половине, под ней знаки — что изменилось (их ставит MachinePanel).
 export const PHASE_TITLE_Y = GLASS.y - 17;
@@ -58,22 +60,27 @@ export const PAYOUT_WINDOW: Box = { x: 565, y: 552, width: 290, height: 70 }; //
 export const LEVER_MOUNT: Box = { x: 800, y: 338, width: 48, height: 76 }; // крепление рычага; из его середины растёт рычаг
 // Табло: слева фишки, справа билеты. Сюда летят забранные фишки и полученные билеты.
 // Числа видны и когда вид повёрнут к Коллектору, и в магазине.
-export const BOARD_CHIP_X = DISPLAY.x - 96; // значок фишки
-export const BOARD_CHIPS_TEXT_X = DISPLAY.x - 76; // сколько фишек — слева направо от этой точки
-export const BOARD_CHIPS_MAX_WIDTH = 134; // шире число фишек не бывает: дальше шрифт уменьшается
-export const BOARD_TICKET_X = DISPLAY.x + 76; // значок билета
-export const BOARD_TICKETS_TEXT_X = DISPLAY.x + 91; // сколько билетов — слева направо от этой точки
+// Числа фишек и билетов — одним шрифтом (BOARD_FONT_SIZE в panel.ts), значки на глаз одного размера:
+// билет шире фишки, поэтому чуть ниже.
+export const BOARD_CHIP_HEIGHT = 28; // высота фишки на табло
+export const BOARD_TICKET_HEIGHT = 24; // высота билета на табло
+export const BOARD_CHIP_X = DISPLAY.x - 107; // значок фишки
+export const BOARD_CHIPS_TEXT_X = DISPLAY.x - 87; // сколько фишек — слева направо от этой точки
+export const BOARD_CHIPS_MAX_WIDTH = 109; // шире число фишек не бывает: дальше шрифт уменьшается
+export const BOARD_TICKET_X = DISPLAY.x + 57; // значок билета
+export const BOARD_TICKETS_TEXT_X = DISPLAY.x + 84; // сколько билетов — слева направо от этой точки
+export const BOARD_TICKETS_MAX_WIDTH = 37; // два знака; длиннее — шрифт уменьшается
 // Гнёзда для амулетов на верхушке корпуса: по три слева и справа от табло, открываются по очереди — от табло к краям.
 export const SOCKET_Y = DISPLAY.y;
 export const SOCKET_RADIUS = 21;
 export const SOCKET_XS = [322, 638, 276, 684, 230, 730];
 export const SPIN_LAMPS_Y = 492; // лампочки прокруток под экраном
 // Значок автомата с характером — на корпусе слева от экрана, между бронзовой окантовкой и рамкой экрана.
-export const MACHINE_BADGE = { x: 224, y: GRID_Y };
+export const MACHINE_BADGE = { x: 216, y: GRID_Y }; // напротив включённых предметов справа (EFFECTS_X)
 export const MACHINE_BADGE_SIZE = 34; // сторона картинки значка
 
 // Комната.
-export const NOTE: Box = { x: 96, y: 118, width: 150, height: 120 }; // записка с долгом на стене
+export const NOTE: Box = { x: 80, y: 118, width: 150, height: 120 }; // записка с долгом на стене, левее бока автомата
 export const NOTE_ANGLE = -6; // записка висит чуть криво, градусы
 export const DARKNESS: Box = { x: 1200 + ROOM_SIDE, y: CENTER_Y, width: 480, height: 640 }; // темнота справа от комнаты, там Коллектор
 export const TURN_SCROLL = 380; // левый край вида у Коллектора: вид уезжает вправо, табло остаётся видно у левого края
@@ -128,12 +135,13 @@ export const AMULET_CASE_PRICE_Y = 146; // ценники под ними
 export const AMULET_CASE_KEY_Y = 48; // номера клавиш над ними
 // Торговый автомат под витриной: предметы рядами, справа от предмета — ценник.
 export const VENDING: Box = { x: -210 - ROOM_SIDE, y: 404, width: 280, height: 412 };
-export const VENDING_GLASS: Box = { x: -242 - ROOM_SIDE, y: 384, width: 196, height: 280 }; // витрина: 4 ряда
-export const VENDING_GOOD_X = -290 - ROOM_SIDE; // предмет в ряду
-export const VENDING_PRICE_X = -242 - ROOM_SIDE; // ценник: фишка, правее — «× цена»
-export const VENDING_KEY_X = -330 - ROOM_SIDE; // номер ряда — у левого края витрины
-export const VENDING_COIN_SLOT = { x: -108 - ROOM_SIDE, y: 282 }; // щель для фишек на панели справа от витрины
-export const VENDING_BIN: Box = { x: -226 - ROOM_SIDE, y: 566, width: 220, height: 36 }; // лоток внизу: сюда падает покупка
+// Витрина и панель со щелью стоят внутри окантовки лицевой части (она от −514 до −248, бок — левее), с равными полями.
+export const VENDING_GLASS: Box = { x: -226 - ROOM_SIDE, y: 384, width: 178, height: 280 }; // витрина: 4 ряда
+export const VENDING_GOOD_X = -273 - ROOM_SIDE; // предмет в ряду
+export const VENDING_PRICE_X = -228 - ROOM_SIDE; // ценник: фишка, правее — «× цена»
+export const VENDING_KEY_X = -307 - ROOM_SIDE; // номер ряда — у левого края витрины
+export const VENDING_COIN_SLOT = { x: -104 - ROOM_SIDE, y: 282 }; // щель для фишек на панели справа от витрины
+export const VENDING_BIN: Box = { x: -203 - ROOM_SIDE, y: 566, width: 220, height: 36 }; // лоток внизу, посередине лицевой части: сюда падает покупка
 // «Барабан» — колесо на стене справа от торгового автомата: под ним ценник, над стрелкой — номер клавиши.
 export const DRUM_WHEEL = { x: -160, y: 290 }; // середина колеса
 export const DRUM_RADIUS = 56;
