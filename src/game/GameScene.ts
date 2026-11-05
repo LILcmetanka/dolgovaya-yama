@@ -255,6 +255,7 @@ export class GameScene extends ShotScene {
     this.onKey('MINUS', () => this.buyBullet()); // в магазине — купить патрон
     this.onKey('UP', () => this.onUp());
     this.onKey('DOWN', () => this.onDown());
+    this.onKey('PLUS', () => this.guess('equal')); // у Дилера — «=»: в Phaser клавиша «= / +» зовётся PLUS (код 187)
     this.onKey('RIGHT', () => this.toggleMonitor()); // монитор — справа
     this.onKey('LEFT', () => this.lookBack());
   }
@@ -306,13 +307,13 @@ export class GameScene extends ShotScene {
     else if (index < MAX_SLOTS) this.useItem(index);
   }
 
-  /** ↑: в рулетке — выстрел в Коллектора, у Дилера — «больше». */
+  /** ↑: в рулетке — выстрел в Коллектора, у Дилера — «>» (больше). */
   private onUp(): void {
     if (this.isAiming) this.shoot('collector');
     else this.guess('higher');
   }
 
-  /** ↓: в рулетке — выстрел в себя, у Дилера — «меньше». */
+  /** ↓: в рулетке — выстрел в себя, у Дилера — «<» (меньше). */
   private onDown(): void {
     if (this.isAiming) this.shoot('player');
     else this.guess('lower');

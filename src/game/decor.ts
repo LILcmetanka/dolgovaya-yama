@@ -103,8 +103,9 @@ export const REVOLVER_BARREL_TIP = { x: 56, y: -11 }; // конец ствола
 export const MUZZLE_BORE = { x: 0, y: -14 }; // дуло на картинке «стволом на тебя» — от её середины
 export const CARD_BACK_TEXTURE = 'card-back'; // рубашка карты Дилера
 export const DEALER_FELT_TEXTURE = 'dealer-felt'; // стол Дилера поверх экрана
-export const ARROW_UP_TEXTURE = 'arrow-up'; // кнопка «больше»
-export const ARROW_DOWN_TEXTURE = 'arrow-down'; // кнопка «меньше»
+export const CHOICE_HIGHER_TEXTURE = 'choice-higher'; // кнопка «>» — следующая больше
+export const CHOICE_EQUAL_TEXTURE = 'choice-equal'; // кнопка «=» — такая же
+export const CHOICE_LOWER_TEXTURE = 'choice-lower'; // кнопка «<» — меньше
 export const CHIP_STACK_TEXTURE = 'chip-stack'; // фишка сбоку-сверху: из таких складывается стопка — ставка у Дилера
 export const STAKE_GLOW_TEXTURE = 'stake-glow'; // золотое свечение под ставкой Дилера: можно остановиться
 export const RUST_TEXTURE = 'rust-column'; // ржавчина на заевшем столбце сетки
@@ -1702,8 +1703,9 @@ export function createDealerTextures(scene: Phaser.Scene, min: number, max: numb
     g.strokeRoundedRect(8, 8, felt.width - 16, felt.height - 16, 12);
     bake(g, DEALER_FELT_TEXTURE, felt.width, felt.height);
   }
-  if (!scene.textures.exists(ARROW_UP_TEXTURE)) bakeArrow(scene, ARROW_UP_TEXTURE, true);
-  if (!scene.textures.exists(ARROW_DOWN_TEXTURE)) bakeArrow(scene, ARROW_DOWN_TEXTURE, false);
+  if (!scene.textures.exists(CHOICE_HIGHER_TEXTURE)) bakeChoice(scene, CHOICE_HIGHER_TEXTURE, 0x15803d, 'higher');
+  if (!scene.textures.exists(CHOICE_EQUAL_TEXTURE)) bakeChoice(scene, CHOICE_EQUAL_TEXTURE, 0x7e22ce, 'equal');
+  if (!scene.textures.exists(CHOICE_LOWER_TEXTURE)) bakeChoice(scene, CHOICE_LOWER_TEXTURE, 0xb91c1c, 'lower');
   if (!scene.textures.exists(CHIP_STACK_TEXTURE)) bakeStackChip(scene);
   if (!scene.textures.exists(STAKE_GLOW_TEXTURE)) drawStakeGlow(scene);
 }
@@ -1757,18 +1759,31 @@ function drawCard(ctx: CanvasRenderingContext2D, width: number, height: number, 
   ctx.fillText('♠', width - 11, height - 13);
 }
 
-/** Круглая кнопка со стрелкой вверх (больше) или вниз (меньше). */
-function bakeArrow(scene: Phaser.Scene, key: string, isUp: boolean): void {
+/**
+ * Круглая кнопка выбора у Дилера: цветной круг с золотым ободом и белым знаком «>», «=» или «<», нарисованным линиями (без шрифта).
+ * Стоят слева от открытой карты, поэтому читаются вместе с ней: «> 5» — больше пяти.
+ */
+function bakeChoice(scene: Phaser.Scene, key: string, color: number, sign: 'higher' | 'equal' | 'lower'): void {
   const g = scene.add.graphics();
   g.fillStyle(0x000000, 0.45);
   g.fillCircle(27, 29, 25); // тень
-  g.fillStyle(isUp ? 0x15803d : 0xb91c1c);
+  g.fillStyle(color);
   g.fillCircle(26, 26, 25);
   g.lineStyle(3, 0xfbbf24);
   g.strokeCircle(26, 26, 23);
-  g.fillStyle(0xffffff);
-  if (isUp) g.fillTriangle(26, 12, 40, 34, 12, 34);
-  else g.fillTriangle(26, 40, 40, 18, 12, 18);
+  g.lineStyle(6, 0xffffff);
+  if (sign === 'equal') {
+    g.lineBetween(14, 20, 38, 20);
+    g.lineBetween(14, 32, 38, 32);
+  } else {
+    const tip = sign === 'higher' ? 37 : 15; // острие знака: у «>» справа, у «<» слева
+    const back = sign === 'higher' ? 16 : 36;
+    g.beginPath();
+    g.moveTo(back, 14);
+    g.lineTo(tip, 26);
+    g.lineTo(back, 38);
+    g.strokePath();
+  }
   bake(g, key, 54, 56);
 }
 
