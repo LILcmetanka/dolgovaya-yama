@@ -173,7 +173,7 @@ export abstract class RoundScene extends MachineScene {
     this.screen.highlightCells(spiders, SPIDER_BORDER);
     const [row, col] = spiders[0];
     this.effects.popupAt(cellX(col), cellY(row) - 30, `−${bite}`, PURPLE_TEXT);
-    this.payout.addWin(this.pot, this.debt); // огоньки и сумма в окошке — по новому кону
+    this.payout.addWin(this.pot, this.debt); // сумма в окошке — по новому кону
   }
 
   /** Паттерн из черепов: первым его отбивает бронежилет, потом щит, иначе кон сгорает. Коллекционер костей их считает. */

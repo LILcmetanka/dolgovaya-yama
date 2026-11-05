@@ -39,7 +39,7 @@ import { FONT, LAMP_OFF, TEXTURE_SCALE } from './theme';
 
 /**
  * Украшения «Долговой ямы»: тёмная комната, корпус автомата, рычаг, записка, лампочки, фишки,
- * красная кнопка окошка выплаты, клетки символов и схемы паттернов. Логики игры здесь нет. Картинок в проекте тоже нет — всё рисуется кодом.
+ * клетки символов и схемы паттернов. Логики игры здесь нет. Картинок в проекте тоже нет — всё рисуется кодом.
  * Неподвижное рисуется один раз и «запекается» в текстуру: дальше это одна картинка, и игра идёт даже на слабом компьютере.
  * Запекается крупно, в TEXTURE_SCALE раз (bake, createSharpCanvas): камера увеличивает вид до Full HD, и картинки остаются чёткими.
  */
@@ -74,7 +74,6 @@ function showAtGameSize(scene: Phaser.Scene, key: string, width: number, height:
 
 /** Имена текстур, нарисованных кодом. */
 export const CHIP_TEXTURE = 'chip'; // фишка анфас: на табло, в окошке выплаты и в брызгах
-export const RED_BUTTON_TEXTURE = 'red-button';
 export const HAND_OPEN_TEXTURE = 'hand-open'; // рука Коллектора ладонью вверх
 export const HAND_FIST_TEXTURE = 'hand-fist'; // та же рука кулаком
 export const LEVER_ROD_TEXTURE = 'lever-rod';
@@ -483,25 +482,6 @@ function drawChip(ctx: CanvasRenderingContext2D, size: number): void {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('1', center, center + 1);
-}
-
-/** Большая красная кнопка без надписей, как «ядерная»: металлическое кольцо, тёмный зазор и красный купол с бликом. */
-export function createRedButtonTexture(scene: Phaser.Scene): void {
-  if (scene.textures.exists(RED_BUTTON_TEXTURE)) return;
-  const g = scene.add.graphics();
-  g.fillStyle(0x000000, 0.4);
-  g.fillCircle(31, 33, 27); // тень
-  g.fillStyle(0x6b7280);
-  g.fillCircle(30, 30, 27); // металлическое кольцо
-  g.fillStyle(0x1f2937);
-  g.fillCircle(30, 30, 22); // зазор вокруг купола
-  g.fillStyle(0x991b1b);
-  g.fillCircle(30, 32, 19); // низ купола в тени
-  g.fillStyle(0xdc2626);
-  g.fillCircle(30, 29, 18); // купол
-  g.fillStyle(0xfca5a5, 0.8);
-  g.fillEllipse(24, 22, 12, 7); // блик
-  bake(g, RED_BUTTON_TEXTURE, 62, 62);
 }
 
 /** Рука Коллектора: раскрытая ладонью вверх (ждёт долг) и кулаком (забрал или злится). Рукав уходит за правый край. */

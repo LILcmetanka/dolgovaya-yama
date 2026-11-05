@@ -116,7 +116,7 @@ export abstract class BaseScene extends Phaser.Scene {
   // Части автомата и комнаты. GameScene создаёт их заново в каждом create(), поэтому картинки и анимации всегда свежие.
   protected screen!: SlotScreen; // экран 5×3, стекло с паттернами, бегущие огни
   protected panel!: MachinePanel; // табло, окошко множителя, лампочки прокруток, рычаг
-  protected payout!: PayoutWindow; // окошко выплаты: электронное табло с коном и красной кнопкой
+  protected payout!: PayoutWindow; // окошко выплаты: электронное табло с коном и кнопкой «забрать»
   protected collector!: Collector; // записка с долгом, рука Коллектора, GOOD LUCK и DEATH
   protected itemShelf!: ItemShelf; // полка с предметами и включённые предметы у экрана
   protected amuletRack!: AmuletRack; // гнёзда с амулетами на верхушке корпуса

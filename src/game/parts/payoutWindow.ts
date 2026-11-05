@@ -1,12 +1,11 @@
 import Phaser from 'phaser';
-import { CHIP_TEXTURE, createChipTextures, createRedButtonTexture, RED_BUTTON_TEXTURE } from '../decor';
+import { CHIP_TEXTURE, createChipTextures } from '../decor';
 import { BOARD_CHIP_X, DISPLAY } from '../layout';
 import {
   addText,
   CHIP_DEPTH,
   GREEN_TEXT,
   LAMP_GOLD,
-  LAMP_GREEN,
   LAMP_OFF,
   LAMP_RED,
   LED_COLOR,
@@ -19,76 +18,73 @@ import {
 
 // Что где в окошке.
 const CHIP_X = 452; // фишка слева от суммы
-const CHIP_Y = 543; // фишка и «× 400» — в верхней части окошка, под ними огоньки
+const CHIP_Y = 552; // фишка и «× 400» — посередине окошка
 const PAYOUT_TEXT_X = 474; // «× 400» — правее фишки
-const RED_BUTTON_X = 664;
-const RED_BUTTON_Y = 554;
-// Огоньки под суммой — сколько кона относительно долга раунда (раньше это показывала стопка фишек).
-// Горит один и ещё по одному за каждый порог — долю долга, которую набрал кон. Шесть — больше не бывает (кон вчетверо больше долга).
-const LIGHT_STEPS = [0.25, 0.5, 1, 2, 4];
-const LIGHTS_ENOUGH = 4; // столько огоньков — кона уже хватает на долг: четвёртый и дальше зелёные
-const LIGHTS_X = 452; // первый огонёк, следующие правее
-const LIGHTS_Y = 571;
-const LIGHT_STEP = 17;
-const LIGHT_RADIUS = 5;
+// Кнопка «забрать» на самом табло — круг света без слов.
+const BUTTON_X = 664;
+const BUTTON_Y = 552;
+const BUTTON_RADIUS = 20; // светящийся круг
+const BUTTON_RING_RADIUS = 27; // кольцо вокруг него
+const BUTTON_RING_WIDTH = 3;
+const BUTTON_GLOW_ALPHA = 0.25; // мягкое свечение под кругом
+// Сколько фишек летит в табло при «забрать»: одна и ещё по одной за каждый порог — долю долга, которую набрал кон.
+const CHIP_STEPS = [0.25, 0.5, 1, 2, 4];
 // Анимации, мс.
 const FLICKER_TIME = 70; // окошко загорается: мигает FLICKER_TIMES раз по столько, как лампа
 const FLICKER_TIMES = 3;
-const BUTTON_POP_TIME = 250; // красная кнопка выскакивает
-const LIGHT_POP_TIME = 250; // новый огонёк вспыхивает
+const BUTTON_POP_TIME = 250; // кнопка вспыхивает
 const FADE_TIME = 250; // окошко гаснет
 const CHIPS_FLY_TIME = 500; // фишки летят из окошка в табло
 const CHIPS_FLY_STAGGER = 70; // фишки взлетают друг за другом
 const BURN_TIME = 450; // черепа: столько окошко горит красным, потом гаснет
 const AMOUNT_FLY_TIME = 500; // «+36» летит в табло
 const AMOUNT_FADE_DELAY = 350; // через столько «+36» начинает таять
-const RED_BUTTON_PRESS_SCALE = 0.88; // нажатая красная кнопка чуть уменьшается — «вдавливается»
+const BUTTON_PRESS_SCALE = 0.85; // нажатая кнопка чуть уменьшается — «вдавливается»
 const BURN_COLOR = 0xff5a1f; // фишка в окошке горит огнём
 
-/** Сколько огоньков горит: один и ещё по одному за каждый порог LIGHT_STEPS — долю долга, которую набрал кон. */
-function lightsForPot(pot: number, debt: number): number {
-  return 1 + LIGHT_STEPS.filter((step) => pot >= step * debt).length;
-}
-
-/** Цвет огонька номер index (с нуля): пока кона не хватает на долг — жёлтый, дальше — зелёный. */
-function lightColor(index: number): number {
-  return index < LIGHTS_ENOUGH - 1 ? LAMP_GOLD : LAMP_GREEN;
+/** Сколько фишек летит в табло: одна и ещё по одной за каждый порог CHIP_STEPS. */
+function chipsForPot(pot: number, debt: number): number {
+  return 1 + CHIP_STEPS.filter((step) => pot >= step * debt).length;
 }
 
 /**
- * Окошко выплаты на корпусе — электронное табло. Кона нет — оно погашено, видны только тёмные огоньки.
- * Кон есть — горят фишка, «× сумма» и огоньки (сколько кона относительно долга), выскакивает красная кнопка «забрать».
+ * Окошко выплаты на корпусе — электронное табло. Кона нет — оно погашено, виден только тёмный контур кнопки.
+ * Кон есть — горят фишка, «× сумма» и кнопка «забрать» — круг света без слов. Кнопка погашена — виден только тёмный контур.
  */
 export class PayoutWindow {
   private readonly scene: Phaser.Scene;
   private readonly lit: Phaser.GameObjects.Container; // всё, что горит, пока на кону что-то есть: фишка, сумма, кнопка
   private readonly chip: Phaser.GameObjects.Image; // фишка слева от суммы
   private readonly payoutText: Phaser.GameObjects.Text; // «× 400» — сколько фишек на кону
-  private readonly redButton: Phaser.GameObjects.Image; // красная кнопка «забрать» — без надписей
-  private readonly lights: Phaser.GameObjects.Arc[] = []; // огоньки под суммой, слева направо
-  private litLights = 0; // сколько огоньков горит
+  private readonly button: Phaser.GameObjects.Container; // кнопка «забрать»: круг света и кольцо, без надписей
+  private readonly buttonCore: Phaser.GameObjects.Arc; // сам круг — на него нажимают
+  private readonly buttonParts: Phaser.GameObjects.Arc[]; // свечение, кольцо и круг — краснеют вместе с суммой при черепах
+  private flyingChips = 1; // сколько фишек полетит при «забрать»
   private isLit = false; // окошко горит (или загорается)
 
-  /** take — что делать, когда нажали красную кнопку (Enter сцена ловит сама). */
+  /** take — что делать, когда нажали кнопку «забрать» (Enter сцена ловит сама). */
   constructor(scene: Phaser.Scene, take: () => void) {
     this.scene = scene;
     createChipTextures(scene);
-    createRedButtonTexture(scene);
 
-    for (let index = 0; index <= LIGHT_STEPS.length; index++) {
-      this.lights.push(scene.add.circle(LIGHTS_X + index * LIGHT_STEP, LIGHTS_Y, LIGHT_RADIUS, LAMP_OFF));
-    }
+    // Погашенная кнопка: тёмный контур — видно, где она, но не горит. Не интерактивна.
+    scene.add.circle(BUTTON_X, BUTTON_Y, BUTTON_RING_RADIUS).setStrokeStyle(BUTTON_RING_WIDTH, LAMP_OFF);
     this.chip = scene.add.image(CHIP_X, CHIP_Y, CHIP_TEXTURE);
     this.payoutText = addText(scene, PAYOUT_TEXT_X, CHIP_Y, '', { ...LED_STYLE, fontSize: '26px' }).setOrigin(0, 0.5);
-    this.redButton = scene.add.image(RED_BUTTON_X, RED_BUTTON_Y, RED_BUTTON_TEXTURE);
-    this.redButton.setInteractive({ useHandCursor: true });
-    this.redButton.on('pointerdown', take);
+    const glow = scene.add.circle(0, 0, BUTTON_RING_RADIUS, LAMP_GOLD, BUTTON_GLOW_ALPHA);
+    const ring = scene.add.circle(0, 0, BUTTON_RING_RADIUS).setStrokeStyle(BUTTON_RING_WIDTH, LAMP_GOLD);
+    this.buttonCore = scene.add.circle(0, 0, BUTTON_RADIUS, LAMP_GOLD);
+    this.buttonParts = [glow, ring, this.buttonCore];
+    this.button = scene.add.container(BUTTON_X, BUTTON_Y, this.buttonParts);
+    this.button.setSize(BUTTON_RING_RADIUS * 2, BUTTON_RING_RADIUS * 2);
+    this.button.setInteractive({ useHandCursor: true });
+    this.button.on('pointerdown', take);
     // Всё горящее — в одном слое: погасло окошко — слой невидим, и кнопку не нажать.
-    this.lit = scene.add.container(0, 0, [this.chip, this.payoutText, this.redButton]).setVisible(false);
+    this.lit = scene.add.container(0, 0, [this.chip, this.payoutText, this.button]).setVisible(false);
   }
 
   /**
-   * Окошко показывает кон: есть что забрать — горят «× сумма» и огоньки, нет — гаснет.
+   * Окошко показывает кон: есть что забрать — горят «× сумма» и кнопка, нет — гаснет.
    * Сцена зовёт это при каждом обновлении приборов, поэтому окошко не останется погашенным, когда на кону что-то есть.
    */
   showPot(pot: number, debt: number): void {
@@ -97,42 +93,43 @@ export class PayoutWindow {
       return;
     }
     this.payoutText.setText(`× ${pot}`);
-    this.showLights(lightsForPot(pot, debt));
+    this.flyingChips = chipsForPot(pot, debt);
     this.turnOn();
   }
 
-  /** Пока крутится или идёт расплата — красная кнопка тусклее. */
+  /** Пока крутится или идёт расплата — кнопка тусклее. */
   setEnabled(enabled: boolean): void {
-    this.redButton.setAlpha(enabled ? 1 : 0.6);
+    this.button.setAlpha(enabled ? 1 : 0.5);
   }
 
-  /** Красная кнопка коротко вдавливается. */
+  /** Кнопка коротко вдавливается. */
   press(): void {
-    this.scene.tweens.killTweensOf(this.redButton);
-    this.redButton.setScale(1);
-    this.scene.tweens.add({ targets: this.redButton, scale: RED_BUTTON_PRESS_SCALE, duration: 70, yoyo: true });
+    this.scene.tweens.killTweensOf(this.button);
+    this.button.setScale(1);
+    this.scene.tweens.add({ targets: this.button, scale: BUTTON_PRESS_SCALE, duration: 70, yoyo: true });
   }
 
-  /** Выигрыш лёг на кон: окошко загорается (если было погашено), огоньки — по новому кону, сумма подпрыгивает. */
+  /** Выигрыш лёг на кон: окошко загорается (если было погашено), сумма подпрыгивает. */
   addWin(pot: number, debt: number): void {
     this.showPot(pot, debt);
     pulse(this.scene, this.payoutText, 1.2);
   }
 
-  /** Окошко загорается — мигнув, как лампа, — и выскакивает красная кнопка. Уже горит — ничего не меняется. */
+  /** Окошко загорается — мигнув, как лампа, — и вспыхивает кнопка. Уже горит — ничего не меняется. */
   private turnOn(): void {
     if (this.isLit) return;
     this.isLit = true;
     this.chip.clearTint().setTintMode(Phaser.TintModes.MULTIPLY); // после черепов фишка и сумма снова обычного цвета
     this.payoutText.setColor(LED_COLOR);
+    this.paintButton(LAMP_GOLD);
     this.scene.tweens.killTweensOf(this.lit);
     this.lit.setVisible(true).setAlpha(0);
     this.scene.tweens.add({ targets: this.lit, alpha: { from: 0, to: 1 }, duration: FLICKER_TIME, repeat: FLICKER_TIMES - 1 });
-    this.scene.tweens.add({ targets: this.redButton, scale: { from: 0.4, to: 1 }, duration: BUTTON_POP_TIME, ease: 'Back.easeOut' });
+    this.scene.tweens.add({ targets: this.button, scale: { from: 0.4, to: 1 }, duration: BUTTON_POP_TIME, ease: 'Back.easeOut' });
   }
 
   /**
-   * Окошко гаснет: ещё delay мс горит в полную силу, потом тает, огоньки гаснут. Уже погашено — ничего не меняется.
+   * Окошко гаснет: ещё delay мс горит в полную силу, потом тает. Уже погашено — ничего не меняется.
    * В полную силу — даже если только начало загораться: так видно и выигрыш, который сразу забирается (последняя прокрутка).
    */
   private turnOff(delay: number): void {
@@ -145,31 +142,25 @@ export class PayoutWindow {
       alpha: 0,
       delay,
       duration: FADE_TIME,
-      onComplete: () => {
-        this.lit.setVisible(false);
-        this.showLights(0);
-      },
+      onComplete: () => this.lit.setVisible(false),
     });
   }
 
-  /** Горят первые count огоньков, остальные погашены. Новый огонёк вспыхивает. */
-  private showLights(count: number): void {
-    this.lights.forEach((light, index) => {
-      light.setFillStyle(index < count ? lightColor(index) : LAMP_OFF);
-      const isNew = index >= this.litLights && index < count;
-      if (isNew) this.scene.tweens.add({ targets: light, scale: { from: 1.8, to: 1 }, duration: LIGHT_POP_TIME, ease: 'Quad.easeOut' });
-    });
-    this.litLights = count;
+  /** Кнопка светится этим цветом: золотой — можно забрать, красный — черепа. */
+  private paintButton(color: number): void {
+    const [glow, ring, core] = this.buttonParts;
+    glow.setFillStyle(color, BUTTON_GLOW_ALPHA);
+    ring.setStrokeStyle(BUTTON_RING_WIDTH, color);
+    core.setFillStyle(color);
   }
 
   /**
-   * «Забрали»: из окошка в табло друг за другом летят фишки — по одной на огонёк, следом «+36».
-   * Огоньки гаснут сразу, окошко — когда взлетит последняя фишка. landed — когда «+36» долетит до табло.
+   * «Забрали»: из окошка в табло друг за другом летят фишки — по одной за каждый порог кона, следом «+36».
+   * Окошко гаснет, когда взлетит последняя фишка. landed — когда «+36» долетит до табло.
    */
   takeAll(amount: number, landed: () => void): void {
-    const chips = Math.max(1, this.litLights);
+    const chips = this.flyingChips;
     for (let index = 0; index < chips; index++) this.flyChip(index * CHIPS_FLY_STAGGER);
-    this.showLights(0);
     this.flyAmount(amount, landed);
     this.turnOff(chips * CHIPS_FLY_STAGGER);
   }
@@ -207,13 +198,11 @@ export class PayoutWindow {
     });
   }
 
-  /** Черепа: фишка в окошке вспыхивает огнём, сумма и огоньки краснеют, потом окошко гаснет. */
+  /** Черепа: фишка в окошке вспыхивает огнём, сумма и кнопка краснеют, потом окошко гаснет. */
   burn(): void {
     this.chip.setTint(BURN_COLOR).setTintMode(Phaser.TintModes.FILL);
     this.payoutText.setColor(RED_TEXT);
-    this.lights.forEach((light, index) => {
-      if (index < this.litLights) light.setFillStyle(LAMP_RED);
-    });
+    this.paintButton(LAMP_RED);
     this.turnOff(BURN_TIME);
   }
 }
