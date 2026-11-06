@@ -92,13 +92,12 @@ export abstract class ShotScene extends CollectorScene {
     this.time.delayedCall(SHOT_TURN_DELAY, () => this.aimAtMachine());
   }
 
-  /** Рука Коллектора тянется за долгом — а на столе его револьвер: твой патрон влетает в него, ствол — на автомат, выстрел. */
+  /** В темноте проступают глаза Коллектора, а на столе лежит его оружие: твой патрон влетает в него, ствол — на автомат, выстрел. */
   private aimAtMachine(): void {
     this.sfx.play('turn');
     this.sfx.play('hand', HAND_SOUND_DELAY);
     this.collector.reachOut(this.debt, false, () => {
       this.time.delayedCall(DEMAND_TIME, () => {
-        this.collector.hideDemand();
         this.revolverTable.showRevolver();
         this.revolverTable.loadBullet(BULLET_ENTRY.x, BULLET_ENTRY.y, () =>
           this.revolverTable.shootMachine(SHOT_HOLE.x, SHOT_HOLE.y, () => this.hitMachine()),

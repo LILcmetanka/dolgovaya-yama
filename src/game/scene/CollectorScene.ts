@@ -137,7 +137,6 @@ export abstract class CollectorScene extends SaveScene {
     }
     const canPlay = this.canPlayRoulette();
     if (canPlay) this.liveRounds = randomLiveCount();
-    this.collector.hideDemand();
     this.revolverTable.show(canPlay ? this.liveRounds : null, this.amulets, this.amulets.map((amulet) => this.canGive(amulet)));
     this.isChoosingDeal = true;
     this.refreshHud(); // кассета на видеомагнитофоне светится, если она есть
@@ -170,6 +169,7 @@ export abstract class CollectorScene extends SaveScene {
     this.balance = 0;
     this.refreshHud();
     this.collector.clearGoodLuck(); // откупился — экран автомата снова горит
+    this.collector.stretchHand(); // из темноты выходит рука — принять амулет
     const palm = this.collector.palmPosition();
     this.revolverTable.giveAmulet(index, palm.x, palm.y, () => {
       if (hadChips) this.collector.takePayment(() => {}, () => this.openShop());

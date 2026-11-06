@@ -1459,59 +1459,57 @@ export function createRouletteTextures(scene: Phaser.Scene, table: Box, tray: Bo
   if (!scene.textures.exists(AIM_SELF_TEXTURE)) bakeAimButton(scene, AIM_SELF_TEXTURE, drawSmallMuzzle);
 }
 
-/** Револьвер сбоку, ствол вправо: деревянная рукоять, рама, барабан с желобками, ствол с мушкой, курок и спусковая скоба. */
+/**
+ * Дробовик сбоку, ствол вправо (картинка и точки те же, что у револьвера: `REVOLVER_*` — прежние имена):
+ * деревянный приклад, затвор, длинный ствол с мушкой, под ним магазин и цевьё.
+ */
 function bakeRevolver(scene: Phaser.Scene): void {
   const v = (x: number, y: number): Phaser.Math.Vector2 => new Phaser.Math.Vector2(x, y);
   const g = scene.add.graphics();
   g.fillStyle(0x5b2a12);
-  g.fillPoints([v(26, 28), v(44, 30), v(38, 57), v(16, 55)], true); // рукоять
+  g.fillPoints([v(0, 31), v(30, 22), v(36, 36), v(8, 52)], true); // приклад
   g.fillStyle(0x7c3a17);
-  g.fillPoints([v(29, 31), v(40, 32), v(35, 53), v(20, 52)], true); // светлая накладка
+  g.fillPoints([v(4, 32), v(28, 25), v(32, 34), v(10, 46)], true); // светлая накладка
   g.fillStyle(0x27272a);
-  g.fillRoundedRect(26, 13, 38, 20, 4); // рама
-  g.fillRect(17, 7, 11, 4); // спица курка
-  g.fillRect(22, 9, 6, 9); // курок
+  g.fillRoundedRect(30, 16, 26, 19, 4); // затвор
   g.lineStyle(3, 0x27272a);
-  g.strokeCircle(48, 37, 6); // спусковая скоба
+  g.strokeCircle(46, 40, 6); // спусковая скоба
   g.fillStyle(0x52525b);
-  g.fillRect(46, 31, 3, 8); // спуск
-  g.fillStyle(0x71717a);
-  g.fillRoundedRect(36, 11, 26, 22, 5); // барабан
+  g.fillRect(44, 34, 3, 7); // спуск
   g.fillStyle(0x3f3f46);
-  for (const y of [16, 21, 26]) g.fillRect(38, y, 22, 2); // желобки барабана
-  g.fillRect(62, 15, 54, 9); // ствол
+  g.fillRect(56, 15, 60, 8); // ствол
   g.fillStyle(0x27272a);
-  g.fillRect(62, 24, 30, 4); // шомпол под стволом
-  g.fillRect(110, 10, 4, 5); // мушка
+  g.fillRect(56, 25, 46, 6); // магазин под стволом
+  g.fillStyle(0x7c3a17);
+  g.fillRoundedRect(66, 24, 28, 11, 3); // цевьё
+  g.fillStyle(0x5b2a12);
+  g.fillRect(70, 26, 20, 2);
+  g.fillStyle(0x27272a);
+  g.fillRect(111, 11, 4, 4); // мушка
   g.fillStyle(0xa1a1aa);
-  g.fillRect(62, 15, 54, 2); // блик на стволе: револьвер виден и в темноте
-  g.fillRect(38, 12, 22, 2); // блик на барабане
+  g.fillRect(56, 15, 60, 2); // блик на стволе: дробовик виден и в темноте
+  g.fillRect(32, 17, 22, 2); // блик на затворе
   bake(g, REVOLVER_TEXTURE, REVOLVER_SIZE.width, REVOLVER_SIZE.height);
 }
 
-/** Револьвер стволом на тебя: снизу рукоять, барабан с шестью гнёздами, поверх верхнего гнезда — ствол с чёрным дулом и мушкой. */
+/** Дробовик стволом на тебя: снизу приклад, магазин под стволом, поверх — ствол с чёрным дулом и мушкой. */
 function bakeMuzzle(scene: Phaser.Scene): void {
   const size = 80;
   const center = size / 2;
   const g = scene.add.graphics();
   g.fillStyle(0x5b2a12);
-  g.fillRoundedRect(center - 9, 62, 18, 18, 4); // рукоять
+  g.fillRoundedRect(center - 13, 58, 26, 22, 5); // приклад
   g.fillStyle(0x3f3f46);
-  g.fillCircle(center, 42, 27); // барабан
-  g.fillStyle(0x71717a);
-  g.fillCircle(center, 42, 24);
-  g.fillStyle(0x18181b);
-  for (let chamber = 0; chamber < 6; chamber++) {
-    const angle = ((chamber * 60 - 90) * Math.PI) / 180;
-    g.fillCircle(center + 16 * Math.cos(angle), 42 + 16 * Math.sin(angle), 5); // гнёзда
-  }
+  g.fillCircle(center, 50, 13); // магазин под стволом
   g.fillStyle(0x27272a);
-  g.fillCircle(center, center + MUZZLE_BORE.y, 12); // ствол поверх верхнего гнезда
-  g.fillRect(center - 2, 9, 4, 6); // мушка
+  g.fillCircle(center, 50, 9);
+  g.fillStyle(0x27272a);
+  g.fillCircle(center, center + MUZZLE_BORE.y, 17); // ствол
+  g.fillRect(center - 2, 5, 4, 7); // мушка
   g.fillStyle(0xa1a1aa);
-  g.fillCircle(center, center + MUZZLE_BORE.y, 9);
+  g.fillCircle(center, center + MUZZLE_BORE.y, 14);
   g.fillStyle(0x000000);
-  g.fillCircle(center, center + MUZZLE_BORE.y, 6); // дуло
+  g.fillCircle(center, center + MUZZLE_BORE.y, 10); // дуло
   bake(g, MUZZLE_TEXTURE, size, size);
 }
 

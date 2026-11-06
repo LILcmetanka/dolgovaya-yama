@@ -12,19 +12,19 @@ import {
 } from '../decor';
 import { t } from '../lang';
 import { Atm } from './atm';
+import { ShadowFace } from './shadowFace';
 import { CENTER_X, CENTER_Y, DARKNESS, DISPLAY, HOME_SCROLL, NOTE, NOTE_ANGLE, SCREEN, TURN_SCROLL, VIEW_WIDTH } from '../layout';
-import { addText, GAME_OVER_DEPTH, GOLD_TEXT, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT } from '../theme';
+import { addText, GAME_OVER_DEPTH, GOLD_TEXT, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT } from '../theme';
 
 // Записка светится, когда долг можно отдать раньше: клик по ней или D.
 const NOTE_GLOW_MIN = 0.3; // свечение пульсирует: гаснет до такой яркости и разгорается снова
 const NOTE_GLOW_TIME = 700; // мс
-// Рука Коллектора в темноте справа от комнаты.
+// Коллектор в темноте справа от комнаты: лица не видно, только глаза; рука появляется, когда он берёт оружие или принимает амулет.
 const HAND_Y = 330;
 const HAND_IN_X = DARKNESS.x + 360; // рука спрятана в темноте за правым краем вида
 const HAND_OUT_X = DARKNESS.x - 30; // рука протянута к игроку
 const HAND_PALM_X = HAND_OUT_X - 58; // ладонь протянутой руки — сюда летят фишки
 const HAND_PALM_Y = HAND_Y - 22;
-const DEMAND_Y = HAND_Y - 100; // над ладонью: «фишка × долг»
 const ATM_LEAVE_TIME = 450; // банкомат уезжает в темноту, потом вид возвращается (то же время, что SLIDE_TIME в atm.ts)
 const PAYMENT_CHIPS = 6; // сколько фишек летит в ладонь при расплате (для красоты: сумма может быть любой)
 // Надписи на чёрном экране автомата: GOOD LUCK — фишек не хватило, дальше игра с Коллектором; DEATH — конец забега.
@@ -44,6 +44,7 @@ const BUTTON_BORDER = 0xfbbf24;
 const NOTE_FLIP_TIME = 140; // половина переворота записки
 const TURN_TIME = 600; // вид уезжает вбок или возвращается
 const HAND_MOVE_TIME = 450; // рука выдвигается из темноты или уходит обратно
+const HAND_GRIP_TIME = 300; // рука выходит из темноты взять оружие или уходит обратно
 const HAND_HOLD_TIME = 300; // кулак с фишками задерживается, прежде чем уйти
 const PAYMENT_FLY_TIME = 500; // фишки летят с табло в ладонь
 const PAYMENT_FLY_STAGGER = 70; // фишки взлетают друг за другом
@@ -71,8 +72,7 @@ export class Collector {
   private readonly hand: Phaser.GameObjects.Image; // рука Коллектора: когда фишек не хватает
   private readonly atm: Atm; // банкомат: когда фишек хватает, долг платят в него
   private isAtmOut = false; // банкомат выехал (а не рука)
-  private readonly demandChip: Phaser.GameObjects.Image; // над ладонью: фишка…
-  private readonly demandText: Phaser.GameObjects.Text; // …и «× долг»
+  private readonly face: ShadowFace; // красные глаза и улыбка в тени
   private isNoteChecked = false; // на записке галочка: фишек на табло хватает на долг
   private noteDebt = 0; // что нарисовано на записке: долг, фишки на табло и на кону — для полоски долга
   private noteBalance = 0;
@@ -106,10 +106,7 @@ export class Collector {
     this.hand.setInteractive({ useHandCursor: true });
     this.hand.on('pointerdown', pay);
     this.atm = new Atm(scene, pay);
-    this.demandChip = scene.add.image(HAND_PALM_X - 44, DEMAND_Y, CHIP_TEXTURE).setScale(1.2).setAlpha(0);
-    this.demandText = addText(scene, HAND_PALM_X - 24, DEMAND_Y, '', { ...LED_STYLE, fontSize: '28px' })
-      .setOrigin(0, 0.5)
-      .setAlpha(0);
+    this.face = new ShadowFace(scene);
   }
 
   /** Галочка на записке появляется, как только фишек на табло хватает на долг. Записка при этом подпрыгивает. */
@@ -183,8 +180,8 @@ export class Collector {
   }
 
   /**
-   * Вид уезжает вбок. Фишек хватает — из темноты выезжает банкомат с долгом на экране; не хватает — тянется рука
-   * ладонью вверх, над ней — сколько отдать. Вышел — ready().
+   * Вид уезжает вбок. Фишек хватает — из темноты выезжает банкомат с долгом на экране; не хватает — в темноте
+   * проступают красные глаза Коллектора. Вышел — ready().
    */
   reachOut(debt: number, isEnough: boolean, ready: () => void): void {
     this.scene.tweens.add({
@@ -198,11 +195,7 @@ export class Collector {
           this.atm.slideIn(debt, isEnough, ready);
           return;
         }
-        this.hand.setTexture(HAND_OPEN_TEXTURE);
-        this.demandText.setText(`× ${debt}`).setColor(isEnough ? LED_COLOR : RED_TEXT);
-        this.scene.tweens.add({ targets: this.hand, x: HAND_OUT_X, duration: HAND_MOVE_TIME, ease: 'Cubic.easeOut' });
-        this.scene.tweens.add({ targets: [this.demandChip, this.demandText], alpha: 1, delay: HAND_MOVE_TIME, duration: 200 });
-        this.scene.time.delayedCall(HAND_MOVE_TIME, ready);
+        this.face.show(ready);
       },
     });
   }
@@ -241,9 +234,15 @@ export class Collector {
     return { x: HAND_PALM_X, y: HAND_PALM_Y };
   }
 
-  /** Над ладонью больше не нужно «фишка × долг» — Коллектор предлагает игру. */
-  hideDemand(): void {
-    this.scene.tweens.add({ targets: [this.demandChip, this.demandText], alpha: 0, duration: 200 });
+  /** Рука выходит из темноты ладонью вверх: принять амулет (откуп) или фишки. */
+  stretchHand(): void {
+    this.hand.setTexture(HAND_OPEN_TEXTURE);
+    this.moveHand(HAND_OUT_X);
+  }
+
+  private moveHand(x: number): void {
+    this.scene.tweens.killTweensOf(this.hand);
+    this.scene.tweens.add({ targets: this.hand, x, duration: HAND_GRIP_TIME, ease: 'Cubic.easeOut' });
   }
 
   /** Рука сжимается и уходит, вид возвращается к автомату — потом done(). Без расплаты: за амулет или после игры. */
@@ -267,7 +266,7 @@ export class Collector {
       return;
     }
     this.hand.setTexture(HAND_FIST_TEXTURE);
-    this.scene.tweens.add({ targets: [this.demandChip, this.demandText], alpha: 0, duration: 200 });
+    this.face.hide();
     this.scene.tweens.add({ targets: this.hand, x: HAND_IN_X, delay: HAND_HOLD_TIME, duration: HAND_MOVE_TIME, ease: 'Cubic.easeIn' });
     this.scene.tweens.add({
       targets: this.scene.cameras.main,
@@ -279,9 +278,10 @@ export class Collector {
     });
   }
 
-  /** Рука держит револьвер (кулак) или снова ладонью вверх: ход Коллектора в рулетке. */
+  /** Коллектор берёт оружие: из темноты выходит рука в кулак; отпустил — рука уходит обратно. Ход Коллектора в рулетке. */
   grip(isHolding: boolean): void {
-    this.hand.setTexture(isHolding ? HAND_FIST_TEXTURE : HAND_OPEN_TEXTURE);
+    if (isHolding) this.hand.setTexture(HAND_FIST_TEXTURE);
+    this.moveHand(isHolding ? HAND_OUT_X : HAND_IN_X);
   }
 
   /** Коллектор ранен: в темноте красная вспышка, рука отдёргивается и уходит, вид возвращается к автомату — потом done(). */
@@ -289,6 +289,7 @@ export class Collector {
     const hit = this.scene.add.rectangle(DARKNESS.x, DARKNESS.y, DARKNESS.width, DARKNESS.height, HIT_COLOR, HIT_ALPHA);
     this.scene.tweens.add({ targets: hit, alpha: 0, duration: HIT_FLASH_TIME, onComplete: () => hit.destroy() });
     this.scene.tweens.add({ targets: this.hand, x: HAND_IN_X, duration: HIT_TIME, ease: 'Cubic.easeOut' });
+    this.face.hide();
     this.scene.tweens.add({
       targets: this.scene.cameras.main,
       scrollX: HOME_SCROLL,
@@ -321,9 +322,8 @@ export class Collector {
     return [screen, title];
   }
 
-  /** Конец забега: рука сжимается в кулак, экран трясётся и гаснет. В темноте вид возвращается — dark(), потом экран загорается. */
+  /** Конец забега: экран трясётся и гаснет. В темноте вид возвращается — dark(), потом экран загорается. */
   blackout(dark: () => void): void {
-    this.hand.setTexture(HAND_FIST_TEXTURE);
     const camera = this.scene.cameras.main;
     camera.shake(300, 0.01);
     camera.fadeOut(BLACKOUT_TIME, 0, 0, 0);
@@ -332,8 +332,7 @@ export class Collector {
       this.hand.setX(HAND_IN_X);
       this.atm.hide();
       this.isAtmOut = false;
-      this.demandChip.setAlpha(0);
-      this.demandText.setAlpha(0);
+      this.face.hide();
       dark();
       camera.fadeIn(BLACKOUT_TIME);
     });
