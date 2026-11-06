@@ -79,6 +79,9 @@ const LEVER_ROD_LENGTH = 142;
 const LEVER_PULL_SCALE = -0.4; // рычаг дёрнули: штанга переворачивается, шарик уходит вниз «на игрока»
 const LEVER_PULL_TIME = 130; // рывок вниз, столько же — обратно, мс
 const LEVER_HOLD_TIME = 60; // сколько рычаг держится внизу, мс
+const LEVER_CALL_RADIUS = 34; // кольцо вокруг шарика, пока ни разу не крутили: «потяни меня»
+const LEVER_CALL_GROW = 1.25; // кольцо расходится до такого размера и гаснет
+const LEVER_CALL_TIME = 900; // один «вздох» кольца, мс
 const LEVER_BALL_GROW = 0.15; // внизу шарик ближе к игроку — на столько крупнее (на каждую единицу укорочения штанги)
 
 /** Число на табло: шрифт BOARD_FONT_SIZE, а длинное число — мельче, чтобы не вылезло шире maxWidth. */
@@ -108,6 +111,7 @@ export class MachinePanel {
   private freeLamps: Phaser.GameObjects.Image[] = []; // бесплатные прокрутки за короны — короны в конце ряда лампочек
   private readonly leverRod: Phaser.GameObjects.Image; // штанга рычага, низ — точка вращения
   private readonly leverBall: Phaser.GameObjects.Image; // шарик на конце штанги
+  private leverCall: Phaser.GameObjects.Arc | null = null; // кольцо вокруг шарика: рычаг зовёт, пока не крутили
   private phaseSigns: Phaser.GameObjects.Text[] = []; // знаки фазы 2 под окошком множителя; в фазе 1 их нет
 
   /** pullLever — что делать, когда рычаг дёрнули кликом (Пробел сцена ловит сама). */
@@ -322,6 +326,7 @@ export class MachinePanel {
 
   /** Рычаг дёргается: штанга переворачивается (шарик уходит вниз «на игрока») и возвращается. Шарик едет за концом штанги. */
   pullLever(): void {
+    this.stopCallingLever();
     this.scene.tweens.killTweensOf(this.leverRod);
     this.leverRod.setScale(1);
     this.scene.tweens.add({
@@ -334,6 +339,33 @@ export class MachinePanel {
       onUpdate: () => this.placeLeverBall(),
       onComplete: () => this.placeLeverBall(),
     });
+  }
+
+  /**
+   * Рычаг зовёт: вокруг шарика расходится золотое кольцо — первый раз игрок видит, что тянуть надо сюда.
+   * Гаснет с первой же прокруткой (pullLever).
+   */
+  callLever(): void {
+    if (this.leverCall) return;
+    const ring = this.scene.add.circle(this.leverBall.x, this.leverBall.y, LEVER_CALL_RADIUS);
+    ring.setStrokeStyle(4, LAMP_GOLD).setFillStyle(LAMP_GOLD, 0.15);
+    this.scene.tweens.add({
+      targets: ring,
+      scale: { from: 1, to: LEVER_CALL_GROW },
+      alpha: { from: 1, to: 0 },
+      duration: LEVER_CALL_TIME,
+      repeat: -1,
+      ease: 'Sine.easeOut',
+    });
+    this.leverCall = ring;
+  }
+
+  /** Кольцо вокруг шарика убрать. */
+  private stopCallingLever(): void {
+    if (!this.leverCall) return;
+    this.scene.tweens.killTweensOf(this.leverCall);
+    this.leverCall.destroy();
+    this.leverCall = null;
   }
 
   /** Шарик всегда на конце штанги: штанга короче — шарик ниже. Внизу он ближе к игроку — чуть крупнее. */

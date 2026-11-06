@@ -97,6 +97,7 @@ export class GameScene extends ShotScene {
     this.setupPause();
     this.refreshHud();
     if (data.tape) this.playTape();
+    else this.panel.callLever(); // новый забег: пока ни разу не крутил — рычаг зовёт (после отката кассетой он не нужен)
   }
 
   /**
