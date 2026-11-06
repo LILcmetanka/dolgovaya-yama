@@ -170,6 +170,7 @@ export class GameScene extends ShotScene {
     this.time.paused = false;
     this.tweens.resumeAll();
     if (lang() !== this.languageAtPause) this.collector.flipNote(this.debt, this.hasEnoughForDebt());
+    this.refreshHud(); // на паузе приборы могли выключиться (телевизор закрыли, кнопки не нажимались) — снова включить
   }
 
   // ---------- Настройки: громкость звуков, громкость музыки, язык ----------
