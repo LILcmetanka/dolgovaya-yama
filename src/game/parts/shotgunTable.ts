@@ -13,14 +13,14 @@ import {
   MUZZLE_BORE,
   MUZZLE_FLASH_TEXTURE,
   MUZZLE_TEXTURE,
-  REVOLVER_BARREL_TIP,
-  REVOLVER_TEXTURE,
+  SHOTGUN_BARREL_TIP,
+  SHOTGUN_TEXTURE,
   ROULETTE_TABLE_TEXTURE,
 } from '../decor';
 import { AMULETS, type Amulet } from '../amulets';
 import { CHAMBERS, MAGNIFIER, type Bullet, type Side } from '../collectorGame';
 import { t, type TextKey } from '../lang';
-import { AIM_AT_COLLECTOR, AIM_AT_SELF, AMULET_SIZE, AMULET_TRAY, BULLETS_Y, MAGNIFIER_SPOT, REVOLVER, ROULETTE_TABLE } from '../layout';
+import { AIM_AT_COLLECTOR, AIM_AT_SELF, AMULET_SIZE, AMULET_TRAY, BULLETS_Y, MAGNIFIER_SPOT, SHOTGUN, ROULETTE_TABLE } from '../layout';
 import type { Sfx } from '../sound';
 import { POPUP_DEPTH } from '../theme';
 import { attachHint, type Hint } from './tooltip';
@@ -38,19 +38,19 @@ const TRAY_STEP = 54; // от амулета до амулета в лотке
 const TRAY_AMULET_SCALE = 1.2;
 const DIM_ALPHA = 0.35; // амулета не хватает на долг — он тусклый
 const SHAKE_TIME = 50; // один рывок тряски «не хватает»
-// Как револьвер целится.
+// Как дробовик целится.
 const UP_ANGLE = -95; // ты стреляешь в Коллектора: ствол вверх, на его руку над столом
-const UP_LIFT = 26; // и револьвер приподнимается над сукном
-const HELD_ANGLE = -90; // Коллектор взял револьвер в кулак: ствол вверх
-const COLLECTOR_SELF_AIM = { dx: 70, dy: -140, angle: -10 }; // Коллектор стреляет в себя: револьвер уходит в темноту, к его голове
+const UP_LIFT = 26; // и дробовик приподнимается над сукном
+const HELD_ANGLE = -90; // Коллектор взял дробовик в кулак: ствол вверх
+const COLLECTOR_SELF_AIM = { dx: 70, dy: -140, angle: -10 }; // Коллектор стреляет в себя: дробовик уходит в темноту, к его голове
 const MUZZLE_SCALE = 2.6; // в тебя: дуло смотрит на тебя и приближается
-const MUZZLE_RISE = 70; // твой выстрел в себя: револьвер ещё и поднимается со стола
+const MUZZLE_RISE = 70; // твой выстрел в себя: дробовик ещё и поднимается со стола
 const FLASH_SCALE = 1.6; // вспышка выстрела сбоку; дулом на тебя — вдвое больше
-const RECOIL = 4; // холостой: револьвер дёргается на столько px
+const RECOIL = 4; // холостой: дробовик дёргается на столько px
 const SHAKE = 0.012; // боевой: вид трясётся
 const WHITE_FLASH_ALPHA = 0.8; // боевой в тебя: белая вспышка на весь вид
 const BUTTON_PULSE = 1.08; // кнопки-цели «дышат», пока твой ход
-const LOAD_SCALE = 1.4; // выстрел в автомат: твой золотой патрон влетает в револьвер — сначала крупный
+const LOAD_SCALE = 1.4; // выстрел в автомат: твой золотой патрон влетает в дробовик — сначала крупный
 const LENS_RADIUS = 26; // лупа показала патрон: стекло
 const LENS_RING = 0xfde047;
 const LENS_BULLET_SCALE = 1.6; // патрон под стеклом крупнее
@@ -59,17 +59,17 @@ const APPEAR_TIME = 400; // стол появляется
 const BULLET_DROP = 30; // патроны падают на сукно с такой высоты, px
 const BULLET_DROP_TIME = 260;
 const BULLET_STAGGER = 60; // друг за другом
-const SPIN_TIME = 1000; // Коллектор крутит барабан: револьвер вертится на сукне
+const SPIN_TIME = 1000; // Коллектор крутит барабан: дробовик вертится на сукне
 const SPIN_TURNS = 3;
-const AIM_TIME = 380; // револьвер поворачивается к цели
+const AIM_TIME = 380; // дробовик поворачивается к цели
 const SUSPENSE_TIME = 700; // курок взведён — пауза перед выстрелом
 const FLASH_TIME = 300; // вспышка гаснет; столько же бледнеет выстреленный патрон
 const AFTER_SHOT_TIME = 500; // после выстрела — пауза, потом дальше
-const RETURN_TIME = 320; // револьвер возвращается на стол
+const RETURN_TIME = 320; // дробовик возвращается на стол
 const RECOIL_TIME = 40;
 const PULSE_TIME = 500;
 const GIVE_TIME = 500; // отданный амулет летит в ладонь
-const LOAD_TIME = 500; // твой патрон летит в револьвер
+const LOAD_TIME = 500; // твой патрон летит в дробовик
 const LOAD_SPIN_TIME = 600; // барабан проворачивается — патрон в нём
 const LENS_TIME = 350; // стекло лупы с патроном появляется
 
@@ -80,16 +80,16 @@ function bulletX(place: number): number {
 
 /**
  * Игра с Коллектором: стол в темноте под его рукой. На сукне — патроны (сколько боевых и холостых зарядил Коллектор)
- * и револьвер, ниже — лоток с копиями твоих амулетов. Клик по револьверу — сыграть в рулетку (Пробел и Enter ловит сцена),
+ * и дробовик, ниже — лоток с копиями твоих амулетов. Клик по дробовику — сыграть в рулетку (Пробел и Enter ловит сцена),
  * по амулету — отдать его. Твой ход — кнопки-цели: прицел на рукаве Коллектора и дуло «на тебя» внизу (↑ и ↓ ловит сцена).
- * Выстрел в автомат: на столе только револьвер — твой золотой патрон влетает в него, ствол разворачивается к автомату.
+ * Выстрел в автомат: на столе только дробовик — твой золотой патрон влетает в него, ствол разворачивается к автомату.
  */
-export class RevolverTable {
+export class ShotgunTable {
   private readonly scene: Phaser.Scene;
   private readonly table: Phaser.GameObjects.Image;
   private readonly tray: Phaser.GameObjects.Image;
   private readonly bullets: Phaser.GameObjects.Image[] = []; // патроны в ряд: слева боевые, справа холостые
-  private readonly revolver: Phaser.GameObjects.Image;
+  private readonly shotgun: Phaser.GameObjects.Image;
   private readonly flash: Phaser.GameObjects.Image; // вспышка выстрела
   private readonly aimButtons: Phaser.GameObjects.Image[]; // кнопки-цели: в Коллектора, в себя
   private readonly magnifier: Phaser.GameObjects.Image; // лупа на столе: в твой ход — посмотреть следующий патрон
@@ -103,7 +103,7 @@ export class RevolverTable {
   private readonly sfx: Sfx;
   private readonly onAmulet: (index: number) => void;
 
-  /** play — кликнули по револьверу (сыграть), shoot(target) — по кнопке-цели, onAmulet(index) — по амулету в лотке, peek — по лупе. */
+  /** play — кликнули по дробовику (сыграть), shoot(target) — по кнопке-цели, onAmulet(index) — по амулету в лотке, peek — по лупе. */
   constructor(
     scene: Phaser.Scene,
     play: () => void,
@@ -126,9 +126,9 @@ export class RevolverTable {
       attachHint(bullet, hint, () => [t(this.kinds[place] === 'live' ? 'liveBullet' : 'blankBullet'), t('bulletsWhat')]);
       this.bullets.push(bullet);
     }
-    this.revolver = scene.add.image(REVOLVER.x, REVOLVER.y, REVOLVER_TEXTURE).setVisible(false);
-    this.revolver.setInteractive({ useHandCursor: true }).disableInteractive();
-    attachHint(this.revolver, hint, () => [t('revolver'), t('revolverWhat')], play);
+    this.shotgun = scene.add.image(SHOTGUN.x, SHOTGUN.y, SHOTGUN_TEXTURE).setVisible(false);
+    this.shotgun.setInteractive({ useHandCursor: true }).disableInteractive();
+    attachHint(this.shotgun, hint, () => [t('shotgun'), t('shotgunWhat')], play);
     this.flash = scene.add.image(0, 0, MUZZLE_FLASH_TEXTURE).setDepth(POPUP_DEPTH).setVisible(false);
     this.aimButtons = [
       this.addAimButton(AIM_AT_COLLECTOR, AIM_COLLECTOR_TEXTURE, 'collector', shoot),
@@ -155,7 +155,7 @@ export class RevolverTable {
 
   /**
    * Стол появляется. live — сколько боевых зарядит Коллектор: тогда на сукне падают патроны (слева боевые, справа холостые)
-   * и лежит револьвер — клик по нему сыграть; null — рулетка уже была: стола нет, только лоток.
+   * и лежит дробовик — клик по нему сыграть; null — рулетка уже была: стола нет, только лоток.
    * В лотке — копии твоих амулетов: их можно отдать (canGive — хватит ли каждого на долг).
    */
   show(live: number | null, amulets: Amulet[], canGive: boolean[]): void {
@@ -170,14 +170,14 @@ export class RevolverTable {
       const delay = APPEAR_TIME + place * BULLET_STAGGER;
       this.scene.tweens.add({ targets: bullet, y: BULLETS_Y, delay, duration: BULLET_DROP_TIME, ease: 'Bounce.easeOut' });
     });
-    this.resetRevolver().setVisible(hasRoulette);
-    if (hasRoulette) this.revolver.setInteractive();
+    this.resetShotgun().setVisible(hasRoulette);
+    if (hasRoulette) this.shotgun.setInteractive();
     this.showTray(amulets, canGive);
   }
 
-  /** Револьвер лежит на столе как обычно: боком, стволом вправо, на своём месте. */
-  private resetRevolver(): Phaser.GameObjects.Image {
-    return this.revolver.setTexture(REVOLVER_TEXTURE).setPosition(REVOLVER.x, REVOLVER.y).setAngle(0).setScale(1).setFlipX(false);
+  /** Дробовик лежит на столе как обычно: боком, стволом вправо, на своём месте. */
+  private resetShotgun(): Phaser.GameObjects.Image {
+    return this.shotgun.setTexture(SHOTGUN_TEXTURE).setPosition(SHOTGUN.x, SHOTGUN.y).setAngle(0).setScale(1).setFlipX(false);
   }
 
   /** Лоток с копиями амулетов: клик по амулету — отдать его Коллектору; тех, которых не хватит на долг, — тусклые. Нет амулетов — лотка нет. */
@@ -199,18 +199,18 @@ export class RevolverTable {
     this.trayAmulets = [];
   }
 
-  /** Коллектор крутит барабан: лоток убран, револьвер вертится на сукне — порядок патронов теперь неизвестен. Потом done(). */
+  /** Коллектор крутит барабан: лоток убран, дробовик вертится на сукне — порядок патронов теперь неизвестен. Потом done(). */
   spin(done: () => void): void {
     this.hideTray();
-    this.revolver.disableInteractive(true);
+    this.shotgun.disableInteractive(true);
     this.sfx.play('cylinder');
     this.scene.tweens.add({
-      targets: this.revolver,
+      targets: this.shotgun,
       angle: 360 * SPIN_TURNS,
       duration: SPIN_TIME,
       ease: 'Cubic.easeOut',
       onComplete: () => {
-        this.revolver.setAngle(0);
+        this.shotgun.setAngle(0);
         done();
       },
     });
@@ -228,8 +228,8 @@ export class RevolverTable {
 
   /**
    * Выстрел: shooter целится в target, курок взведён, пауза — и bullet: боевой — вспышка и грохот, холостой — щелчок.
-   * Коллектор сначала берёт револьвер в кулак (hand — где кулак). Выстреленный патрон в ряду бледнеет.
-   * Холостой — револьвер возвращается на стол, потом done(); боевой — done() после вспышки: дальше решает сцена.
+   * Коллектор сначала берёт дробовик в кулак (hand — где кулак). Выстреленный патрон в ряду бледнеет.
+   * Холостой — дробовик возвращается на стол, потом done(); боевой — done() после вспышки: дальше решает сцена.
    */
   shoot(shooter: Side, target: Side, bullet: Bullet, hand: Point, done: () => void): void {
     this.showAim(false);
@@ -241,34 +241,34 @@ export class RevolverTable {
     };
     const aim = (): void => {
       if (target === 'player') this.turnToViewer(shooter === 'player' ? MUZZLE_RISE : 0, fire);
-      else if (shooter === 'player') this.moveTo(REVOLVER.x, REVOLVER.y - UP_LIFT, UP_ANGLE, 1, fire);
+      else if (shooter === 'player') this.moveTo(SHOTGUN.x, SHOTGUN.y - UP_LIFT, UP_ANGLE, 1, fire);
       else this.moveTo(hand.x + COLLECTOR_SELF_AIM.dx, hand.y + COLLECTOR_SELF_AIM.dy, COLLECTOR_SELF_AIM.angle, 1, fire);
     };
     if (shooter === 'collector') this.moveTo(hand.x, hand.y, HELD_ANGLE, 1, aim);
     else aim();
   }
 
-  /** Револьвер плавно едет в (x, y), поворачивается на angle и меняет размер — потом done(). */
+  /** Дробовик плавно едет в (x, y), поворачивается на angle и меняет размер — потом done(). */
   private moveTo(x: number, y: number, angle: number, scale: number, done: () => void, duration = AIM_TIME): void {
-    this.scene.tweens.add({ targets: this.revolver, x, y, angle, scaleX: scale, scaleY: scale, duration, ease: 'Quad.easeInOut', onComplete: done });
+    this.scene.tweens.add({ targets: this.shotgun, x, y, angle, scaleX: scale, scaleY: scale, duration, ease: 'Quad.easeInOut', onComplete: done });
   }
 
-  /** В тебя: револьвер разворачивается дулом к тебе (сжимается и раскрывается другой стороной, как карта Дилера), приближается и поднимается на rise. */
+  /** В тебя: дробовик разворачивается дулом к тебе (сжимается и раскрывается другой стороной, как карта Дилера), приближается и поднимается на rise. */
   private turnToViewer(rise: number, done: () => void): void {
-    const { x, y } = this.revolver;
+    const { x, y } = this.shotgun;
     this.scene.tweens.add({
-      targets: this.revolver,
+      targets: this.shotgun,
       scaleX: 0,
       duration: AIM_TIME / 2,
       ease: 'Quad.easeIn',
       onComplete: () => {
-        this.revolver.setTexture(MUZZLE_TEXTURE).setAngle(0);
+        this.shotgun.setTexture(MUZZLE_TEXTURE).setAngle(0);
         this.moveTo(x, y - rise, 0, MUZZLE_SCALE, done);
       },
     });
   }
 
-  /** Курок спущен: боевой — вспышка у дула, грохот и тряска; холостой — щелчок, револьвер дёргается и возвращается на стол. */
+  /** Курок спущен: боевой — вспышка у дула, грохот и тряска; холостой — щелчок, дробовик дёргается и возвращается на стол. */
   private fire(bullet: Bullet, done: () => void): void {
     this.spend(bullet);
     if (bullet === 'live') {
@@ -278,7 +278,7 @@ export class RevolverTable {
       return;
     }
     this.sfx.play('dryFire');
-    this.scene.tweens.add({ targets: this.revolver, x: this.revolver.x + RECOIL, duration: RECOIL_TIME, yoyo: true, repeat: 1 });
+    this.scene.tweens.add({ targets: this.shotgun, x: this.shotgun.x + RECOIL, duration: RECOIL_TIME, yoyo: true, repeat: 1 });
     this.scene.time.delayedCall(AFTER_SHOT_TIME, () => this.putDown(done));
   }
 
@@ -292,16 +292,16 @@ export class RevolverTable {
     }
   }
 
-  /** Вспышка у дула (где дуло — по картинке, повороту и размеру револьвера) и тряска; дулом на тебя — ещё и белая вспышка на весь вид. */
+  /** Вспышка у дула (где дуло — по картинке, повороту и размеру дробовика) и тряска; дулом на тебя — ещё и белая вспышка на весь вид. */
   private showFlash(): void {
-    const isAtViewer = this.revolver.texture.key === MUZZLE_TEXTURE;
-    const tip = isAtViewer ? MUZZLE_BORE : REVOLVER_BARREL_TIP;
-    const angle = Phaser.Math.DegToRad(this.revolver.angle);
-    const side = this.revolver.flipX ? -1 : 1; // развёрнут влево (выстрел в автомат) — ствол слева
-    const dx = side * tip.x * this.revolver.scaleX;
-    const dy = tip.y * this.revolver.scaleY;
-    const x = this.revolver.x + dx * Math.cos(angle) - dy * Math.sin(angle);
-    const y = this.revolver.y + dx * Math.sin(angle) + dy * Math.cos(angle);
+    const isAtViewer = this.shotgun.texture.key === MUZZLE_TEXTURE;
+    const tip = isAtViewer ? MUZZLE_BORE : SHOTGUN_BARREL_TIP;
+    const angle = Phaser.Math.DegToRad(this.shotgun.angle);
+    const side = this.shotgun.flipX ? -1 : 1; // развёрнут влево (выстрел в автомат) — ствол слева
+    const dx = side * tip.x * this.shotgun.scaleX;
+    const dy = tip.y * this.shotgun.scaleY;
+    const x = this.shotgun.x + dx * Math.cos(angle) - dy * Math.sin(angle);
+    const y = this.shotgun.y + dx * Math.sin(angle) + dy * Math.cos(angle);
     const scale = isAtViewer ? FLASH_SCALE * 2 : FLASH_SCALE;
     this.flash.setPosition(x, y).setScale(scale).setAlpha(1).setVisible(true);
     this.scene.tweens.add({ targets: this.flash, alpha: 0, scale: scale * 1.4, duration: FLASH_TIME, onComplete: () => this.flash.setVisible(false) });
@@ -313,20 +313,20 @@ export class RevolverTable {
     }
   }
 
-  /** Револьвер возвращается на стол: снова боком (если смотрел дулом на тебя — разворачивается), на своё место. */
+  /** Дробовик возвращается на стол: снова боком (если смотрел дулом на тебя — разворачивается), на своё место. */
   private putDown(done: () => void): void {
-    const back = (): void => this.moveTo(REVOLVER.x, REVOLVER.y, 0, 1, done, RETURN_TIME);
-    if (this.revolver.texture.key !== MUZZLE_TEXTURE) {
+    const back = (): void => this.moveTo(SHOTGUN.x, SHOTGUN.y, 0, 1, done, RETURN_TIME);
+    if (this.shotgun.texture.key !== MUZZLE_TEXTURE) {
       back();
       return;
     }
     this.scene.tweens.add({
-      targets: this.revolver,
+      targets: this.shotgun,
       scaleX: 0,
       duration: AIM_TIME / 2,
       ease: 'Quad.easeIn',
       onComplete: () => {
-        this.revolver.setTexture(REVOLVER_TEXTURE);
+        this.shotgun.setTexture(SHOTGUN_TEXTURE);
         back();
       },
     });
@@ -334,20 +334,20 @@ export class RevolverTable {
 
   // ---------- Выстрел в автомат ----------
 
-  /** Выстрел в автомат: стол появляется, на нём только револьвер — без патронов и лотка. */
-  showRevolver(): void {
+  /** Выстрел в автомат: стол появляется, на нём только дробовик — без патронов и лотка. */
+  showShotgun(): void {
     this.table.setVisible(true).setAlpha(0);
     this.scene.tweens.add({ targets: this.table, alpha: 1, duration: APPEAR_TIME });
-    this.resetRevolver().setVisible(true);
+    this.resetShotgun().setVisible(true);
   }
 
-  /** Твой золотой патрон влетает из (fromX, fromY) в револьвер, барабан трещит и проворачивается — потом done(). */
+  /** Твой золотой патрон влетает из (fromX, fromY) в дробовик, барабан трещит и проворачивается — потом done(). */
   loadBullet(fromX: number, fromY: number, done: () => void): void {
     const bullet = this.scene.add.image(fromX, fromY, BULLET_GOLD_TEXTURE).setDepth(POPUP_DEPTH).setScale(LOAD_SCALE);
     this.scene.tweens.add({
       targets: bullet,
-      x: REVOLVER.x,
-      y: REVOLVER.y,
+      x: SHOTGUN.x,
+      y: SHOTGUN.y,
       scale: 0.6,
       duration: LOAD_TIME,
       ease: 'Cubic.easeIn',
@@ -355,12 +355,12 @@ export class RevolverTable {
         bullet.destroy();
         this.sfx.play('cylinder');
         this.scene.tweens.add({
-          targets: this.revolver,
+          targets: this.shotgun,
           angle: 360,
           duration: LOAD_SPIN_TIME,
           ease: 'Cubic.easeOut',
           onComplete: () => {
-            this.revolver.setAngle(0);
+            this.shotgun.setAngle(0);
             done();
           },
         });
@@ -369,19 +369,19 @@ export class RevolverTable {
   }
 
   /**
-   * Ствол — на автомат: револьвер разворачивается стволом влево, приподнимается и целится в (x, y) — дыру в экране автомата.
+   * Ствол — на автомат: дробовик разворачивается стволом влево, приподнимается и целится в (x, y) — дыру в экране автомата.
    * Курок взведён, пауза — грохот и вспышка, тогда hit(): пуля попала. Что дальше, решает сцена.
    */
   shootMachine(x: number, y: number, hit: () => void): void {
-    const lift = { x: REVOLVER.x, y: REVOLVER.y - UP_LIFT };
+    const lift = { x: SHOTGUN.x, y: SHOTGUN.y - UP_LIFT };
     const angle = Phaser.Math.RadToDeg(Math.atan2(lift.y - y, lift.x - x)); // ствол смотрит влево: угол от направления «влево»
     this.scene.tweens.add({
-      targets: this.revolver,
+      targets: this.shotgun,
       scaleX: 0,
       duration: AIM_TIME / 2,
       ease: 'Quad.easeIn',
       onComplete: () => {
-        this.revolver.setFlipX(true);
+        this.shotgun.setFlipX(true);
         this.moveTo(lift.x, lift.y, angle, 1, () => {
           this.sfx.play('cock');
           this.scene.time.delayedCall(SUSPENSE_TIME, () => {
@@ -456,13 +456,13 @@ export class RevolverTable {
     for (const object of [this.lens, this.lensBullet]) object.setVisible(false);
   }
 
-  /** Убрать стол, патроны, револьвер, кнопки-цели, лупу и лоток. */
+  /** Убрать стол, патроны, дробовик, кнопки-цели, лупу и лоток. */
   hide(): void {
     this.hideTray();
     this.showAim(false);
     this.showMagnifier(false);
     this.hideLens();
-    this.revolver.disableInteractive(true);
-    for (const object of [this.table, this.revolver, this.flash, ...this.bullets]) object.setVisible(false);
+    this.shotgun.disableInteractive(true);
+    for (const object of [this.table, this.shotgun, this.flash, ...this.bullets]) object.setVisible(false);
   }
 }

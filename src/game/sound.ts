@@ -328,7 +328,7 @@ const SOUNDS: Record<SoundName, (s: Sound, at: number) => void> = {
   cylinder: (s, at) => {
     let time = at;
     for (let index = 0; index < 10; index++) {
-      s.noise(time, 0.03, 4200, 0.25, 5); // барабан револьвера трещит, замедляясь
+      s.noise(time, 0.03, 4200, 0.25, 5); // барабан дробовика трещит, замедляясь
       time += 0.04 + index * 0.009;
     }
     s.tone(time, 260, 0.06, 'square', 0.25, 160); // барабан встал на место

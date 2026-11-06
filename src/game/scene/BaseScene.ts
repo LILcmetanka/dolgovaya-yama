@@ -23,7 +23,7 @@ import type { ItemShelf } from '../parts/itemShelf';
 import type { MachineBadge } from '../parts/machineBadge';
 import type { MachinePanel } from '../parts/panel';
 import type { PayoutWindow } from '../parts/payoutWindow';
-import type { RevolverTable } from '../parts/revolverTable';
+import type { ShotgunTable } from '../parts/shotgunTable';
 import type { Shop } from '../parts/shop';
 import type { SlotScreen } from '../parts/slotScreen';
 import type { WallScreen } from '../parts/wallScreen';
@@ -128,7 +128,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected cassette!: Cassette; // кассета в магазине и видеомагнитофон у монитора
   protected amuletCase!: AmuletCase; // чемодан с амулетами над торговым автоматом
   protected drum!: Drum; // «барабан» в магазине: колесо с призами за фишки
-  protected revolverTable!: RevolverTable; // стол Коллектора: рулетка с револьвером и лоток для откупа амулетом
+  protected shotgunTable!: ShotgunTable; // стол Коллектора: рулетка с дробовиком и лоток для откупа амулетом
   protected bulletStand!: BulletStand; // патрон на стене магазина: его покупают за билеты
   protected brokenScreen!: BrokenScreen; // дыра и трещины на экране автомата после выстрела
   protected machineBadge!: MachineBadge; // характер автомата: цвет корпуса и значок

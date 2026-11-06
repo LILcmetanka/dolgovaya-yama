@@ -83,8 +83,8 @@ export const TICKET_TEXTURE = 'ticket'; // красный билет — вто�
 export const SOCKET_CAP_TEXTURE = 'socket-cap'; // заглушка закрытого гнезда для амулета
 export const ROULETTE_TABLE_TEXTURE = 'roulette-table'; // стол с зелёным сукном для игры с Коллектором
 export const AMULET_TRAY_TEXTURE = 'amulet-tray'; // лоток, куда кладут амулет для Коллектора
-export const REVOLVER_TEXTURE = 'revolver'; // револьвер сбоку, ствол вправо
-export const MUZZLE_TEXTURE = 'revolver-muzzle'; // тот же револьвер стволом на тебя
+export const SHOTGUN_TEXTURE = 'shotgun'; // дробовик сбоку, ствол вправо
+export const MUZZLE_TEXTURE = 'shotgun-muzzle'; // тот же дробовик стволом на тебя
 export const MUZZLE_FLASH_TEXTURE = 'muzzle-flash'; // вспышка выстрела
 export const BULLET_LIVE_TEXTURE = 'bullet-live'; // боевой патрон — красный
 export const BULLET_BLANK_TEXTURE = 'bullet-blank'; // холостой патрон — синий
@@ -94,8 +94,8 @@ export const CRACK_TEXTURE = 'screen-crack'; // дыра от пули и тре
 export const CRACK_SIZE = 150; // сторона картинки с трещинами
 export const AIM_COLLECTOR_TEXTURE = 'aim-collector'; // кнопка «в Коллектора»: прицел
 export const AIM_SELF_TEXTURE = 'aim-self'; // кнопка «в себя»: дуло смотрит на тебя
-export const REVOLVER_SIZE = { width: 120, height: 60 };
-export const REVOLVER_BARREL_TIP = { x: 56, y: -11 }; // конец ствола — от середины картинки (ствол вправо)
+export const SHOTGUN_SIZE = { width: 120, height: 60 };
+export const SHOTGUN_BARREL_TIP = { x: 56, y: -11 }; // конец ствола — от середины картинки (ствол вправо)
 export const MUZZLE_BORE = { x: 0, y: -14 }; // дуло на картинке «стволом на тебя» — от её середины
 export const CARD_BACK_TEXTURE = 'card-back'; // рубашка карты Дилера
 export const DEALER_FELT_TEXTURE = 'dealer-felt'; // стол Дилера поверх экрана
@@ -729,8 +729,8 @@ function drawItem(ctx: CanvasRenderingContext2D, item: Item, size: number): void
 }
 
 /**
- * Патрон револьвера в квадрате size×size: медная пуля, золотая гильза с бликом и донце.
- * Один рисунок — и на предмете (патрон на полке и в магазине), и летящий в револьвер Коллектора.
+ * Патрон дробовика в квадрате size×size: медная пуля, золотая гильза с бликом и донце.
+ * Один рисунок — и на предмете (патрон на полке и в магазине), и летящий в дробовик Коллектора.
  */
 function drawCartridge(ctx: CanvasRenderingContext2D, size: number): void {
   const width = size * 0.26;
@@ -765,7 +765,7 @@ function drawCartridge(ctx: CanvasRenderingContext2D, size: number): void {
   ctx.fillRect(left - size * 0.03, caseBottom, width + size * 0.06, size * 0.06); // донце
 }
 
-/** Твой патрон, летящий в револьвер Коллектора, — тот же рисунок, что на предмете, только без коробочки. */
+/** Твой патрон, летящий в дробовик Коллектора, — тот же рисунок, что на предмете, только без коробочки. */
 function drawGoldBullet(scene: Phaser.Scene): void {
   const texture = createSharpCanvas(scene, BULLET_GOLD_TEXTURE, GOLD_BULLET_SIZE, GOLD_BULLET_SIZE);
   if (!texture) return;
@@ -1429,7 +1429,7 @@ export function createSocketCapTexture(scene: Phaser.Scene, radius: number): voi
   bake(g, SOCKET_CAP_TEXTURE, size, size);
 }
 
-/** Игра с Коллектором: стол с сукном, лоток для амулета, револьвер (сбоку и стволом на тебя), вспышка, патроны и кнопки-цели. */
+/** Игра с Коллектором: стол с сукном, лоток для амулета, дробовик (сбоку и стволом на тебя), вспышка, патроны и кнопки-цели. */
 export function createRouletteTextures(scene: Phaser.Scene, table: Box, tray: Box): void {
   if (!scene.textures.exists(ROULETTE_TABLE_TEXTURE)) {
     const g = scene.add.graphics();
@@ -1449,7 +1449,7 @@ export function createRouletteTextures(scene: Phaser.Scene, table: Box, tray: Bo
     g.fillRoundedRect(4, 4, tray.width - 8, tray.height - 8, 8); // бархат
     bake(g, AMULET_TRAY_TEXTURE, tray.width, tray.height);
   }
-  if (!scene.textures.exists(REVOLVER_TEXTURE)) bakeRevolver(scene);
+  if (!scene.textures.exists(SHOTGUN_TEXTURE)) bakeShotgun(scene);
   if (!scene.textures.exists(MUZZLE_TEXTURE)) bakeMuzzle(scene);
   if (!scene.textures.exists(MUZZLE_FLASH_TEXTURE)) drawMuzzleFlash(scene);
   if (!scene.textures.exists(BULLET_LIVE_TEXTURE)) bakeBullet(scene, BULLET_LIVE_TEXTURE, 0xdc2626);
@@ -1460,10 +1460,10 @@ export function createRouletteTextures(scene: Phaser.Scene, table: Box, tray: Bo
 }
 
 /**
- * Дробовик сбоку, ствол вправо (картинка и точки те же, что у револьвера: `REVOLVER_*` — прежние имена):
+ * Дробовик сбоку, ствол вправо (размер и точка ствола — `SHOTGUN_SIZE`, `SHOTGUN_BARREL_TIP`):
  * деревянный приклад, затвор, длинный ствол с мушкой, под ним магазин и цевьё.
  */
-function bakeRevolver(scene: Phaser.Scene): void {
+function bakeShotgun(scene: Phaser.Scene): void {
   const v = (x: number, y: number): Phaser.Math.Vector2 => new Phaser.Math.Vector2(x, y);
   const g = scene.add.graphics();
   g.fillStyle(0x5b2a12);
@@ -1489,7 +1489,7 @@ function bakeRevolver(scene: Phaser.Scene): void {
   g.fillStyle(0xa1a1aa);
   g.fillRect(56, 15, 60, 2); // блик на стволе: дробовик виден и в темноте
   g.fillRect(32, 17, 22, 2); // блик на затворе
-  bake(g, REVOLVER_TEXTURE, REVOLVER_SIZE.width, REVOLVER_SIZE.height);
+  bake(g, SHOTGUN_TEXTURE, SHOTGUN_SIZE.width, SHOTGUN_SIZE.height);
 }
 
 /** Дробовик стволом на тебя: снизу приклад, магазин под стволом, поверх — ствол с чёрным дулом и мушкой. */
@@ -1637,7 +1637,7 @@ function drawCrosshair(g: Phaser.GameObjects.Graphics): void {
   g.fillCircle(26, 26, 2.5);
 }
 
-/** Маленький револьвер стволом на тебя: барабан с гнёздами и над ним чёрное дуло. */
+/** Маленькая кнопка «в себя»: кружок с гнёздами и над ним чёрное дуло. */
 function drawSmallMuzzle(g: Phaser.GameObjects.Graphics): void {
   g.fillStyle(0x71717a);
   g.fillCircle(26, 30, 13);

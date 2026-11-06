@@ -1,26 +1,26 @@
 import { t } from '../lang';
-import { HOME_SCROLL, NOTE, REVOLVER, SHOT_HOLE, TURN_SCROLL, VIEW_WIDTH } from '../layout';
+import { HOME_SCROLL, NOTE, SHOTGUN, SHOT_HOLE, TURN_SCROLL, VIEW_WIDTH } from '../layout';
 import { BULLET, bulletPrice, canShoot, SHOT_DEBT_TEXT } from '../shot';
 import { LAMP_OFF, RED_TEXT } from '../theme';
 import { CollectorScene } from './CollectorScene';
 
 // Порядок событий, мс.
 const SHOT_TURN_DELAY = 1100; // патрон включили: пусть кон долетит до табло, потом вид поворачивается к Коллектору
-const DEMAND_TIME = 400; // рука протянута за долгом — столько видно «фишка × долг», потом на столе револьвер
+const DEMAND_TIME = 400; // в темноте проступили глаза Коллектора — столько ждём, потом на столе появляется дробовик
 const AFTER_HIT_TIME = 700; // пуля в экране — пауза: разглядеть дыру
 const ANGER_TIME = 600; // Коллектор сжимает кулак — он это запомнит — и уходит
 const DEBT_TEXT_DELAY = 300; // «×1,5» всплывает, когда вид уже поворачивается к магазину
 const HAND_SOUND_DELAY = 0.6; // рука выдвигается, когда вид повернулся, с
 // Где что.
 const BULLET_EXIT = { x: HOME_SCROLL + VIEW_WIDTH + 30, y: 330 }; // патрон улетает с полки за правый край вида — к Коллектору
-const BULLET_ENTRY = { x: TURN_SCROLL - 30, y: REVOLVER.y - 80 }; // у Коллектора он влетает в револьвер из-за левого края вида
+const BULLET_ENTRY = { x: TURN_SCROLL - 30, y: SHOTGUN.y - 80 }; // у Коллектора он влетает в дробовик из-за левого края вида
 const DEBT_TEXT_Y = NOTE.y + NOTE.height / 2 + 75; // «×1,5» всплывает под запиской и не залезает на сумму долга
 const ANGER_SHAKE = 0.006; // Коллектор в ярости: вид дрожит
 
 /**
  * Слой выстрела в автомат — аварийный выход. В магазине на стене патрон за билеты (каждый следующий дороже), он ложится на полку.
  * Понял, что долг не добить, — между прокрутками включи патрон: раунд кончается, вид поворачивается к Коллектору, патрон уходит
- * в его револьвер, ствол — на автомат, выстрел: экран разбит. Долг пропущен — раунд пройден (как откуп амулетом, без билета),
+ * в его дробовик, ствол — на автомат, выстрел: экран разбит. Долг пропущен — раунд пройден (как откуп амулетом, без билета),
  * фишки остаются, а Коллектор запоминает: следующий долг ×1,5. Дальше магазин; вернулся — пришёл другой автомат,
  * со своим характером (MachineScene).
  */
@@ -98,9 +98,9 @@ export abstract class ShotScene extends CollectorScene {
     this.sfx.play('hand', HAND_SOUND_DELAY);
     this.collector.reachOut(this.debt, false, () => {
       this.time.delayedCall(DEMAND_TIME, () => {
-        this.revolverTable.showRevolver();
-        this.revolverTable.loadBullet(BULLET_ENTRY.x, BULLET_ENTRY.y, () =>
-          this.revolverTable.shootMachine(SHOT_HOLE.x, SHOT_HOLE.y, () => this.hitMachine()),
+        this.shotgunTable.showShotgun();
+        this.shotgunTable.loadBullet(BULLET_ENTRY.x, BULLET_ENTRY.y, () =>
+          this.shotgunTable.shootMachine(SHOT_HOLE.x, SHOT_HOLE.y, () => this.hitMachine()),
         );
       });
     });
@@ -116,7 +116,7 @@ export abstract class ShotScene extends CollectorScene {
       this.cameras.main.shake(ANGER_TIME, ANGER_SHAKE);
       this.sfx.play('blood'); // глухой удар: Коллектор в ярости
       this.time.delayedCall(ANGER_TIME, () => {
-        this.revolverTable.hide();
+        this.shotgunTable.hide();
         this.collector.goAway(() => this.openShopAfterShot());
       });
     });

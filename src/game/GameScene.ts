@@ -20,7 +20,7 @@ import { MachineBadge } from './parts/machineBadge';
 import { MachinePanel } from './parts/panel';
 import { PauseScreen } from './parts/pauseScreen';
 import { PayoutWindow } from './parts/payoutWindow';
-import { RevolverTable } from './parts/revolverTable';
+import { ShotgunTable } from './parts/shotgunTable';
 import { addRotateHint } from './parts/rotateHint';
 import { SettingsPanel } from './parts/settingsPanel';
 import { Shop } from './parts/shop';
@@ -78,7 +78,7 @@ export class GameScene extends ShotScene {
     this.cassette = new Cassette(this, this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip);
     this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx);
     this.bulletStand = new BulletStand(this, () => this.buyBullet(), this.tooltip);
-    this.revolverTable = new RevolverTable(
+    this.shotgunTable = new ShotgunTable(
       this,
       () => this.playRoulette(),
       (target) => this.shoot(target),

@@ -64,8 +64,8 @@ const TEXTS = {
   ticketWhat: { ru: 'На амулеты и гнёзда', en: 'Buys amulets and sockets' },
   giveAmulet: { ru: 'Отдать — долг закрыт', en: 'Give it — debt paid' },
   notEnough: { ru: 'Не хватит на долг', en: 'Not enough for the debt' },
-  revolver: { ru: 'Рулетка', en: 'Roulette' }, // револьвер на столе Коллектора
-  revolverWhat: { ru: 'Один раз за забег. Выжил — тот же долг заново, фишки твои', en: 'Once per run. Survive — same debt again, keep your chips' },
+  shotgun: { ru: 'Рулетка', en: 'Roulette' }, // дробовик на столе Коллектора
+  shotgunWhat: { ru: 'Один раз за забег. Выжил — чемодан платит долг, но счёт откатывается на один долг назад', en: 'Once per run. Survive — a case of chips pays the debt, but the score rolls back one debt' },
   liveBullet: { ru: 'Боевой', en: 'Live round' },
   blankBullet: { ru: 'Холостой', en: 'Blank' },
   bulletsWhat: { ru: 'Столько в барабане, порядок неизвестен', en: 'This many in the cylinder, order unknown' },

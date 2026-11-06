@@ -18,7 +18,7 @@ import { SaveScene } from './SaveScene';
 const GOOD_LUCK_TIME = 1600; // фишек не хватает: столько горит GOOD LUCK на экране автомата, потом вид поворачивается к Коллектору
 const HAND_WAIT_TIME = 1200; // фишек не хватает: рука ждёт столько, потом на столе появляется игра
 const DEAL_PAUSE = 1400; // откупиться нечем — рулетка начинается сама через столько: успеть разглядеть патроны
-const COLLECTOR_THINK_TIME = 700; // ход Коллектора: пауза, прежде чем он возьмёт револьвер
+const COLLECTOR_THINK_TIME = 700; // ход Коллектора: пауза, прежде чем он возьмёт дробовик
 const RESTART_SPACE_DELAY = 800; // Пробел на экране DEATH перезапускает игру не раньше, чем через столько
 const HAND_SOUND_DELAY = 0.6; // рука выдвигается, когда вид повернулся, с
 const KABOOM_WARN_TIME = 1800; // KABOOM мигает на экране автомата, потом взрыв
@@ -135,7 +135,7 @@ export abstract class CollectorScene extends SaveScene {
   }
 
   /**
-   * Фишек не хватило: на столе — патроны и револьвер (если рулетку ещё не играли), в лотке — копии твоих амулетов,
+   * Фишек не хватило: на столе — патроны и дробовик (если рулетку ещё не играли), в лотке — копии твоих амулетов,
    * кассета на видеомагнитофоне светится. Отдай амулет, сыграй или вставь кассету; откупиться нечем и кассеты нет —
    * рулетка начинается сама. Нет ничего — DEATH.
    */
@@ -146,7 +146,7 @@ export abstract class CollectorScene extends SaveScene {
     }
     const canPlay = this.canPlayRoulette();
     if (canPlay) this.liveRounds = randomLiveCount();
-    this.revolverTable.show(canPlay ? this.liveRounds : null, this.amulets, this.amulets.map((amulet) => this.canGive(amulet)));
+    this.shotgunTable.show(canPlay ? this.liveRounds : null, this.amulets, this.amulets.map((amulet) => this.canGive(amulet)));
     this.isChoosingDeal = true;
     this.refreshHud(); // кассета на видеомагнитофоне светится, если она есть
     if (canPlay && !this.canBuyOff() && !this.hasTape()) this.time.delayedCall(DEAL_PAUSE, () => this.playRoulette()); // выбора нет — сразу рулетка
@@ -166,7 +166,7 @@ export abstract class CollectorScene extends SaveScene {
     if (!this.isChoosingDeal || !amulet) return;
     if (!this.canGive(amulet)) {
       this.sfx.play('deny');
-      this.revolverTable.denyAmulet(index);
+      this.shotgunTable.denyAmulet(index);
       return;
     }
     this.sfx.play('payment');
@@ -180,7 +180,7 @@ export abstract class CollectorScene extends SaveScene {
     this.collector.clearGoodLuck(); // откупился — экран автомата снова горит
     this.collector.stretchHand(); // из темноты выходит рука — принять амулет
     const palm = this.collector.palmPosition();
-    this.revolverTable.giveAmulet(index, palm.x, palm.y, () => {
+    this.shotgunTable.giveAmulet(index, palm.x, palm.y, () => {
       if (hadChips) this.collector.takePayment(() => {}, () => this.openShop());
       else this.collector.goAway(() => this.openShop());
     });
@@ -188,22 +188,22 @@ export abstract class CollectorScene extends SaveScene {
 
   // ---------- Рулетка ----------
 
-  /** Сыграть (клик по револьверу, Пробел или Enter): Коллектор заряжает барабан и крутит его, ты стреляешь первым. Один раз за забег. */
+  /** Сыграть (клик по дробовику, Пробел или Enter): Коллектор заряжает барабан и крутит его, ты стреляешь первым. Один раз за забег. */
   protected playRoulette(): void {
     if (!this.isChoosingDeal || !this.canPlayRoulette()) return;
     this.isChoosingDeal = false;
     this.roulettes += 1;
     this.cylinder = loadCylinder(this.liveRounds);
     this.refreshHud(); // сердце бьётся чаще
-    this.revolverTable.spin(() => this.playerTurn());
+    this.shotgunTable.spin(() => this.playerTurn());
   }
 
   /** Твой ход: кнопки-цели — в Коллектора (↑) или в себя (↓); есть лупа — она на столе, можно посмотреть следующий патрон. */
   private playerTurn(): void {
     this.isAiming = true;
     this.hasPeeked = false;
-    this.revolverTable.showAim(true);
-    this.revolverTable.showMagnifier(this.magnifierSlot() >= 0);
+    this.shotgunTable.showAim(true);
+    this.shotgunTable.showMagnifier(this.magnifierSlot() >= 0);
   }
 
   /** Место первой лупы на полке; лупы нет — −1. */
@@ -227,7 +227,7 @@ export abstract class CollectorScene extends SaveScene {
     this.sfx.play('item');
     this.tooltip.hide();
     this.itemShelf.takeItem(slot, MAGNIFIER_SPOT.x, MAGNIFIER_SPOT.y, () => {});
-    this.revolverTable.reveal(nextBullet(this.cylinder));
+    this.shotgunTable.reveal(nextBullet(this.cylinder));
   }
 
   /** Ты стреляешь в target: кнопка-цель, ↑ или ↓. */
@@ -237,11 +237,11 @@ export abstract class CollectorScene extends SaveScene {
     this.fire('player', target);
   }
 
-  /** shooter стреляет в target следующим патроном из барабана. Коллектор сначала берёт револьвер в кулак. */
+  /** shooter стреляет в target следующим патроном из барабана. Коллектор сначала берёт дробовик в кулак. */
   private fire(shooter: Side, target: Side): void {
     const bullet = this.cylinder.shift() ?? 'live'; // боевой в барабане есть всегда: до пустого барабана не дойдёт
     if (shooter === 'collector') this.collector.grip(true);
-    this.revolverTable.shoot(shooter, target, bullet, this.collector.palmPosition(), () => this.afterShot(target, bullet));
+    this.shotgunTable.shoot(shooter, target, bullet, this.collector.palmPosition(), () => this.afterShot(target, bullet));
   }
 
   /**
@@ -266,7 +266,7 @@ export abstract class CollectorScene extends SaveScene {
    */
   private surviveRoulette(): void {
     this.cylinder = [];
-    this.revolverTable.hide();
+    this.shotgunTable.hide();
     this.collector.clearGoodLuck();
     this.refreshHud();
     this.collector.recoil(() => {
@@ -312,7 +312,7 @@ export abstract class CollectorScene extends SaveScene {
     this.refreshHud();
     this.sfx.play('death');
     this.collector.blackout(() => {
-      this.revolverTable.hide();
+      this.shotgunTable.hide();
       this.collector.showDeath(this.closedDebts(), this.record, () => this.restartGame());
       this.time.delayedCall(RESTART_SPACE_DELAY, () => {
         this.canRestartWithSpace = true;
