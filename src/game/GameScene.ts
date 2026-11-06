@@ -69,10 +69,11 @@ export class GameScene extends ShotScene {
     this.machineBadge = new MachineBadge(this, machineBody, this.machine, this.tooltip);
     this.panel = new MachinePanel(this, () => this.spin());
     this.payout = new PayoutWindow(this, () => this.take());
-    this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
-    this.chipCase = new ChipCase(this);
     this.itemShelf = new ItemShelf(this, this.slots, (slot) => this.useItem(slot), this.tooltip);
     this.amuletRack = new AmuletRack(this, this.sockets, this.tooltip);
+    // Полка с включёнными предметами и гнёзда амулетов — до Коллектора: его тёмная комната закрывает всё, что нарисовано раньше неё.
+    this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
+    this.chipCase = new ChipCase(this);
     this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip);
     this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip);
     this.cassette = new Cassette(this, this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip);

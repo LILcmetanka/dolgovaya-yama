@@ -82,18 +82,19 @@ export const MACHINE_BADGE_SIZE = 34; // сторона картинки зна�
 // Комната.
 export const NOTE: Box = { x: 80, y: 118, width: 150, height: 120 }; // записка с долгом на стене, левее бока автомата
 export const NOTE_ANGLE = -6; // записка висит чуть криво, градусы
-export const DARKNESS: Box = { x: 1200 + ROOM_SIDE, y: CENTER_Y, width: 480, height: 640 }; // темнота справа от комнаты, там Коллектор
-export const TURN_SCROLL = 380; // левый край вида у Коллектора: вид уезжает вправо, табло остаётся видно у левого края
-// Игра с Коллектором: стол в темноте под его рукой — на сукне ряд патронов и дробовик, ниже — лоток, куда кладут амулет.
-export const ROULETTE_TABLE: Box = { x: 1150 + ROOM_SIDE, y: 474, width: 380, height: 124 };
+export const TURN_SCROLL = 380; // левый край вида в тёмной комнате Коллектора: вид стоит здесь, а картинка комнаты закрывает его целиком
+export const DARK_ROOM: Box = { x: TURN_SCROLL + VIEW_WIDTH / 2, y: CENTER_Y, width: VIEW_WIDTH, height: 640 }; // тёмная комната Коллектора — картинка на весь вид
+export const COLLECTOR_X = DARK_ROOM.x + 130; // Коллектор сидит за столом чуть правее середины: его рука тянется справа
+// Игра с Коллектором: стол посередине тёмной комнаты — на сукне ряд патронов и дробовик, ниже — лоток, куда кладут амулет.
+export const ROULETTE_TABLE: Box = { x: DARK_ROOM.x, y: 474, width: 380, height: 124 };
 export const BULLETS_Y = 440; // ряд патронов: сколько боевых и холостых в барабане
-export const SHOTGUN = { x: 1150 + ROOM_SIDE, y: 500 }; // где лежит дробовик
-export const AMULET_TRAY: Box = { x: 1150 + ROOM_SIDE, y: 594, width: 360, height: 58 };
+export const SHOTGUN = { x: DARK_ROOM.x, y: 500 }; // где лежит дробовик
+export const AMULET_TRAY: Box = { x: DARK_ROOM.x, y: 594, width: 360, height: 58 };
 // Твой ход в рулетке: кнопка «в Коллектора» — прицел на его рукаве, «в себя» — внизу, на месте лотка (лоток тогда убран).
-export const AIM_AT_COLLECTOR = { x: 1262 + ROOM_SIDE, y: 330 };
-export const AIM_AT_SELF = { x: 1150 + ROOM_SIDE, y: 594 };
+export const AIM_AT_COLLECTOR = { x: COLLECTOR_X, y: 340 };
+export const AIM_AT_SELF = { x: DARK_ROOM.x, y: 594 };
 // Лупа на столе Коллектора — левее дробовика: в твой ход её можно взять и посмотреть следующий патрон.
-export const MAGNIFIER_SPOT = { x: 1015 + ROOM_SIDE, y: 500 };
+export const MAGNIFIER_SPOT = { x: DARK_ROOM.x - 135, y: 500 };
 // Выстрел в автомат: пуля попадает в правую часть экрана — дыру видно и у Коллектора (у левого края вида), и от автомата.
 export const SHOT_HOLE = { x: 612, y: 282 };
 

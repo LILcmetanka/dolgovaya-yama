@@ -12,8 +12,9 @@ import {
 } from '../decor';
 import { t } from '../lang';
 import { Atm } from './atm';
+import { DarkRoom, type RoomMode } from './darkRoom';
 import { ShadowFace } from './shadowFace';
-import { CENTER_X, CENTER_Y, DARKNESS, DISPLAY, HOME_SCROLL, NOTE, NOTE_ANGLE, SCREEN, TURN_SCROLL, VIEW_WIDTH } from '../layout';
+import { CENTER_X, CENTER_Y, DARK_ROOM, DISPLAY, HOME_SCROLL, NOTE, NOTE_ANGLE, SCREEN, TURN_SCROLL, VIEW_WIDTH } from '../layout';
 import { addText, GAME_OVER_DEPTH, GOLD_TEXT, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT } from '../theme';
 
 // Записка светится, когда долг можно отдать раньше: клик по ней или D.
@@ -21,11 +22,13 @@ const NOTE_GLOW_MIN = 0.3; // свечение пульсирует: гасне�
 const NOTE_GLOW_TIME = 700; // мс
 // Коллектор в темноте справа от комнаты: лица не видно, только глаза; рука появляется, когда он берёт оружие или принимает амулет.
 const HAND_Y = 330;
-const HAND_IN_X = DARKNESS.x + 360; // рука спрятана в темноте за правым краем вида
-const HAND_OUT_X = DARKNESS.x - 30; // рука протянута к игроку
+const HAND_IN_X = TURN_SCROLL + VIEW_WIDTH + 220; // рука спрятана за правым краем вида
+const HAND_OUT_X = DARK_ROOM.x + 20; // рука протянута над столом
+const FRONT_DEPTH = 1; // рука и лицо — поверх комнаты (она на глубине 0 над автоматом)
 const HAND_PALM_X = HAND_OUT_X - 58; // ладонь протянутой руки — сюда летят фишки
 const HAND_PALM_Y = HAND_Y - 22;
-const ATM_LEAVE_TIME = 450; // банкомат уезжает в темноту, потом вид возвращается (то же время, что SLIDE_TIME в atm.ts)
+const ROOM_FADE_TIME = 450; // вид гаснет перед тёмной комнатой и после неё
+const ATM_WARN_TIME = 1600; // на экране банкомата горит GOOD LUCK, потом всё темнеет
 const PAYMENT_CHIPS = 6; // сколько фишек летит в ладонь при расплате (для красоты: сумма может быть любой)
 // Надписи на чёрном экране автомата: GOOD LUCK — фишек не хватило, дальше игра с Коллектором; DEATH — конец забега.
 const SCREEN_TITLE_STYLE = { ...LED_STYLE, fontSize: '64px', color: RED_TEXT, shadow: { color: '#ef4444', blur: 18, fill: true } };
@@ -79,7 +82,9 @@ export class Collector {
   private readonly noteGlow: Phaser.GameObjects.Image; // свечение вокруг записки: долг можно отдать раньше
   private readonly hand: Phaser.GameObjects.Image; // рука Коллектора: когда фишек не хватает
   private readonly atm: Atm; // банкомат: когда фишек хватает, долг платят в него
-  private isAtmOut = false; // банкомат выехал (а не рука)
+  private isAtmOut = false; // банкомат выехал
+  private readonly room: DarkRoom; // тёмная комната Коллектора: картинка на весь вид или справа
+  private roomMode: RoomMode = 'none';
   private readonly face: ShadowFace; // красные глаза и улыбка в тени
   private isNoteChecked = false; // на записке галочка: фишек на табло хватает на долг
   private noteDebt = 0; // что нарисовано на записке: долг, фишки на табло и на кону — для полоски долга
@@ -109,10 +114,11 @@ export class Collector {
     this.note.on('pointerdown', payEarly);
 
     // Темнота справа от комнаты и спрятанная в ней рука; над ладонью — «фишка × долг».
-    scene.add.rectangle(DARKNESS.x, DARKNESS.y, DARKNESS.width, DARKNESS.height, 0x000000);
+    this.room = new DarkRoom(scene);
     this.hand = scene.add.image(HAND_IN_X, HAND_Y, HAND_OPEN_TEXTURE);
     this.hand.setInteractive({ useHandCursor: true });
     this.hand.on('pointerdown', pay);
+    this.hand.setDepth(FRONT_DEPTH);
     this.atm = new Atm(scene, pay);
     this.face = new ShadowFace(scene);
   }
@@ -188,22 +194,81 @@ export class Collector {
   }
 
   /**
-   * Вид уезжает вбок. Фишек хватает — из темноты выезжает банкомат с долгом на экране; не хватает — в темноте
-   * проступают красные глаза Коллектора. Вышел — ready().
+   * Справа от автомата выезжает банкомат (камера стоит на месте). Фишек хватает — на его экране долг, ждёт оплаты — ready().
+   * Не хватает — на экране красное GOOD LUCK, через ATM_WARN_TIME всё гаснет, и ты в тёмной комнате Коллектора
+   * (на весь вид, enterRoom): в тени проступают его глаза — ready().
    */
   reachOut(debt: number, isEnough: boolean, ready: () => void): void {
+    this.isAtmOut = true;
+    this.atm.slideIn(debt, isEnough, () => {
+      if (isEnough) {
+        ready();
+        return;
+      }
+      this.scene.time.delayedCall(ATM_WARN_TIME, () => this.enterRoom(ready));
+    });
+  }
+
+  /** Вид гаснет, банкомат пропадает, вид встаёт на тёмную комнату (картинка на весь вид) и загорается; глаза проступают — ready(). */
+  private enterRoom(ready: () => void): void {
+    const camera = this.scene.cameras.main;
+    camera.fadeOut(ROOM_FADE_TIME, 0, 0, 0);
+    camera.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      this.atm.hide();
+      this.isAtmOut = false;
+      camera.setScroll(TURN_SCROLL, 0);
+      this.room.show('full');
+      this.roomMode = 'full';
+      camera.fadeIn(ROOM_FADE_TIME, 0, 0, 0);
+      this.face.show(ready);
+    });
+  }
+
+  /**
+   * Выстрел в автомат: вид уезжает вбок к Коллектору, справа его комната (слева прозрачная — виден экран автомата),
+   * проступают глаза — ready().
+   */
+  reachShot(ready: () => void): void {
+    this.room.show('side');
+    this.roomMode = 'side';
     this.scene.tweens.add({
       targets: this.scene.cameras.main,
       scrollX: TURN_SCROLL,
       duration: TURN_TIME,
       ease: 'Sine.easeInOut',
+      onComplete: () => this.face.show(ready),
+    });
+  }
+
+  /**
+   * Вернуться к автомату через delay мс — потом done(). Из комнаты на весь вид — через затемнение, из боковой — камера уезжает
+   * обратно.
+   */
+  private returnHome(delay: number, done: () => void): void {
+    const camera = this.scene.cameras.main;
+    if (this.roomMode === 'full') {
+      this.scene.time.delayedCall(delay, () => {
+        camera.fadeOut(ROOM_FADE_TIME, 0, 0, 0);
+        camera.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+          camera.setScroll(HOME_SCROLL, 0);
+          this.room.hide();
+          this.roomMode = 'none';
+          camera.fadeIn(ROOM_FADE_TIME, 0, 0, 0);
+          camera.once(Phaser.Cameras.Scene2D.Events.FADE_IN_COMPLETE, done);
+        });
+      });
+      return;
+    }
+    this.scene.tweens.add({
+      targets: camera,
+      scrollX: HOME_SCROLL,
+      delay,
+      duration: TURN_TIME,
+      ease: 'Sine.easeInOut',
       onComplete: () => {
-        if (isEnough) {
-          this.isAtmOut = true;
-          this.atm.slideIn(debt, isEnough, ready);
-          return;
-        }
-        this.face.show(ready);
+        this.room.hide();
+        this.roomMode = 'none';
+        done();
       },
     });
   }
@@ -258,32 +323,17 @@ export class Collector {
     this.leave(done);
   }
 
-  /** Банкомат уезжает в темноту или рука сжимает фишки в кулак и уходит, вид возвращается к автомату — потом done(). */
+  /** Банкомат уезжает вбок или рука сжимает фишки в кулак и уходит, вид возвращается к автомату — потом done(). */
   private leave(done: () => void): void {
     if (this.isAtmOut) {
       this.isAtmOut = false;
-      this.atm.slideOut(() => {});
-      this.scene.tweens.add({
-        targets: this.scene.cameras.main,
-        scrollX: HOME_SCROLL,
-        delay: ATM_LEAVE_TIME,
-        duration: TURN_TIME,
-        ease: 'Sine.easeInOut',
-        onComplete: done,
-      });
+      this.atm.slideOut(done);
       return;
     }
     this.hand.setTexture(HAND_FIST_TEXTURE);
     this.face.hide();
     this.scene.tweens.add({ targets: this.hand, x: HAND_IN_X, delay: HAND_HOLD_TIME, duration: HAND_MOVE_TIME, ease: 'Cubic.easeIn' });
-    this.scene.tweens.add({
-      targets: this.scene.cameras.main,
-      scrollX: HOME_SCROLL,
-      delay: HAND_HOLD_TIME + HAND_MOVE_TIME,
-      duration: TURN_TIME,
-      ease: 'Sine.easeInOut',
-      onComplete: done,
-    });
+    this.returnHome(HAND_HOLD_TIME + HAND_MOVE_TIME, done);
   }
 
   /** Коллектор берёт оружие: из темноты выходит рука в кулак; отпустил — рука уходит обратно. Ход Коллектора в рулетке. */
@@ -292,20 +342,13 @@ export class Collector {
     this.moveHand(isHolding ? HAND_OUT_X : HAND_IN_X);
   }
 
-  /** Коллектор ранен: в темноте красная вспышка, рука отдёргивается и уходит, вид возвращается к автомату — потом done(). */
+  /** Коллектор ранен: в комнате красная вспышка, рука отдёргивается и уходит, вид возвращается к автомату — потом done(). */
   recoil(done: () => void): void {
-    const hit = this.scene.add.rectangle(DARKNESS.x, DARKNESS.y, DARKNESS.width, DARKNESS.height, HIT_COLOR, HIT_ALPHA);
+    const hit = this.scene.add.rectangle(DARK_ROOM.x, DARK_ROOM.y, DARK_ROOM.width, DARK_ROOM.height, HIT_COLOR, HIT_ALPHA).setDepth(FRONT_DEPTH + 1);
     this.scene.tweens.add({ targets: hit, alpha: 0, duration: HIT_FLASH_TIME, onComplete: () => hit.destroy() });
     this.scene.tweens.add({ targets: this.hand, x: HAND_IN_X, duration: HIT_TIME, ease: 'Cubic.easeOut' });
     this.face.hide();
-    this.scene.tweens.add({
-      targets: this.scene.cameras.main,
-      scrollX: HOME_SCROLL,
-      delay: HIT_FLASH_TIME,
-      duration: TURN_TIME,
-      ease: 'Sine.easeInOut',
-      onComplete: done,
-    });
+    this.returnHome(HIT_FLASH_TIME, done);
   }
 
   /** Фишек не хватает: экран автомата гаснет, на нём мигает красное GOOD LUCK — впереди игра с Коллектором (или KABOOM). */
@@ -364,6 +407,8 @@ export class Collector {
       this.atm.hide();
       this.isAtmOut = false;
       this.face.hide();
+      this.room.hide();
+      this.roomMode = 'none';
       dark();
       camera.fadeIn(BLACKOUT_TIME);
     });

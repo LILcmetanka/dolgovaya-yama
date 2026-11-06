@@ -10,7 +10,6 @@ const DEMAND_TIME = 400; // в темноте проступили глаза К
 const AFTER_HIT_TIME = 700; // пуля в экране — пауза: разглядеть дыру
 const ANGER_TIME = 600; // Коллектор сжимает кулак — он это запомнит — и уходит
 const DEBT_TEXT_DELAY = 300; // «×1,5» всплывает, когда вид уже поворачивается к магазину
-const HAND_SOUND_DELAY = 0.6; // рука выдвигается, когда вид повернулся, с
 // Где что.
 const BULLET_EXIT = { x: HOME_SCROLL + VIEW_WIDTH + 30, y: 330 }; // патрон улетает с полки за правый край вида — к Коллектору
 const BULLET_ENTRY = { x: TURN_SCROLL - 30, y: SHOTGUN.y - 80 }; // у Коллектора он влетает в дробовик из-за левого края вида
@@ -95,8 +94,7 @@ export abstract class ShotScene extends CollectorScene {
   /** В темноте проступают глаза Коллектора, а на столе лежит его оружие: твой патрон влетает в него, ствол — на автомат, выстрел. */
   private aimAtMachine(): void {
     this.sfx.play('turn');
-    this.sfx.play('hand', HAND_SOUND_DELAY);
-    this.collector.reachOut(this.debt, false, () => {
+    this.collector.reachShot(() => {
       this.time.delayedCall(DEMAND_TIME, () => {
         this.shotgunTable.showShotgun();
         this.shotgunTable.loadBullet(BULLET_ENTRY.x, BULLET_ENTRY.y, () =>

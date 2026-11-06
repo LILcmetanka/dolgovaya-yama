@@ -1,13 +1,13 @@
 import Phaser from 'phaser';
 import { CHIP_TEXTURE, createChipTextures, createTicketTexture, TICKET_TEXTURE } from '../decor';
-import { DARKNESS, DISPLAY } from '../layout';
+import { DISPLAY, HOME_SCROLL, VIEW_WIDTH } from '../layout';
 import { addText, LAMP_GOLD, LED_COLOR, LED_STYLE, RED_TEXT } from '../theme';
 
 // Банкомат Коллектора: в него закидывают фишки в уплату долга, он печатает купон (тот же билет 🎟).
-// Выезжает из темноты справа от комнаты на место, где раньше протягивалась рука.
+// Выезжает справа от автомата, камера не поворачивается: встаёт перед телевизором, правее рычага.
 const ATM_Y = 330;
-const ATM_IN_X = DARKNESS.x + 360; // спрятан в темноте за правым краем вида
-const ATM_OUT_X = DARKNESS.x - 38; // выехал к игроку
+const ATM_IN_X = HOME_SCROLL + VIEW_WIDTH + 120; // спрятан за правым краем вида
+const ATM_OUT_X = 935; // выехал к игроку
 const BODY_WIDTH = 200;
 const BODY_HEIGHT = 320;
 const BODY_COLOR = 0x2b3544;
@@ -32,6 +32,7 @@ export class Atm {
   private readonly body: Phaser.GameObjects.Rectangle;
   private readonly slot: Phaser.GameObjects.Rectangle;
   private readonly demand: Phaser.GameObjects.Text;
+  private readonly chip: Phaser.GameObjects.Image; // фишка слева от суммы на экране
 
   /** pay — что делать, когда кликнули по банкомату (Enter сцена ловит сама). */
   constructor(scene: Phaser.Scene, pay: () => void) {
@@ -44,7 +45,7 @@ export class Atm {
     this.body.on('pointerdown', pay);
     const topLamp = scene.add.rectangle(0, -BODY_HEIGHT / 2 + 24, 120, 14, 0x16a34a).setRounded(7);
     const screenFrame = scene.add.rectangle(0, SCREEN_Y, 160, 70, 0x000000).setStrokeStyle(3, 0x475569).setRounded(8);
-    const chip = scene.add.image(-52, SCREEN_Y, CHIP_TEXTURE).setScale(0.9);
+    this.chip = scene.add.image(-52, SCREEN_Y, CHIP_TEXTURE).setScale(0.9);
     this.demand = addText(scene, -30, SCREEN_Y, '', { ...LED_STYLE, fontSize: '30px' }).setOrigin(0, 0.5);
     this.slot = scene.add.rectangle(0, SLOT_Y, 124, 16, 0x000000).setStrokeStyle(3, LAMP_GOLD).setRounded(6);
     const couponSlot = scene.add.rectangle(0, COUPON_SLOT_Y, 110, 10, 0x000000).setStrokeStyle(2, 0x475569).setRounded(4);
@@ -54,28 +55,51 @@ export class Atm {
       const y = -22 + Math.floor(index / 3) * 24;
       keys.push(scene.add.rectangle(x, y, 28, 16, 0x1e293b).setStrokeStyle(2, 0x475569).setRounded(4));
     }
-    this.box = scene.add.container(ATM_IN_X, ATM_Y, [this.body, topLamp, screenFrame, chip, this.demand, ...keys, this.slot, couponSlot]);
+    this.box = scene.add.container(ATM_IN_X, ATM_Y, [this.body, topLamp, screenFrame, this.chip, this.demand, ...keys, this.slot, couponSlot]);
+    this.box.setVisible(false);
   }
 
-  /** Выехать из темноты: на экране «× долг» (красный — не хватает), щель светится. Выехал — ready(). */
+  /**
+   * Выехать: хватает фишек — на экране долг, щель светится; не хватает — на экране красное мигающее GOOD LUCK
+   * (за ним — тёмная комната Коллектора). Выехал — ready().
+   */
   slideIn(debt: number, isEnough: boolean, ready: () => void): void {
-    this.demand.setText(`${debt}`).setColor(isEnough ? LED_COLOR : RED_TEXT);
+    this.scene.tweens.killTweensOf(this.demand);
+    this.box.setVisible(true);
+    this.demand.setAlpha(1);
+    if (isEnough) {
+      this.chip.setVisible(true);
+      this.demand.setOrigin(0, 0.5).setX(-30).setFontSize('30px').setText(`${debt}`).setColor(LED_COLOR);
+    } else {
+      this.chip.setVisible(false);
+      this.demand.setOrigin(0.5).setX(0).setFontSize('19px').setText('GOOD LUCK').setColor(RED_TEXT);
+      this.scene.tweens.add({ targets: this.demand, alpha: 0.3, duration: 500, yoyo: true, repeat: -1 });
+    }
     this.scene.tweens.add({ targets: this.box, x: ATM_OUT_X, duration: SLIDE_TIME, ease: 'Cubic.easeOut', onComplete: ready });
     this.glowSlot();
   }
 
   /** Уехать обратно в темноту — потом done(). */
   slideOut(done: () => void): void {
-    this.scene.tweens.killTweensOf(this.slot);
+    this.scene.tweens.killTweensOf([this.slot, this.demand]);
     this.slot.setAlpha(1);
-    this.scene.tweens.add({ targets: this.box, x: ATM_IN_X, duration: SLIDE_TIME, ease: 'Cubic.easeIn', onComplete: done });
+    this.scene.tweens.add({
+      targets: this.box,
+      x: ATM_IN_X,
+      duration: SLIDE_TIME,
+      ease: 'Cubic.easeIn',
+      onComplete: () => {
+        this.box.setVisible(false); // «за краем» у автомата — это внутри вида тёмной комнаты: спрятанный банкомат не должен там торчать
+        done();
+      },
+    });
   }
 
-  /** Спрятать мгновенно (конец забега, перезапуск вида). */
+  /** Спрятать мгновенно (конец забега, переход в тёмную комнату). */
   hide(): void {
-    this.scene.tweens.killTweensOf([this.box, this.slot]);
+    this.scene.tweens.killTweensOf([this.box, this.slot, this.demand]);
     this.slot.setAlpha(1);
-    this.box.setX(ATM_IN_X);
+    this.box.setX(ATM_IN_X).setVisible(false);
   }
 
   /** Где щель для фишек — в мире: туда летят фишки с табло. */

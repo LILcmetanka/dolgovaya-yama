@@ -15,12 +15,11 @@ import { GREEN_TEXT, LAMP_OFF, LAMP_RED } from '../theme';
 import { SaveScene } from './SaveScene';
 
 // Порядок событий, мс.
-const GOOD_LUCK_TIME = 1600; // фишек не хватает: столько горит GOOD LUCK на экране автомата, потом вид поворачивается к Коллектору
+const GOOD_LUCK_TIME = 1600; // фишек не хватает: столько горит GOOD LUCK (на экране банкомата — `ATM_WARN_TIME`, огни мигают красным), потом тёмная комната
 const HAND_WAIT_TIME = 1200; // фишек не хватает: рука ждёт столько, потом на столе появляется игра
 const DEAL_PAUSE = 1400; // откупиться нечем — рулетка начинается сама через столько: успеть разглядеть патроны
 const COLLECTOR_THINK_TIME = 700; // ход Коллектора: пауза, прежде чем он возьмёт дробовик
 const RESTART_SPACE_DELAY = 800; // Пробел на экране DEATH перезапускает игру не раньше, чем через столько
-const HAND_SOUND_DELAY = 0.6; // рука выдвигается, когда вид повернулся, с
 const KABOOM_WARN_TIME = 1800; // KABOOM мигает на экране автомата, потом взрыв
 const KABOOM_AFTER_TIME = 900; // после взрыва — пауза, потом всё темнеет
 const KABOOM_SHAKE_TIME = 700;
@@ -67,8 +66,7 @@ export abstract class CollectorScene extends SaveScene {
     }
     this.sfx.play('warning');
     this.screen.flashLamps(LAMP_RED, GOOD_LUCK_TIME);
-    this.collector.warnGoodLuck();
-    this.time.delayedCall(GOOD_LUCK_TIME, () => this.reachOut(false));
+    this.reachOut(false); // выезжает банкомат с GOOD LUCK на экране, потом тёмная комната
   }
 
   /**
@@ -77,8 +75,7 @@ export abstract class CollectorScene extends SaveScene {
    */
   private reachOut(isPaidEarly: boolean): void {
     const enough = this.hasEnoughForDebt();
-    this.sfx.play('turn');
-    this.sfx.play('hand', HAND_SOUND_DELAY);
+    this.sfx.play('hand'); // банкомат выезжает
     this.collector.reachOut(this.debt, enough, () => {
       if (!enough) {
         this.time.delayedCall(HAND_WAIT_TIME, () => this.offerDeal());

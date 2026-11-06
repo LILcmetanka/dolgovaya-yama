@@ -7,6 +7,8 @@ import {
   BELLY,
   BODY,
   CENTER_X,
+  COLLECTOR_X,
+  DARK_ROOM,
   DISPLAY,
   GLASS,
   ITEM_SIZE,
@@ -19,6 +21,7 @@ import {
   SOCKET_RADIUS,
   SOCKET_XS,
   SOCKET_Y,
+  TURN_SCROLL,
   VENDING,
   VENDING_BIN,
   VENDING_COIN_SLOT,
@@ -2263,4 +2266,146 @@ export function createCrownLampTexture(scene: Phaser.Scene): void {
   ctx.textBaseline = 'middle';
   ctx.fillText('👑', size / 2, size / 2 + 1);
   texture.refresh(); // передать нарисованное в видеокарту
+}
+
+// ---------- Тёмная комната Коллектора ----------
+
+export const DARK_ROOM_TEXTURE = 'dark-room'; // комната на весь вид (рулетка: вид целиком — комната)
+export const DARK_ROOM_SIDE_TEXTURE = 'dark-room-side'; // она же, но слева прозрачная: выстрел в автомат — дыру в экране видно
+export const DARK_ROOM_WIDTH = Math.ceil(VIEW_WIDTH);
+const DARK_ROOM_HEIGHT = 640;
+const SIDE_FADE_FROM = 640; // слева от этого места (в раскладке) комнаты нет, к 780 она полностью закрывает
+const SIDE_FADE_TO = 780;
+const LAMP_Y = 72; // лампа над столом
+const TABLE_LEVEL = 455; // где кончается стена и начинается пол
+
+/** Две картинки тёмной комнаты: на весь вид и «боковая». Рисуется кодом: стена, пол, лампа над столом, силуэт Коллектора. */
+export function createDarkRoomTextures(scene: Phaser.Scene): void {
+  for (const [key, isSide] of [[DARK_ROOM_TEXTURE, false], [DARK_ROOM_SIDE_TEXTURE, true]] as const) {
+    if (scene.textures.exists(key)) continue;
+    const texture = createSharpCanvas(scene, key, DARK_ROOM_WIDTH, DARK_ROOM_HEIGHT);
+    if (!texture) continue;
+    drawDarkRoom(texture.context, DARK_ROOM_WIDTH, DARK_ROOM_HEIGHT, isSide);
+    texture.refresh(); // передать нарисованное в видеокарту
+  }
+}
+
+function drawDarkRoom(ctx: CanvasRenderingContext2D, width: number, height: number, isSide: boolean): void {
+  const lampX = DARK_ROOM.x - TURN_SCROLL;
+  const collectorX = COLLECTOR_X - TURN_SCROLL;
+  // Стена и пол.
+  const wall = ctx.createLinearGradient(0, 0, 0, height);
+  wall.addColorStop(0, '#0b0705');
+  wall.addColorStop(0.7, '#1a110b');
+  wall.addColorStop(1, '#090604');
+  ctx.fillStyle = wall;
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+  for (let x = 14; x < width; x += 46) ctx.fillRect(x, 0, 2, TABLE_LEVEL); // доски стены
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.025)';
+  for (let x = 16; x < width; x += 46) ctx.fillRect(x, 0, 1, TABLE_LEVEL);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.fillRect(0, TABLE_LEVEL, width, 5); // плинтус
+  for (let y = TABLE_LEVEL + 22; y < height; y += 24) ctx.fillRect(0, y, width, 2); // доски пола
+  // Свет лампы: конус вниз и пятно на столе.
+  const cone = ctx.createLinearGradient(0, LAMP_Y, 0, 480);
+  cone.addColorStop(0, 'rgba(253, 224, 160, 0.20)');
+  cone.addColorStop(1, 'rgba(253, 224, 160, 0.03)');
+  ctx.fillStyle = cone;
+  ctx.beginPath();
+  ctx.moveTo(lampX - 22, LAMP_Y);
+  ctx.lineTo(lampX + 22, LAMP_Y);
+  ctx.lineTo(lampX + 330, 500);
+  ctx.lineTo(lampX - 330, 500);
+  ctx.closePath();
+  ctx.fill();
+  ctx.save();
+  ctx.translate(lampX, 480);
+  ctx.scale(1, 0.38);
+  const pool = ctx.createRadialGradient(0, 0, 10, 0, 0, 360);
+  pool.addColorStop(0, 'rgba(253, 224, 130, 0.22)');
+  pool.addColorStop(1, 'rgba(253, 224, 130, 0)');
+  ctx.fillStyle = pool;
+  ctx.beginPath();
+  ctx.arc(0, 0, 360, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  // Коллектор: тёмный силуэт в шляпе, свет лампы только по краю.
+  drawCollectorSilhouette(ctx, collectorX);
+  // Лампа поверх: шнур, абажур, лампочка.
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(lampX, 0);
+  ctx.lineTo(lampX, LAMP_Y - 28);
+  ctx.stroke();
+  ctx.fillStyle = '#2a2a2e';
+  ctx.beginPath();
+  ctx.moveTo(lampX - 40, LAMP_Y + 4);
+  ctx.lineTo(lampX + 40, LAMP_Y + 4);
+  ctx.lineTo(lampX + 16, LAMP_Y - 28);
+  ctx.lineTo(lampX - 16, LAMP_Y - 28);
+  ctx.closePath();
+  ctx.fill();
+  const bulb = ctx.createRadialGradient(lampX, LAMP_Y + 6, 2, lampX, LAMP_Y + 6, 46);
+  bulb.addColorStop(0, 'rgba(255, 244, 190, 0.95)');
+  bulb.addColorStop(1, 'rgba(255, 244, 190, 0)');
+  ctx.fillStyle = bulb;
+  ctx.fillRect(lampX - 50, LAMP_Y - 40, 100, 100);
+  // Виньетка: края комнаты тонут в темноте.
+  const vignette = ctx.createRadialGradient(width / 2, height / 2, height * 0.25, width / 2, height / 2, width * 0.62);
+  vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  vignette.addColorStop(1, 'rgba(0, 0, 0, 0.82)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, width, height);
+  if (isSide) {
+    // Боковая комната: слева прозрачная, чтобы было видно разбитый экран автомата.
+    const mask = ctx.createLinearGradient(SIDE_FADE_FROM - TURN_SCROLL, 0, SIDE_FADE_TO - TURN_SCROLL, 0);
+    mask.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    mask.addColorStop(1, 'rgba(0, 0, 0, 1)');
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.fillStyle = mask;
+    ctx.fillRect(0, 0, width, height);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+}
+
+/** Силуэт Коллектора за столом: шляпа с полями, голова, плечи в пальто. Чёрный, чуть светлее по верхнему краю — от лампы. */
+function drawCollectorSilhouette(ctx: CanvasRenderingContext2D, cx: number): void {
+  ctx.fillStyle = '#030201';
+  ctx.beginPath();
+  ctx.moveTo(cx - 180, 470);
+  ctx.bezierCurveTo(cx - 172, 380, cx - 125, 345, cx - 62, 334);
+  ctx.lineTo(cx - 24, 318);
+  ctx.lineTo(cx + 24, 318);
+  ctx.lineTo(cx + 62, 334);
+  ctx.bezierCurveTo(cx + 125, 345, cx + 172, 380, cx + 180, 470);
+  ctx.closePath();
+  ctx.fill(); // плечи
+  ctx.fillRect(cx - 21, 296, 42, 30); // шея
+  ctx.beginPath();
+  ctx.ellipse(cx, 262, 41, 53, 0, 0, Math.PI * 2);
+  ctx.fill(); // голова
+  ctx.beginPath();
+  ctx.ellipse(cx, 214, 88, 15, 0, 0, Math.PI * 2);
+  ctx.fill(); // поля шляпы
+  ctx.beginPath();
+  ctx.roundRect(cx - 46, 142, 92, 78, [18, 18, 4, 4]);
+  ctx.fill(); // тулья
+  ctx.fillStyle = '#17120d';
+  ctx.fillRect(cx - 46, 194, 92, 11); // лента на тулье
+  ctx.strokeStyle = 'rgba(200, 160, 110, 0.30)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(cx, 214, 88, 15, 0, Math.PI * 1.04, Math.PI * 1.96);
+  ctx.stroke(); // свет на полях сверху
+  ctx.beginPath();
+  ctx.roundRect(cx - 46, 142, 92, 40, [18, 18, 0, 0]);
+  ctx.stroke(); // и на тулье
+  ctx.beginPath();
+  ctx.moveTo(cx - 172, 400);
+  ctx.bezierCurveTo(cx - 160, 366, cx - 120, 346, cx - 62, 335);
+  ctx.moveTo(cx + 172, 400);
+  ctx.bezierCurveTo(cx + 160, 366, cx + 120, 346, cx + 62, 335);
+  ctx.stroke(); // и на плечах
 }
