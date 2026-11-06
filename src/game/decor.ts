@@ -132,7 +132,12 @@ const SCREEN_GLASS = 0x020617; // почти чёрное стекло под с
 /** Фишка казино: красная с белыми насечками по краю. */
 const CHIP_SIZE = 28; // фишка анфас, px
 const CHIP_RED = '#dc2626';
-const CHIP_NOTCHES = 6; // белые насечки по краю
+const CHIP_RED_LIGHT = '#f87171'; // корпус светлее сверху слева
+const CHIP_RED_DARK = '#7f1d1d'; // внутренний диск темнее
+const CHIP_EDGE = '#450a0a'; // кайма и обводка «1»
+const CHIP_CREAM = '#fef3c7'; // вставки по ободу, кольцо и «1»
+const CHIP_GOLD = 'rgba(253, 224, 71, 0.85)'; // тонкое внутреннее кольцо
+const CHIP_NOTCHES = 8; // кремовые вставки по ободу
 const CHIP_TOP = 0xdc2626; // фишка в стопке: верхняя грань — того же красного, что фишка анфас
 const CHIP_SIDE = 0x991b1b; // бок — темнее
 /** Свечение под ставкой Дилера: мягкий золотой круг. */
@@ -481,31 +486,75 @@ export function createChipTextures(scene: Phaser.Scene): void {
   }
 }
 
-/** Фишка анфас на canvas: красный круг, белые насечки по краю, белое кольцо и «1» посередине. */
+/**
+ * Фишка анфас на canvas, как настоящая казино-фишка: красный корпус с лёгким объёмом, кремовые вставки по ободу,
+ * внутри тёмный диск с двойным кольцом и «1» с обводкой, сверху блик. Рисуется для любого size (от значка на мониторе до большой).
+ */
 function drawChip(ctx: CanvasRenderingContext2D, size: number): void {
   const center = size / 2;
-  ctx.fillStyle = CHIP_RED;
+  const unit = size / 100; // все размеры ниже — в сотых долях фишки
+  ctx.save();
+  // Корпус: тёмная кайма и красный диск, светлее сверху слева.
+  ctx.fillStyle = CHIP_EDGE;
   ctx.beginPath();
   ctx.arc(center, center, center, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = '#ffffff';
+  const body = ctx.createRadialGradient(center * 0.75, center * 0.7, center * 0.1, center, center, center);
+  body.addColorStop(0, CHIP_RED_LIGHT);
+  body.addColorStop(1, CHIP_RED);
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.arc(center, center, center - 2.5 * unit, 0, Math.PI * 2);
+  ctx.fill();
+  // Кремовые вставки по ободу.
+  ctx.fillStyle = CHIP_CREAM;
   for (let i = 0; i < CHIP_NOTCHES; i++) {
-    // Насечку рисуем у верхнего края и поворачиваем вокруг центра фишки.
     ctx.save();
     ctx.translate(center, center);
     ctx.rotate((i * 2 * Math.PI) / CHIP_NOTCHES);
-    ctx.fillRect(-2, -center, 4, size * 0.2);
+    ctx.beginPath();
+    ctx.roundRect(-7 * unit, -center + 3.5 * unit, 14 * unit, 19 * unit, 3 * unit);
+    ctx.fill();
     ctx.restore();
   }
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 1.5;
+  // Внутренний диск с двойным кольцом.
+  const disc = ctx.createRadialGradient(center * 0.85, center * 0.8, center * 0.05, center, center, center * 0.62);
+  disc.addColorStop(0, CHIP_RED);
+  disc.addColorStop(1, CHIP_RED_DARK);
+  ctx.fillStyle = disc;
   ctx.beginPath();
-  ctx.arc(center, center, center * 0.58, 0, Math.PI * 2);
+  ctx.arc(center, center, 0.6 * center, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = Math.max(1, 3 * unit);
+  ctx.strokeStyle = CHIP_CREAM;
+  ctx.beginPath();
+  ctx.arc(center, center, 0.6 * center, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.font = `bold ${Math.round(size * 0.45)}px ${FONT}`;
+  ctx.lineWidth = Math.max(0.6, 1.5 * unit);
+  ctx.strokeStyle = CHIP_GOLD;
+  ctx.beginPath();
+  ctx.arc(center, center, 0.5 * center, 0, Math.PI * 2);
+  ctx.stroke();
+  // «1» с тёмной обводкой.
+  ctx.font = `bold ${Math.round(size * 0.46)}px ${FONT}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('1', center, center + 1);
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(1, 5 * unit);
+  ctx.strokeStyle = CHIP_EDGE;
+  ctx.strokeText('1', center, center + unit);
+  ctx.fillStyle = CHIP_CREAM;
+  ctx.fillText('1', center, center + unit);
+  // Блик сверху слева.
+  ctx.beginPath();
+  ctx.arc(center, center, center - 2.5 * unit, 0, Math.PI * 2);
+  ctx.clip();
+  const gloss = ctx.createLinearGradient(0, 0, size * 0.55, size * 0.55);
+  gloss.addColorStop(0, 'rgba(255, 255, 255, 0.35)');
+  gloss.addColorStop(0.55, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = gloss;
+  ctx.fillRect(0, 0, size, size);
+  ctx.restore();
 }
 
 /** Рука Коллектора: раскрытая ладонью вверх (ждёт долг) и кулаком (забрал или злится). Рукав уходит за правый край. */
