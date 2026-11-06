@@ -70,6 +70,9 @@ export class Collector {
   private readonly demandChip: Phaser.GameObjects.Image; // над ладонью: фишка…
   private readonly demandText: Phaser.GameObjects.Text; // …и «× долг»
   private isNoteChecked = false; // на записке галочка: фишек на табло хватает на долг
+  private noteDebt = 0; // что нарисовано на записке: долг, фишки на табло и на кону — для полоски долга
+  private noteBalance = 0;
+  private notePot = 0;
   private isPayable = false; // записка светится: по ней можно кликнуть и отдать долг раньше
   private goodLuck: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = []; // GOOD LUCK на экране автомата
 
@@ -87,7 +90,8 @@ export class Collector {
     // Надписи нарисованы прямо на бумажке: Phaser 4 обрезает текст в повёрнутом контейнере, а картинку — нет.
     // Под запиской — свечение: его видно, когда долг можно отдать раньше; тогда по записке можно кликнуть.
     this.noteGlow = scene.add.image(NOTE.x, NOTE.y, NOTE_GLOW_TEXTURE).setAngle(NOTE_ANGLE).setVisible(false);
-    drawNoteTexture(scene, NOTE.width, NOTE.height, debt, false);
+    this.noteDebt = debt;
+    this.redrawNote(false);
     this.note = scene.add.image(NOTE.x, NOTE.y, NOTE_TEXTURE).setAngle(NOTE_ANGLE);
     this.note.setInteractive({ useHandCursor: true }).disableInteractive();
     this.note.on('pointerdown', payEarly);
@@ -107,8 +111,28 @@ export class Collector {
   markNote(debt: number, isEnough: boolean): void {
     if (isEnough === this.isNoteChecked) return;
     this.isNoteChecked = isEnough;
-    drawNoteTexture(this.scene, NOTE.width, NOTE.height, debt, isEnough);
+    this.noteDebt = debt;
+    this.redrawNote(isEnough);
     pulse(this.scene, this.note, 1.12);
+  }
+
+  /**
+   * Полоска долга на записке: сколько долга уже на табло и сколько лежит на кону (заберёшь — будет на табло).
+   * Зовёт refreshHud при любом изменении, поэтому перерисовываем, только если числа сменились.
+   */
+  showProgress(debt: number, balance: number, pot: number): void {
+    if (balance === this.noteBalance && pot === this.notePot) return;
+    this.noteBalance = balance;
+    this.notePot = pot;
+    // Долг на записке меняет только переворот (flipNote): до него число не трогаем, переворот сам нарисует полоску.
+    if (debt === this.noteDebt) this.redrawNote(this.isNoteChecked);
+  }
+
+  /** Нарисовать записку заново по запомненным числам. */
+  private redrawNote(isEnough: boolean): void {
+    const paid = Math.min(1, this.noteBalance / this.noteDebt);
+    const pending = Math.min(1 - paid, this.notePot / this.noteDebt);
+    drawNoteTexture(this.scene, NOTE.width, NOTE.height, this.noteDebt, isEnough, paid, pending);
   }
 
   /**
@@ -147,7 +171,8 @@ export class Collector {
       ease: 'Quad.easeIn',
       onYoyo: () => {
         this.isNoteChecked = isEnough;
-        drawNoteTexture(this.scene, NOTE.width, NOTE.height, debt, isEnough);
+        this.noteDebt = debt;
+        this.redrawNote(isEnough);
       },
     });
   }

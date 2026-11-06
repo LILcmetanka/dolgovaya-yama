@@ -155,6 +155,13 @@ const NOTE_INK = '#334155'; // «ДОЛГ»
 const NOTE_DEBT_INK = '#991b1b'; // сумма — красной ручкой
 const NOTE_DEBT_FONT_SIZE = 44; // сумма крупно; длинная сумма уменьшается, чтобы влезть на листок
 const NOTE_CHECK_COLOR = '#16a34a'; // галочка «фишек хватает»
+const NOTE_BAR_COLOR = '#16a34a'; // полоска долга: что уже на табло
+const NOTE_BAR_PENDING = 'rgba(22, 163, 74, 0.35)'; // …и что ещё на кону: заберёшь — будет на табло
+const NOTE_BAR_TRACK = 'rgba(51, 65, 85, 0.25)'; // пустая часть полоски
+const NOTE_BAR_Y = 104; // полоска под суммой, под галочкой
+const NOTE_BAR_HEIGHT = 7;
+const NOTE_BAR_LEFT = 26; // правее красного поля записки
+const NOTE_BAR_RIGHT = 20; // отступ справа от края листка
 const NOTE_GLOW = 20; // свечение выходит за листок на столько px
 const NOTE_GLOW_BLUR = 10; // мягкость свечения, px
 const NOTE_GLOW_LINE = 4; // яркая кайма по краю листка, px (половина её — под листком)
@@ -358,7 +365,15 @@ export function createLeverTextures(scene: Phaser.Scene, rodLength: number): voi
  * Надписи рисуются прямо на листке, поэтому записку можно повернуть одной картинкой.
  * Сумма меняется раз в раунд — тогда записка перерисовывается заново (canvas маленький, это дёшево).
  */
-export function drawNoteTexture(scene: Phaser.Scene, width: number, height: number, debt: number, isEnough: boolean): void {
+export function drawNoteTexture(
+  scene: Phaser.Scene,
+  width: number,
+  height: number,
+  debt: number,
+  isEnough: boolean,
+  paid = 0, // доля долга, что уже на табло (0…1)
+  pending = 0, // доля долга, что лежит на кону (0…1, вместе с paid не больше 1)
+): void {
   // Текстура уже есть — её создала эта же функция, значит это canvas: берём его и рисуем заново.
   const texture = scene.textures.exists(NOTE_TEXTURE)
     ? (scene.textures.get(NOTE_TEXTURE) as Phaser.Textures.CanvasTexture)
@@ -384,8 +399,20 @@ export function drawNoteTexture(scene: Phaser.Scene, width: number, height: numb
   }
   ctx.fillStyle = NOTE_DEBT_INK;
   ctx.fillText(text, width / 2, height / 2 + 22);
+  drawNoteBar(ctx, width, paid, pending);
   if (isEnough) drawNoteCheck(ctx, width, height);
   texture.refresh(); // передать нарисованное в видеокарту
+}
+
+/** Полоска долга под суммой, как полоска прогресса: тёмная — на табло, бледная — ещё на кону. */
+function drawNoteBar(ctx: CanvasRenderingContext2D, width: number, paid: number, pending: number): void {
+  const barWidth = width - NOTE_BAR_LEFT - NOTE_BAR_RIGHT;
+  ctx.fillStyle = NOTE_BAR_TRACK;
+  ctx.fillRect(NOTE_BAR_LEFT, NOTE_BAR_Y, barWidth, NOTE_BAR_HEIGHT);
+  ctx.fillStyle = NOTE_BAR_PENDING;
+  ctx.fillRect(NOTE_BAR_LEFT, NOTE_BAR_Y, barWidth * (paid + pending), NOTE_BAR_HEIGHT);
+  ctx.fillStyle = NOTE_BAR_COLOR;
+  ctx.fillRect(NOTE_BAR_LEFT, NOTE_BAR_Y, barWidth * paid, NOTE_BAR_HEIGHT);
 }
 
 /** Зелёная галочка в правом нижнем углу записки: фишек на табло хватает на долг. */

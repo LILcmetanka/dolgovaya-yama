@@ -194,6 +194,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.payout.showPot(this.pot, this.debt);
     this.payout.setEnabled(this.canAct());
     this.collector.showPayable(this.canPayEarly());
+    this.collector.showProgress(this.debt, this.balance, this.pot);
     this.cassette.showUsable(this.canRecord() || this.canRewind());
     this.monitor.setEnabled(this.canAct() || this.isAtMonitor); // к монитору — между прокрутками, от него — всегда
     const tension = this.tension();
