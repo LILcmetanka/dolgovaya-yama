@@ -89,7 +89,7 @@ export class Tooltip implements Hint {
  * getHint возвращает [название, что делает] или null — тогда подсказки нет (например, клетка пуста).
  */
 export function attachHint(
-  target: Phaser.GameObjects.Image,
+  target: Phaser.GameObjects.GameObject,
   hint: Hint,
   getHint: () => [string, string] | null,
   press?: () => void,

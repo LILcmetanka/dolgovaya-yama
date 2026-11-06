@@ -77,7 +77,9 @@ export const LEVER_BALL_TEXTURE = 'lever-ball';
 export const NOTE_TEXTURE = 'note';
 export const NOTE_GLOW_TEXTURE = 'note-glow'; // зелёное свечение вокруг записки: долг можно отдать раньше
 export const SHELF_CELL_TEXTURE = 'shelf-cell'; // клетка полки с предметами
-export const SHELF_PLANKS_TEXTURE = 'shelf-planks'; // доски поверх закрытой клетки
+export const SHELF_DOOR_TEXTURE = 'shelf-door'; // стальная дверца с кодовым замком поверх закрытого отсека
+export const DOOR_CODE_WIDTH = 50; // окошко колёсиков кода на дверце
+export const DOOR_CODE_HEIGHT = 24;
 export const LEAVE_BUTTON_TEXTURE = 'leave-button'; // круглая кнопка со стрелкой «назад к автомату»
 export const TICKET_TEXTURE = 'ticket'; // красный билет — вторая валюта
 export const SOCKET_CAP_TEXTURE = 'socket-cap'; // заглушка закрытого гнезда для амулета
@@ -913,45 +915,66 @@ function drawGoldBullet(scene: Phaser.Scene): void {
 export function createShelfTextures(scene: Phaser.Scene, size: number): void {
   if (!scene.textures.exists(SHELF_CELL_TEXTURE)) {
     const g = scene.add.graphics();
-    g.fillStyle(0x000000, 0.45);
-    g.fillRoundedRect(4, 5, size, size, 6); // тень на стене
-    g.fillStyle(0x4a2f19);
-    g.fillRoundedRect(0, 0, size, size, 6); // рамка
-    g.fillStyle(0x6b4423);
-    g.fillRect(4, 2, size - 8, 3); // светлый край рамки сверху
-    g.fillStyle(0x140d08);
-    g.fillRect(7, 7, size - 14, size - 16); // ниша
-    g.fillStyle(0x5b3a1e);
-    g.fillRect(4, size - 10, size - 8, 6); // полочка внизу ниши
+    g.fillStyle(0x000000, 0.5);
+    g.fillRoundedRect(4, 5, size, size, 5); // тень на стене
+    g.fillStyle(0x2f353d);
+    g.fillRoundedRect(0, 0, size, size, 5); // стальная рамка отсека
+    g.fillStyle(0x6b7280);
+    g.fillRect(4, 1, size - 8, 3); // светлый край рамки сверху
+    g.fillStyle(0x0d0f12);
+    g.fillRect(7, 7, size - 14, size - 16); // отсек
+    g.fillStyle(0x4b5563);
+    g.fillRect(4, size - 10, size - 8, 6); // стальная полочка внизу отсека
+    g.fillStyle(0x9ca3af);
+    for (const [x, y] of [[4, 4], [size - 4, 4], [4, size - 4], [size - 4, size - 4]]) g.fillCircle(x, y, 1.6); // болты по углам
     bake(g, SHELF_CELL_TEXTURE, size + 4, size + 5);
   }
-  if (!scene.textures.exists(SHELF_PLANKS_TEXTURE)) {
-    const texture = createSharpCanvas(scene, SHELF_PLANKS_TEXTURE, size, size);
+  if (!scene.textures.exists(SHELF_DOOR_TEXTURE)) {
+    const texture = createSharpCanvas(scene, SHELF_DOOR_TEXTURE, size, size);
     if (!texture) return;
-    drawPlank(texture.context, size, size * 0.34, -0.2);
-    drawPlank(texture.context, size, size * 0.68, 0.16);
+    drawShelfDoor(texture.context, size);
     texture.refresh(); // передать нарисованное в видеокарту
   }
 }
 
-/** Одна доска поперёк клетки, чуть наискосок, с гвоздями по краям. */
-function drawPlank(ctx: CanvasRenderingContext2D, size: number, y: number, angle: number): void {
-  ctx.save();
-  ctx.translate(size / 2, y);
-  ctx.rotate(angle);
-  ctx.fillStyle = '#8b5a2b';
-  ctx.fillRect(-size / 2 - 4, -9, size + 8, 18); // доска
-  ctx.fillStyle = '#5c3a1a';
-  ctx.fillRect(-size / 2 - 4, 6, size + 8, 3); // тень внизу доски
-  ctx.fillStyle = '#a16207';
-  ctx.fillRect(-size / 2 - 4, -9, size + 8, 2); // светлый край
-  ctx.fillStyle = '#1f2937';
-  for (const x of [-size / 2 + 6, size / 2 - 6]) {
+/** Стальная дверца отсека: полосы шлифовки, заклёпки по углам, окошко для трёх цифр кодового замка (цифры рисует сцена). */
+function drawShelfDoor(ctx: CanvasRenderingContext2D, size: number): void {
+  const metal = ctx.createLinearGradient(0, 0, size, size);
+  metal.addColorStop(0, '#a1a8b3');
+  metal.addColorStop(0.5, '#6b7280');
+  metal.addColorStop(1, '#3f4651');
+  ctx.fillStyle = metal;
+  ctx.beginPath();
+  ctx.roundRect(0, 0, size, size, 5);
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#1f2329';
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+  for (let y = 4; y < size - 4; y += 4) ctx.fillRect(3, y, size - 6, 1); // шлифовка
+  ctx.fillStyle = '#1f2329';
+  for (const [x, y] of [[6, 6], [size - 6, 6], [6, size - 6], [size - 6, size - 6]]) {
     ctx.beginPath();
-    ctx.arc(x, 0, 2.5, 0, Math.PI * 2);
-    ctx.fill(); // гвоздь
+    ctx.arc(x, y, 2, 0, Math.PI * 2);
+    ctx.fill(); // заклёпка
   }
-  ctx.restore();
+  const windowWidth = DOOR_CODE_WIDTH;
+  const windowHeight = DOOR_CODE_HEIGHT;
+  ctx.fillStyle = '#0b0d10';
+  ctx.beginPath();
+  ctx.roundRect((size - windowWidth) / 2, (size - windowHeight) / 2, windowWidth, windowHeight, 3);
+  ctx.fill(); // окошко колёсиков
+  ctx.strokeStyle = '#d1d5db';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(209, 213, 219, 0.35)'; // перегородки между колёсиками
+  for (const k of [1, 2]) {
+    const x = (size - windowWidth) / 2 + (windowWidth / 3) * k;
+    ctx.beginPath();
+    ctx.moveTo(x, (size - windowHeight) / 2 + 2);
+    ctx.lineTo(x, (size + windowHeight) / 2 - 2);
+    ctx.stroke();
+  }
 }
 
 /** Круглая кнопка со стрелкой вправо: «назад к игровому автомату». */

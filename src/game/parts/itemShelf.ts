@@ -1,11 +1,11 @@
 import Phaser from 'phaser';
 import { MAGNIFIER } from '../collectorGame';
-import { createItemTextures, createShelfTextures, itemTexture, SHELF_CELL_TEXTURE, SHELF_PLANKS_TEXTURE } from '../decor';
+import { createItemTextures, createShelfTextures, DOOR_CODE_WIDTH, itemTexture, SHELF_CELL_TEXTURE, SHELF_DOOR_TEXTURE } from '../decor';
 import { ITEMS, MAX_SLOTS, type Item, type ItemEffects } from '../items';
 import { t } from '../lang';
 import { BULLET } from '../shot';
 import { EFFECTS_STEP, EFFECTS_TOP_Y, EFFECTS_X, ITEM_SIZE, SHELF_CELL, shelfX, shelfY } from '../layout';
-import { addText, POPUP_DEPTH, pulse } from '../theme';
+import { addText, LED_STYLE, POPUP_DEPTH, pulse } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
 // Размеры.
@@ -13,7 +13,16 @@ const ITEM_ON_SHELF_SCALE = 0.9; // предмет в клетке чуть ме
 const EFFECT_SCALE = 0.68; // включённый предмет у экрана ещё меньше
 // Анимации, мс.
 const FLY_TIME = 450; // предмет летит из лотка на полку или с полки к экрану
-const PLANKS_FALL_TIME = 600; // доски слетают с купленной клетки
+// Кодовый замок купленного отсека: колёсики крутятся, по одному встают на цифры кода, дверца уезжает в сторону.
+const CODE_DIGITS = 3;
+const CODE_SPIN_STEP = 60; // мс: цифры на колёсиках сменяются так часто, пока крутятся
+const CODE_LOCK_TIMES = [500, 850, 1200]; // мс от начала: когда встаёт первое, второе и третье колёсико
+const DOOR_OPEN_DELAY = 1500; // дверца уезжает, когда встало последнее колёсико и замок щёлкнул
+const DOOR_OPEN_TIME = 350;
+const DOOR_SLIDE = 66; // на сколько дверца уезжает вбок
+const DIGIT_FONT = '17px';
+const DIGIT_COLOR = '#fbbf24'; // как цифры табло
+const DIGIT_LOCKED_COLOR = '#4ade80'; // встало на место — зелёная
 const SHAKE_TIME = 50; // один рывок тряски «нельзя»
 const SPEND_TIME = 400; // включённый предмет сработал: летит к месту и тает
 const NEW_ITEM_SCALE = 1.15; // купленный предмет «дышит» (увеличивается во столько раз), пока его не нажмут: видно, что он нажимается
@@ -42,7 +51,8 @@ export function effectPosition(id: EffectId): { x: number; y: number } {
 export class ItemShelf {
   private readonly scene: Phaser.Scene;
   private readonly items: Phaser.GameObjects.Image[] = []; // предмет в клетке; пустая клетка — картинка скрыта
-  private readonly planks: Phaser.GameObjects.Image[] = []; // доски на клетке; открытая — скрыты
+  private readonly doors: Phaser.GameObjects.Container[] = []; // стальные дверцы с кодом на закрытых отсеках; открытый — скрыта
+  private readonly digits: Phaser.GameObjects.Text[][] = []; // цифры кода на дверце каждого отсека
   private readonly effectIcons = new Map<EffectId, Phaser.GameObjects.Image>(); // включённые предметы у экрана
   private readonly effectCounts = new Map<EffectId, Phaser.GameObjects.Text>(); // «2», если включено больше одного
   private readonly shelfItems: (Item | null)[] = []; // какой предмет в какой клетке — для подсказки
@@ -62,10 +72,10 @@ export class ItemShelf {
       attachHint(item, hint, () => this.hintFor(slot), () => use(slot));
       this.items.push(item);
       this.shelfItems.push(null);
-      const planks = scene.add.image(x, y, SHELF_PLANKS_TEXTURE).setVisible(slot >= slots);
-      planks.setInteractive();
-      attachHint(planks, hint, () => [t('closedSlot'), t('closedSlotHow')]);
-      this.planks.push(planks);
+      const door = this.buildDoor(x, y, slot);
+      door.setVisible(slot >= slots);
+      attachHint(door, hint, () => [t('closedSlot'), t('closedSlotHow')]);
+      this.doors.push(door);
     }
 
     for (const id of EFFECT_IDS) {
@@ -80,17 +90,56 @@ export class ItemShelf {
     }
   }
 
-  /** Купили место: доски слетают с клетки slot. */
+  /** Дверца отсека slot: стальная плита, на ней три цифры кода (пока закрыто — нули). По ней наводят подсказку. */
+  private buildDoor(x: number, y: number, slot: number): Phaser.GameObjects.Container {
+    const plate = this.scene.add.image(0, 0, SHELF_DOOR_TEXTURE);
+    const step = DOOR_CODE_WIDTH / CODE_DIGITS;
+    const texts = Array.from({ length: CODE_DIGITS }, (_, index) =>
+      addText(this.scene, (index - (CODE_DIGITS - 1) / 2) * step, 0, '0', { ...LED_STYLE, fontSize: DIGIT_FONT, color: DIGIT_COLOR }).setOrigin(0.5),
+    );
+    this.digits[slot] = texts;
+    const door = this.scene.add.container(x, y, [plate, ...texts]);
+    door.setSize(SHELF_CELL, SHELF_CELL).setInteractive();
+    return door;
+  }
+
+  /** Код отсека slot — три цифры, у каждого отсека свой и всегда один и тот же (не случайность: колёсики просто крутятся к нему). */
+  private codeOf(slot: number): number[] {
+    const number = 100 + ((slot * 7919 + 13) % 900);
+    return String(number).split('').map(Number);
+  }
+
+  /**
+   * Купили место: на дверце отсека slot колёсики кода крутятся, по одному встают на цифры (зелёные), замок щёлкает,
+   * и дверца уезжает в сторону.
+   */
   openSlot(slot: number): void {
-    const planks = this.planks[slot];
-    this.scene.tweens.add({
-      targets: planks,
-      y: planks.y + 70,
-      angle: 35,
-      alpha: 0,
-      duration: PLANKS_FALL_TIME,
-      ease: 'Quad.easeIn',
-      onComplete: () => planks.setVisible(false),
+    const door = this.doors[slot];
+    const texts = this.digits[slot];
+    const code = this.codeOf(slot);
+    const locked = [false, false, false];
+    const spin = this.scene.time.addEvent({
+      delay: CODE_SPIN_STEP,
+      loop: true,
+      callback: () => texts.forEach((text, index) => text.setText(String(locked[index] ? code[index] : Phaser.Math.RND.between(0, 9)))),
+    });
+    CODE_LOCK_TIMES.forEach((time, index) => {
+      this.scene.time.delayedCall(time, () => {
+        locked[index] = true;
+        texts[index].setText(String(code[index])).setColor(DIGIT_LOCKED_COLOR);
+        pulse(this.scene, texts[index], 1.4);
+      });
+    });
+    this.scene.time.delayedCall(DOOR_OPEN_DELAY, () => {
+      spin.remove();
+      this.scene.tweens.add({
+        targets: door,
+        x: door.x + DOOR_SLIDE,
+        alpha: 0,
+        duration: DOOR_OPEN_TIME,
+        ease: 'Quad.easeIn',
+        onComplete: () => door.setVisible(false),
+      });
     });
   }
 
