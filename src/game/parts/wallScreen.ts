@@ -52,6 +52,12 @@ const ROW_WIDTH = 505;
 const ROW_HEIGHT = 66;
 const ROW_ICON = 48;
 const DIM_INK = '#8fc3cc';
+// Не встреченное — плитки «???»: видно, что есть ещё, но не что именно.
+const HIDDEN_COLUMNS = 6;
+const HIDDEN_WIDTH = 160;
+const HIDDEN_HEIGHT = 44;
+const HIDDEN_GAP = 8;
+const HIDDEN_TOP_GAP = 14; // от последней строки до плиток
 
 /** Строка вкладки: значок (картинка или эмодзи), название и описание. */
 interface Row {
@@ -276,8 +282,10 @@ export class WallScreen {
 
   /** «Предметы»: предметы с полки и амулеты, которые уже попадались в магазине, на полке или в гнёздах. */
   private buildItems(left: number, top: number): void {
+    const everything = [...ITEMS, MAGNIFIER, BULLET];
+    const hidden = everything.filter((item) => !isSeen(itemKey(item.id))).length + AMULETS.filter((amulet) => !isSeen(amuletKey(amulet.id))).length;
     const rows: Row[] = [
-      ...[...ITEMS, MAGNIFIER, BULLET]
+      ...everything
         .filter((item) => isSeen(itemKey(item.id)))
         .map((item) => ({ texture: itemTexture(item), name: t(item.name), description: t(item.description) })),
       ...AMULETS.filter((amulet) => isSeen(amuletKey(amulet.id))).map((amulet) => ({
@@ -286,24 +294,31 @@ export class WallScreen {
         description: t(amulet.description),
       })),
     ];
-    this.buildRows(left, top, rows);
+    this.buildRows(left, top, rows, hidden);
   }
 
   /** «Кто есть кто»: Коллектор, Дилер и автоматы, которые уже стояли на месте. */
   private buildWho(left: number, top: number): void {
     const rows: Row[] = [{ sign: '🎰', name: t(ORDINARY.name), description: t(ORDINARY.description) }];
+    let hidden = 0;
     if (isSeen(WHO_COLLECTOR)) rows.push({ sign: '💼', name: t('whoCollector'), description: t('whoCollectorWhat') });
+    else hidden += 1;
     if (isSeen(WHO_DEALER)) rows.push({ sign: '🎲', name: t('whoDealer'), description: t('whoDealerWhat') });
+    else hidden += 1;
     for (const character of CHARACTERS) {
       if (isSeen(machineKey(character.id))) rows.push({ sign: character.sign, name: t(character.name), description: t(character.description) });
+      else hidden += 1;
     }
-    this.buildRows(left, top, rows);
+    this.buildRows(left, top, rows, hidden);
   }
 
-  /** Строки в два столбца: значок слева, название и описание справа. Нечего показать — «Пока ничего не встретил». */
-  private buildRows(left: number, top: number, rows: Row[]): void {
+  /**
+   * Строки в два столбца: значок слева, название и описание справа. Под ними — плитки «???» по числу ещё не встреченного
+   * (что именно, не видно). Нечего показать совсем — «Пока ничего не встретил».
+   */
+  private buildRows(left: number, top: number, rows: Row[], hidden: number): void {
     const scene = this.scene;
-    if (rows.length === 0) {
+    if (rows.length === 0 && hidden === 0) {
       this.content.add(addText(scene, left + 10, top + 6, t('tabEmpty'), { fontSize: '22px', color: DIM_INK }));
       return;
     }
@@ -318,6 +333,18 @@ export class WallScreen {
       this.content.add(addText(scene, textX, y, row.name, { fontSize: '21px', fontStyle: 'bold', color: INK }));
       this.content.add(addText(scene, textX, y + 27, row.description, { fontSize: '16px', color: DIM_INK, wordWrap: { width: ROW_WIDTH - ROW_ICON - 36 } }));
     });
+    this.buildHidden(left, top + Math.ceil(rows.length / ROW_COLUMNS) * ROW_HEIGHT + (rows.length > 0 ? HIDDEN_TOP_GAP : 0), hidden);
+  }
+
+  /** hidden плиток «???» рядами по HIDDEN_COLUMNS. */
+  private buildHidden(left: number, top: number, hidden: number): void {
+    for (let index = 0; index < hidden; index++) {
+      const x = left + 10 + (index % HIDDEN_COLUMNS) * (HIDDEN_WIDTH + HIDDEN_GAP);
+      const y = top + Math.floor(index / HIDDEN_COLUMNS) * (HIDDEN_HEIGHT + HIDDEN_GAP);
+      const tile = this.scene.add.rectangle(x + HIDDEN_WIDTH / 2, y + HIDDEN_HEIGHT / 2, HIDDEN_WIDTH, HIDDEN_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.25);
+      const label = addText(this.scene, x + HIDDEN_WIDTH / 2, y + HIDDEN_HEIGHT / 2, '???', { fontSize: '22px', fontStyle: 'bold', color: DIM_INK }).setOrigin(0.5).setAlpha(0.6);
+      this.content.add([tile, label]);
+    }
   }
 
   /** «Как играть»: слева цель и порядок игры, справа клавиши. */
