@@ -11,6 +11,7 @@ import {
   NOTE_TEXTURE,
 } from '../decor';
 import { t } from '../lang';
+import { Atm } from './atm';
 import { CENTER_X, CENTER_Y, DARKNESS, DISPLAY, HOME_SCROLL, NOTE, NOTE_ANGLE, SCREEN, TURN_SCROLL, VIEW_WIDTH } from '../layout';
 import { addText, GAME_OVER_DEPTH, GOLD_TEXT, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT } from '../theme';
 
@@ -24,6 +25,7 @@ const HAND_OUT_X = DARKNESS.x - 30; // рука протянута к игрок
 const HAND_PALM_X = HAND_OUT_X - 58; // ладонь протянутой руки — сюда летят фишки
 const HAND_PALM_Y = HAND_Y - 22;
 const DEMAND_Y = HAND_Y - 100; // над ладонью: «фишка × долг»
+const ATM_LEAVE_TIME = 450; // банкомат уезжает в темноту, потом вид возвращается (то же время, что SLIDE_TIME в atm.ts)
 const PAYMENT_CHIPS = 6; // сколько фишек летит в ладонь при расплате (для красоты: сумма может быть любой)
 // Надписи на чёрном экране автомата: GOOD LUCK — фишек не хватило, дальше игра с Коллектором; DEATH — конец забега.
 const SCREEN_TITLE_STYLE = { ...LED_STYLE, fontSize: '64px', color: RED_TEXT, shadow: { color: '#ef4444', blur: 18, fill: true } };
@@ -59,14 +61,16 @@ interface Button {
 
 /**
  * Всё про долг: записка на стене (фишек хватает — она светится, и по ней можно отдать долг раньше),
- * темнота справа от комнаты и рука Коллектора в ней, поворот вида к руке, GOOD LUCK на экране автомата,
- * затемнение и экран DEATH.
+ * темнота справа от комнаты, в ней банкомат (платишь долг: фишки в щель, на выходе купон) и рука Коллектора
+ * (когда фишек не хватает), поворот вида, GOOD LUCK на экране автомата, затемнение и экран DEATH.
  */
 export class Collector {
   private readonly scene: Phaser.Scene;
   private readonly note: Phaser.GameObjects.Image; // записка с долгом: бумажка с надписями одной картинкой
   private readonly noteGlow: Phaser.GameObjects.Image; // свечение вокруг записки: долг можно отдать раньше
-  private readonly hand: Phaser.GameObjects.Image; // рука Коллектора
+  private readonly hand: Phaser.GameObjects.Image; // рука Коллектора: когда фишек не хватает
+  private readonly atm: Atm; // банкомат: когда фишек хватает, долг платят в него
+  private isAtmOut = false; // банкомат выехал (а не рука)
   private readonly demandChip: Phaser.GameObjects.Image; // над ладонью: фишка…
   private readonly demandText: Phaser.GameObjects.Text; // …и «× долг»
   private isNoteChecked = false; // на записке галочка: фишек на табло хватает на долг
@@ -101,6 +105,7 @@ export class Collector {
     this.hand = scene.add.image(HAND_IN_X, HAND_Y, HAND_OPEN_TEXTURE);
     this.hand.setInteractive({ useHandCursor: true });
     this.hand.on('pointerdown', pay);
+    this.atm = new Atm(scene, pay);
     this.demandChip = scene.add.image(HAND_PALM_X - 44, DEMAND_Y, CHIP_TEXTURE).setScale(1.2).setAlpha(0);
     this.demandText = addText(scene, HAND_PALM_X - 24, DEMAND_Y, '', { ...LED_STYLE, fontSize: '28px' })
       .setOrigin(0, 0.5)
@@ -177,7 +182,10 @@ export class Collector {
     });
   }
 
-  /** Вид уезжает вбок, из темноты выдвигается рука ладонью вверх, над ней — сколько отдать. Рука вышла — ready(). */
+  /**
+   * Вид уезжает вбок. Фишек хватает — из темноты выезжает банкомат с долгом на экране; не хватает — тянется рука
+   * ладонью вверх, над ней — сколько отдать. Вышел — ready().
+   */
   reachOut(debt: number, isEnough: boolean, ready: () => void): void {
     this.scene.tweens.add({
       targets: this.scene.cameras.main,
@@ -185,6 +193,11 @@ export class Collector {
       duration: TURN_TIME,
       ease: 'Sine.easeInOut',
       onComplete: () => {
+        if (isEnough) {
+          this.isAtmOut = true;
+          this.atm.slideIn(debt, isEnough, ready);
+          return;
+        }
         this.hand.setTexture(HAND_OPEN_TEXTURE);
         this.demandText.setText(`× ${debt}`).setColor(isEnough ? LED_COLOR : RED_TEXT);
         this.scene.tweens.add({ targets: this.hand, x: HAND_OUT_X, duration: HAND_MOVE_TIME, ease: 'Cubic.easeOut' });
@@ -195,10 +208,15 @@ export class Collector {
   }
 
   /**
-   * Долг отдан: фишки летят с табло в ладонь — тогда paid(x, y) с места ладони (оттуда сцена пускает билеты);
-   * рука сжимает фишки и уходит, вид возвращается к автомату — потом done().
+   * Долг отдан. Банкомат: фишки летят с табло в щель, он печатает купон — тогда paid(x, y) с места купона
+   * (оттуда сцена пускает билеты), уезжает, вид возвращается. Рука: фишки летят в ладонь — paid(x, y) с места ладони,
+   * рука сжимает их и уходит. Вид вернулся к автомату — done().
    */
   takePayment(paid: (x: number, y: number) => void, done: () => void): void {
+    if (this.isAtmOut) {
+      this.atm.swallowAndPrint(paid, () => this.leave(done));
+      return;
+    }
     for (let index = 0; index < PAYMENT_CHIPS; index++) {
       const chip = this.scene.add.image(DISPLAY.x, DISPLAY.y, CHIP_TEXTURE).setScale(1.3);
       this.scene.tweens.add({
@@ -233,8 +251,21 @@ export class Collector {
     this.leave(done);
   }
 
-  /** Рука сжимает фишки в кулак и уходит в темноту, вид возвращается к автомату — потом done(). */
+  /** Банкомат уезжает в темноту или рука сжимает фишки в кулак и уходит, вид возвращается к автомату — потом done(). */
   private leave(done: () => void): void {
+    if (this.isAtmOut) {
+      this.isAtmOut = false;
+      this.atm.slideOut(() => {});
+      this.scene.tweens.add({
+        targets: this.scene.cameras.main,
+        scrollX: HOME_SCROLL,
+        delay: ATM_LEAVE_TIME,
+        duration: TURN_TIME,
+        ease: 'Sine.easeInOut',
+        onComplete: done,
+      });
+      return;
+    }
     this.hand.setTexture(HAND_FIST_TEXTURE);
     this.scene.tweens.add({ targets: [this.demandChip, this.demandText], alpha: 0, duration: 200 });
     this.scene.tweens.add({ targets: this.hand, x: HAND_IN_X, delay: HAND_HOLD_TIME, duration: HAND_MOVE_TIME, ease: 'Cubic.easeIn' });
@@ -299,6 +330,8 @@ export class Collector {
     camera.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       camera.setScroll(HOME_SCROLL, 0); // вид снова на автомате
       this.hand.setX(HAND_IN_X);
+      this.atm.hide();
+      this.isAtmOut = false;
       this.demandChip.setAlpha(0);
       this.demandText.setAlpha(0);
       dark();
