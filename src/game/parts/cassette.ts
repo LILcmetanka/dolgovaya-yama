@@ -42,7 +42,6 @@ const WINDOW_SIGN_SCALE = 0.32; // «◀◀» в окошке видеомагн
 const WINDOW_SIGN_TINT = 0xf59e0b; // янтарное, как цифры табло
 const PLAY_MARK_TINT = 0x71717a; // тусклое «▶» в окошке PLAY, пока кассета не вставлена
 const PLAY_MARK_ALPHA = 0.6;
-const INSERT_DROP = 30; // вставленная кассета уходит вниз, в видеомагнитофон, на столько
 // Перемотка: поверх всего вида — «◀◀» (после отката — «▶») в левом верхнем углу, как на экране видеомагнитофона, и полосы помех.
 const REWIND_DEPTH = TOOLTIP_DEPTH - 1; // над игрой и GOOD LUCK, под подсказкой
 const SIGN_POSITION = { x: 64, y: 54 }; // в координатах вида
@@ -56,13 +55,14 @@ const PAY_FLY_TIME = 450; // билеты летят с табло в кассе
 const PAY_STAGGER = 90;
 const LEAVE_TIME = 500; // купленная кассета уезжает к видеомагнитофону
 const REC_BLINK_TIME = 250; // запись: лампочка мигает
-const REC_BLINKS = 4;
+const REC_BLINKS = 3;
 const REEL_TURN_TIME = 700; // катушка делает оборот
 const GLOW_TIME = 600;
 const SHAKE_TIME = 50; // один рывок тряски
-const INSERT_TIME = 450; // кассета уходит в видеомагнитофон
-const MOVE_DELAY = 1400; // записали: кассета переезжает из REC в PLAY, когда докрутятся катушки
-const MOVE_TIME = 400;
+const INSERT_TIME = 450; // кассета уходит в видеомагнитофон — за его переднюю панель, на свою высоту вниз
+const RECORD_TIME = 1100; // запись идёт, пока кассета внутри
+const EJECT_TIME = 350; // записанная выезжает обратно
+const MOVE_TIME = 400; // и переезжает из REC в PLAY
 const RIBBON_WIDTH = 3; // плёнка, которую жуёт автомат
 const RIBBON_LENGTH = 46;
 const RIBBON_COLOR = 0x1c1917;
@@ -214,11 +214,16 @@ export class Cassette {
 
   // ---------- Видеомагнитофон ----------
 
-  /** Кассета записывает забег: лампочка записи мигает, катушки крутятся, потом она переезжает из REC в PLAY. */
+  /**
+   * Кассета записывает забег: вставляется в видеомагнитофон (уходит за переднюю панель), лампочка записи мигает, катушки крутятся;
+   * потом она выезжает обратно и переезжает из REC в PLAY.
+   */
   record(): void {
     this.isRecorded = true;
     this.isMoving = true;
-    this.showUsable(false); // пока кассета переезжает, не светится
+    this.showUsable(false); // пока кассета вставлена и переезжает, не светится
+    const tape = [this.vcrTape, ...this.vcrReels];
+    this.scene.tweens.add({ targets: tape, y: `+=${TAPE_SIZE.height}`, duration: INSERT_TIME, ease: 'Quad.easeIn' });
     this.scene.tweens.add({ targets: this.vcrReels, angle: 360, duration: REEL_TURN_TIME, repeat: 1 });
     this.recLamp.setFillStyle(REC_ON);
     this.scene.tweens.add({
@@ -229,10 +234,11 @@ export class Cassette {
       repeat: REC_BLINKS - 1,
       onComplete: () => this.recLamp.setFillStyle(REC_OFF).setAlpha(1),
     });
+    this.scene.tweens.add({ targets: tape, y: `-=${TAPE_SIZE.height}`, delay: INSERT_TIME + RECORD_TIME, duration: EJECT_TIME, ease: 'Back.easeOut' });
     this.scene.tweens.add({
-      targets: [this.vcrTape, ...this.vcrReels],
+      targets: tape,
       x: `+=${PLAY_X - REC_X}`,
-      delay: MOVE_DELAY,
+      delay: INSERT_TIME + RECORD_TIME + EJECT_TIME,
       duration: MOVE_TIME,
       ease: 'Cubic.easeInOut',
       onComplete: () => {
@@ -261,8 +267,8 @@ export class Cassette {
   }
 
   /**
-   * Кассету вставили: она уходит в видеомагнитофон, в его окошке и в углу вида — «◀◀», по виду бегут полосы помех,
-   * вид трясётся и гаснет — тогда done(): сцена перезапускается с записью.
+   * Кассету вставили: она уходит в видеомагнитофон (за переднюю панель) и пропадает там — автомат её съест, в его окошке
+   * и в углу вида — «◀◀», по виду бегут полосы помех, вид трясётся и гаснет — тогда done(): сцена перезапускается с записью.
    */
   rewind(done: () => void): void {
     this.isMoving = false;
@@ -270,8 +276,14 @@ export class Cassette {
     this.isOnVcr = false;
     const tape = [this.vcrTape, ...this.vcrReels];
     this.scene.tweens.killTweensOf(tape);
-    this.scene.tweens.add({ targets: this.vcrReels, angle: -360, duration: REEL_TURN_TIME, repeat: -1 });
-    this.scene.tweens.add({ targets: tape, y: `+=${INSERT_DROP}`, alpha: 0, duration: INSERT_TIME, ease: 'Quad.easeIn' });
+    this.scene.tweens.add({ targets: this.vcrReels, angle: -360, duration: REEL_TURN_TIME, repeat: 1 });
+    this.scene.tweens.add({
+      targets: tape,
+      y: `+=${TAPE_SIZE.height}`,
+      duration: INSERT_TIME,
+      ease: 'Quad.easeIn',
+      onComplete: () => tape.forEach((part) => part.setVisible(false)), // кассета осталась внутри
+    });
     this.scene.time.delayedCall(INSERT_TIME, () => this.playBackwards(done));
   }
 
