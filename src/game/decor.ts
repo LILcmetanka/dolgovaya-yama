@@ -1887,15 +1887,17 @@ const MONITOR_NEW = '#fde047'; // символ, который вошёл в а�
 const MONITOR_PRICE_COLOR = '#fbbf24'; // цены — как цифры табло
 const MONITOR_PAD = 10; // поля экрана
 const MONITOR_PRICE_COLUMNS = 3; // цены — по три в ряд
-const MONITOR_PRICE_ROW = 40;
-const MONITOR_PRICE_ICON = 30;
-const MONITOR_PRICE_CHIP = 14;
-const MONITOR_NOTE_ROW = 30; // особый символ: значок и что делает (до двух строк)
-const MONITOR_NOTE_ICON = 26;
-const MONITOR_NOTE_FONT = 11;
-const MONITOR_NOTE_LINE = 13; // высота строки описания
-const MONITOR_MINI_CELL = 5; // схема джекпота: клетки 5×3
-const MONITOR_MINI_GAP = 1.5;
+const MONITOR_PRICE_ROW = 56;
+const MONITOR_PRICE_ICON = 42;
+const MONITOR_PRICE_CHIP = 20;
+const MONITOR_PRICE_FONT = 22;
+const MONITOR_NOTE_COLUMNS = 2; // особые символы — в два столбца
+const MONITOR_NOTE_ROW = 48; // особый символ: значок и что делает (до двух строк)
+const MONITOR_NOTE_ICON = 36;
+const MONITOR_NOTE_FONT = 16;
+const MONITOR_NOTE_LINE = 19; // высота строки описания
+const MONITOR_MINI_CELL = 8; // схема джекпота: клетки 5×3
+const MONITOR_MINI_GAP = 2.2;
 
 /** Платящий символ на мониторе: сколько платит его паттерн ×1. isNew — вошёл в автомат в этом раунде. */
 export interface MonitorPrice {
@@ -1957,7 +1959,11 @@ export function drawMonitorScreen(
   drawMonitorBackground(ctx, width, height);
   let y = drawMonitorPrices(ctx, prices, width, MONITOR_PAD);
   y = drawMonitorDivider(ctx, width, y);
-  for (const note of notes) y = drawMonitorNote(ctx, note, width, y);
+  const noteWidth = (width - 2 * MONITOR_PAD) / MONITOR_NOTE_COLUMNS;
+  notes.forEach((note, index) => {
+    const left = MONITOR_PAD + (index % MONITOR_NOTE_COLUMNS) * noteWidth;
+    drawMonitorNote(ctx, note, left, noteWidth, y + Math.floor(index / MONITOR_NOTE_COLUMNS) * MONITOR_NOTE_ROW);
+  });
   const jackpotTop = height - MONITOR_PAD - MONITOR_NOTE_ROW; // джекпот — всегда внизу экрана
   drawMonitorDivider(ctx, width, jackpotTop - MONITOR_PAD);
   drawMonitorJackpot(ctx, jackpot, width, jackpotTop);
@@ -1990,7 +1996,7 @@ function drawMonitorPrices(ctx: CanvasRenderingContext2D, prices: MonitorPrice[]
     ctx.translate(left + MONITOR_PRICE_ICON + 6, middle - MONITOR_PRICE_CHIP / 2);
     drawChip(ctx, MONITOR_PRICE_CHIP);
     ctx.restore();
-    ctx.font = `bold 15px ui-monospace, "DejaVu Sans Mono", monospace`;
+    ctx.font = `bold ${MONITOR_PRICE_FONT}px ui-monospace, "DejaVu Sans Mono", monospace`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = MONITOR_PRICE_COLOR;
@@ -1999,14 +2005,13 @@ function drawMonitorPrices(ctx: CanvasRenderingContext2D, prices: MonitorPrice[]
   return top + Math.ceil(prices.length / MONITOR_PRICE_COLUMNS) * MONITOR_PRICE_ROW;
 }
 
-/** Особый символ: значок слева, справа — что делает, до двух строк. Возвращает, где кончилась строка. */
-function drawMonitorNote(ctx: CanvasRenderingContext2D, note: MonitorNote, width: number, top: number): number {
+/** Особый символ в столбце шириной columnWidth: значок слева, справа — что делает, до двух строк. */
+function drawMonitorNote(ctx: CanvasRenderingContext2D, note: MonitorNote, left: number, columnWidth: number, top: number): void {
   const middle = top + MONITOR_NOTE_ROW / 2;
-  if (note.isNew) drawMonitorFrame(ctx, MONITOR_PAD - 4, top + 1, width - 2 * MONITOR_PAD + 8, MONITOR_NOTE_ROW - 2);
-  drawMonitorIcon(ctx, note.symbol, MONITOR_PAD, middle - MONITOR_NOTE_ICON / 2, MONITOR_NOTE_ICON);
-  const textLeft = MONITOR_PAD + MONITOR_NOTE_ICON + 8;
-  drawMonitorText(ctx, note.text, textLeft, middle, width - textLeft - MONITOR_PAD);
-  return top + MONITOR_NOTE_ROW;
+  if (note.isNew) drawMonitorFrame(ctx, left - 2, top + 1, columnWidth - 8, MONITOR_NOTE_ROW - 2);
+  drawMonitorIcon(ctx, note.symbol, left + 2, middle - MONITOR_NOTE_ICON / 2, MONITOR_NOTE_ICON);
+  const textLeft = left + MONITOR_NOTE_ICON + 12;
+  drawMonitorText(ctx, note.text, textLeft, middle, columnWidth - MONITOR_NOTE_ICON - 24);
 }
 
 /** Джекпот: маленькая схема «все 15 клеток» и что он даёт кроме фишек. */

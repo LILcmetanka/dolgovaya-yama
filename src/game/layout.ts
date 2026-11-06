@@ -98,9 +98,9 @@ export const MAGNIFIER_SPOT = { x: 1015 + ROOM_SIDE, y: 500 };
 export const SHOT_HOLE = { x: 612, y: 282 };
 
 // Экран на стене справа от автомата: маленький квадратный, как телевизор. Виден без поворота; клик — большой экран со вкладками (WallScreen).
-export const WALL_TV: Box = { x: 975, y: 230, width: 112, height: 96 };
+export const WALL_TV: Box = { x: 935, y: 225, width: 170, height: 144 };
 // Большой экран: во весь вид, поверх игры (вещи приклеены к окну, координаты — в единицах вида). Вкладки сверху, содержимое под ними.
-export const WALL_PANEL: Box = { x: VIEW_CENTER_X, y: 322, width: 960, height: 580 };
+export const WALL_PANEL: Box = { x: VIEW_CENTER_X, y: 322, width: 1060, height: 620 };
 // Видеомагнитофон — на деревянном ящике справа от автомата, под экраном на стене: его видно и от автомата, и у Коллектора.
 // На него ложится купленная кассета.
 export const VCR: Box = { x: 860, y: 543, width: 150, height: 34 };
