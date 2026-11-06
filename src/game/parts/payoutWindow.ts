@@ -1,12 +1,11 @@
 import Phaser from 'phaser';
-import { CHIP_TEXTURE, createChipTextures } from '../decor';
+import { CHIP_TEXTURE, createChipTextures, createTakeButtonTextures, TAKE_BEZEL_TEXTURE, TAKE_DOME_TEXTURE, TAKE_SHINE_TEXTURE } from '../decor';
 import { BOARD_CHIP_X, DISPLAY } from '../layout';
 import {
   addText,
   CHIP_DEPTH,
   GREEN_TEXT,
   LAMP_GOLD,
-  LAMP_OFF,
   LAMP_RED,
   LED_COLOR,
   LED_STYLE,
@@ -20,13 +19,13 @@ import {
 const CHIP_X = 452; // фишка слева от суммы
 const CHIP_Y = 552; // фишка и «× 400» — посередине окошка
 const PAYOUT_TEXT_X = 474; // «× 400» — правее фишки
-// Кнопка «забрать» на самом табло — круг света без слов.
+// Кнопка «забрать» на самом табло — небольшая кнопка в металлической оправе без слов: купол светится золотым (черепа — красным).
 const BUTTON_X = 664;
 const BUTTON_Y = 552;
-const BUTTON_RADIUS = 20; // светящийся круг
-const BUTTON_RING_RADIUS = 27; // кольцо вокруг него
-const BUTTON_RING_WIDTH = 3;
-const BUTTON_GLOW_ALPHA = 0.25; // мягкое свечение под кругом
+const BUTTON_GLOW_RADIUS = 24; // мягкое свечение вокруг кнопки
+const BUTTON_GLOW_ALPHA = 0.25;
+const BUTTON_HIT_SIZE = 46; // нажимать можно чуть шире самой кнопки
+const BUTTON_SHINE_OFFSET = { x: -3, y: -5 }; // блик на куполе — сверху слева
 // Сколько фишек летит в табло при «забрать»: одна и ещё по одной за каждый порог — долю долга, которую набрал кон.
 const CHIP_STEPS = [0.25, 0.5, 1, 2, 4];
 // Анимации, мс.
@@ -56,9 +55,9 @@ export class PayoutWindow {
   private readonly lit: Phaser.GameObjects.Container; // всё, что горит, пока на кону что-то есть: фишка, сумма, кнопка
   private readonly chip: Phaser.GameObjects.Image; // фишка слева от суммы
   private readonly payoutText: Phaser.GameObjects.Text; // «× 400» — сколько фишек на кону
-  private readonly button: Phaser.GameObjects.Container; // кнопка «забрать»: круг света и кольцо, без надписей
-  private readonly buttonCore: Phaser.GameObjects.Arc; // сам круг — на него нажимают
-  private readonly buttonParts: Phaser.GameObjects.Arc[]; // свечение, кольцо и круг — краснеют вместе с суммой при черепах
+  private readonly button: Phaser.GameObjects.Container; // кнопка «забрать»: свечение, купол и блик, без надписей (оправа стоит под ней и видна всегда)
+  private readonly buttonGlow: Phaser.GameObjects.Arc; // свечение вокруг
+  private readonly buttonDome: Phaser.GameObjects.Image; // купол — краснеет вместе с суммой при черепах
   private flyingChips = 1; // сколько фишек полетит при «забрать»
   private isLit = false; // окошко горит (или загорается)
 
@@ -66,17 +65,17 @@ export class PayoutWindow {
   constructor(scene: Phaser.Scene, take: () => void) {
     this.scene = scene;
     createChipTextures(scene);
+    createTakeButtonTextures(scene);
 
-    // Погашенная кнопка: тёмный контур — видно, где она, но не горит. Не интерактивна.
-    scene.add.circle(BUTTON_X, BUTTON_Y, BUTTON_RING_RADIUS).setStrokeStyle(BUTTON_RING_WIDTH, LAMP_OFF);
+    // Погашенная кнопка: пустая оправа с тёмным гнездом — видно, где она, но не горит. Не интерактивна.
+    scene.add.image(BUTTON_X, BUTTON_Y, TAKE_BEZEL_TEXTURE);
     this.chip = scene.add.image(CHIP_X, CHIP_Y, CHIP_TEXTURE);
     this.payoutText = addText(scene, PAYOUT_TEXT_X, CHIP_Y, '', { ...LED_STYLE, fontSize: '26px' }).setOrigin(0, 0.5);
-    const glow = scene.add.circle(0, 0, BUTTON_RING_RADIUS, LAMP_GOLD, BUTTON_GLOW_ALPHA);
-    const ring = scene.add.circle(0, 0, BUTTON_RING_RADIUS).setStrokeStyle(BUTTON_RING_WIDTH, LAMP_GOLD);
-    this.buttonCore = scene.add.circle(0, 0, BUTTON_RADIUS, LAMP_GOLD);
-    this.buttonParts = [glow, ring, this.buttonCore];
-    this.button = scene.add.container(BUTTON_X, BUTTON_Y, this.buttonParts);
-    this.button.setSize(BUTTON_RING_RADIUS * 2, BUTTON_RING_RADIUS * 2);
+    this.buttonGlow = scene.add.circle(0, 0, BUTTON_GLOW_RADIUS, LAMP_GOLD, BUTTON_GLOW_ALPHA);
+    this.buttonDome = scene.add.image(0, 0, TAKE_DOME_TEXTURE).setTint(LAMP_GOLD);
+    const shine = scene.add.image(BUTTON_SHINE_OFFSET.x, BUTTON_SHINE_OFFSET.y, TAKE_SHINE_TEXTURE).setAngle(-25);
+    this.button = scene.add.container(BUTTON_X, BUTTON_Y, [this.buttonGlow, this.buttonDome, shine]);
+    this.button.setSize(BUTTON_HIT_SIZE, BUTTON_HIT_SIZE);
     this.button.setInteractive({ useHandCursor: true });
     this.button.on('pointerdown', take);
     // Всё горящее — в одном слое: погасло окошко — слой невидим, и кнопку не нажать.
@@ -148,10 +147,8 @@ export class PayoutWindow {
 
   /** Кнопка светится этим цветом: золотой — можно забрать, красный — черепа. */
   private paintButton(color: number): void {
-    const [glow, ring, core] = this.buttonParts;
-    glow.setFillStyle(color, BUTTON_GLOW_ALPHA);
-    ring.setStrokeStyle(BUTTON_RING_WIDTH, color);
-    core.setFillStyle(color);
+    this.buttonGlow.setFillStyle(color, BUTTON_GLOW_ALPHA);
+    this.buttonDome.setTint(color);
   }
 
   /**

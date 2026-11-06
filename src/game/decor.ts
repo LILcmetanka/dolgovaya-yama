@@ -557,6 +557,69 @@ function drawChip(ctx: CanvasRenderingContext2D, size: number): void {
   ctx.restore();
 }
 
+// Кнопка «забрать» на табло: металлическая оправа, под ней выпуклый купол (его красят оттенком: золотой — можно забрать, красный — черепа)
+// и блик. Диаметры — в раскладке (px).
+export const TAKE_BEZEL_TEXTURE = 'take-bezel';
+export const TAKE_DOME_TEXTURE = 'take-dome';
+export const TAKE_SHINE_TEXTURE = 'take-shine';
+export const TAKE_BEZEL_SIZE = 36;
+const TAKE_DOME_SIZE = 26;
+const TAKE_SHINE_SIZE = { width: 12, height: 7 };
+
+export function createTakeButtonTextures(scene: Phaser.Scene): void {
+  if (!scene.textures.exists(TAKE_BEZEL_TEXTURE)) {
+    const texture = createSharpCanvas(scene, TAKE_BEZEL_TEXTURE, TAKE_BEZEL_SIZE, TAKE_BEZEL_SIZE);
+    if (texture) {
+      const ctx = texture.context;
+      const c = TAKE_BEZEL_SIZE / 2;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.beginPath();
+      ctx.arc(c, c + 1.5, c - 1, 0, Math.PI * 2);
+      ctx.fill(); // тень под оправой
+      const metal = ctx.createLinearGradient(0, 0, TAKE_BEZEL_SIZE, TAKE_BEZEL_SIZE);
+      metal.addColorStop(0, '#d1d5db');
+      metal.addColorStop(0.5, '#6b7280');
+      metal.addColorStop(1, '#374151');
+      ctx.fillStyle = metal;
+      ctx.beginPath();
+      ctx.arc(c, c, c - 1, 0, Math.PI * 2);
+      ctx.fill(); // оправа
+      ctx.fillStyle = '#111827';
+      ctx.beginPath();
+      ctx.arc(c, c, TAKE_DOME_SIZE / 2 + 2, 0, Math.PI * 2);
+      ctx.fill(); // тёмное гнездо под куполом
+      texture.refresh();
+    }
+  }
+  if (!scene.textures.exists(TAKE_DOME_TEXTURE)) {
+    const texture = createSharpCanvas(scene, TAKE_DOME_TEXTURE, TAKE_DOME_SIZE, TAKE_DOME_SIZE);
+    if (texture) {
+      const ctx = texture.context;
+      const c = TAKE_DOME_SIZE / 2;
+      const dome = ctx.createRadialGradient(c * 0.8, c * 0.7, 1, c, c, c); // белый-серый: оттенок даст цвет
+      dome.addColorStop(0, '#ffffff');
+      dome.addColorStop(0.6, '#f0f0f0');
+      dome.addColorStop(1, '#b8b8b8');
+      ctx.fillStyle = dome;
+      ctx.beginPath();
+      ctx.arc(c, c, c, 0, Math.PI * 2);
+      ctx.fill();
+      texture.refresh();
+    }
+  }
+  if (!scene.textures.exists(TAKE_SHINE_TEXTURE)) {
+    const texture = createSharpCanvas(scene, TAKE_SHINE_TEXTURE, TAKE_SHINE_SIZE.width, TAKE_SHINE_SIZE.height);
+    if (texture) {
+      const ctx = texture.context;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+      ctx.beginPath();
+      ctx.ellipse(TAKE_SHINE_SIZE.width / 2, TAKE_SHINE_SIZE.height / 2, TAKE_SHINE_SIZE.width / 2, TAKE_SHINE_SIZE.height / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      texture.refresh();
+    }
+  }
+}
+
 /** Рука Коллектора: раскрытая ладонью вверх (ждёт долг) и кулаком (забрал или злится). Рукав уходит за правый край. */
 export function createHandTextures(scene: Phaser.Scene): void {
   if (!scene.textures.exists(HAND_OPEN_TEXTURE)) bakeHand(scene, HAND_OPEN_TEXTURE, drawOpenHand);
