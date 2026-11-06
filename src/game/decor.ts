@@ -864,13 +864,13 @@ export function createTapeTextures(scene: Phaser.Scene): void {
 }
 
 /**
- * Видеомагнитофон на полу у монитора: корпус, щель для кассеты, тёмное окошко (в нём «◀◀», когда плёнка перематывается),
+ * Видеомагнитофон на полу у монитора: корпус, два отделения — щель REC для чистой кассеты и тёмное окошко PLAY (в нём «◀◀», когда плёнка перематывается),
  * кнопки и гнездо лампочки записи. Лампочку и «◀◀» ставит поверх часть Cassette. Места на корпусе — от его середины.
  */
 export const VCR_TEXTURE = 'vcr';
-export const VCR_SLOT_DX = -34; // щель для кассеты — левее середины на столько; кассета стоит над ней
+export const VCR_SLOT_DX = -34; // отделение REC: щель для чистой кассеты — левее середины на столько; кассета стоит над ней
 export const VCR_REC_LAMP = { dx: -64, dy: 9 }; // лампочка записи — у левого края
-export const VCR_WINDOW = { dx: 42, dy: -3 }; // окошко с «◀◀» — правее середины
+export const VCR_WINDOW = { dx: 34, dy: -3 }; // отделение PLAY: окошко с «▶» и «◀◀» — правее середины; записанная кассета стоит над ним
 
 export function createVcrTexture(scene: Phaser.Scene, width: number, height: number): void {
   if (scene.textures.exists(VCR_TEXTURE)) return;

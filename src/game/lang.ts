@@ -77,11 +77,11 @@ const TEXTS = {
   drum: { ru: 'Барабан', en: 'Wheel' }, // колесо в магазине
   drumWhat: { ru: 'Крути за фишки. Каждая следующая прокрутка — цена ×{0}', en: 'Spin for chips. Each next spin: price ×{0}' },
   tape: { ru: 'Кассета', en: 'Cassette' },
-  tapeWhat: { ru: 'Запишет начало следующего раунда. Не хватит на долг — вернёшься туда. Один раз', en: 'Records the start of the next round. Short on the debt — go back there. Once per run' },
-  tapeRecorded: { ru: 'Не хватает на долг — вставь: забег вернётся к записи', en: 'Short on the debt — insert it: the run goes back to the recording' },
+  tapeWhat: { ru: 'Запиши забег как есть — и вернись к записи, когда попадёшь в беду. Автомат съест кассету', en: 'Record the run as it is — and go back to it when things go wrong. The machine eats the tape' },
+  tapeBlank: { ru: 'Чистая. Между прокрутками — запиши забег как есть, переписать нельзя', en: 'Blank. Between spins — record the run as it is, no re-recording' },
+  tapeRecorded: { ru: 'Записано. Между прокрутками или у Коллектора (не в рулетке) — вернись к записи', en: 'Recorded. Between spins or at the Collector (not in roulette) — go back to the recording' },
   vcr: { ru: 'Видеомагнитофон', en: 'VCR' },
   vcrWhat: { ru: 'Кассета к нему — в магазине', en: 'Its cassette is sold in the shop' },
-  vcrUsed: { ru: 'Кассета израсходована', en: 'The cassette is used up' },
   // Монитор справа: что делает каждый особый символ. {0}, {1} — числа из правил (их подставляет монитор).
   skullNote: { ru: 'Паттерн из черепов сжигает кон', en: 'A skull pattern burns the pot' },
   ticketNote: { ru: '{0} на экране — билет', en: '{0} on screen — a ticket' },

@@ -96,7 +96,8 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isLuckyNext = false; // на экране был клевер: следующая прокрутка — с паттерном наверняка
   protected freeSpins = 0; // сколько бесплатных прокруток за короны ещё впереди — они крутятся сами
   protected phase: Phase = PHASES[0]; // какая фаза сейчас (phases.ts) — по числу закрытых долгов
-  protected tapeState: TapeState = 'forSale'; // кассета: продаётся, куплена (запишет забег на выходе из магазина), записана или уже вставлена
+  protected tapeState: TapeState = 'forSale'; // кассета: продаётся, чистая (в REC) или записана (в PLAY)
+  protected tapesBought = 0; // сколько кассет куплено за забег — от этого цена; откат этого числа не откатывает
   protected tapeRecord: RunSave | null = null; // что записано на кассету: забег в начале раунда
   protected isSpinning = false; // сетка крутится — ввод игнорируется
   protected isRoundOver = false; // прокрутки кончились — расплата и магазин, крутить и забирать нельзя
@@ -167,6 +168,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.freeSpins = 0;
     this.phase = PHASES[0];
     this.tapeState = 'forSale';
+    this.tapesBought = 0;
     this.tapeRecord = null;
     this.isDealing = false;
     this.isSpinning = false;
@@ -192,7 +194,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.payout.showPot(this.pot, this.debt);
     this.payout.setEnabled(this.canAct());
     this.collector.showPayable(this.canPayEarly());
-    this.cassette.showUsable(this.canRewind());
+    this.cassette.showUsable(this.canRecord() || this.canRewind());
     this.monitor.setEnabled(this.canAct() || this.isAtMonitor); // к монитору — между прокрутками, от него — всегда
     const tension = this.tension();
     this.sfx.setTension(tension);
@@ -257,9 +259,15 @@ export abstract class BaseScene extends Phaser.Scene {
     return this.hasEnoughForDebt() && isRoundGoing && this.spinsLeft <= PAY_EARLY_GLOW_SPINS;
   }
 
-  /** Можно ли вставить кассету — тогда она светится: Коллектор пришёл, а фишек не хватает, и на кассете есть запись. */
+  /** Можно ли записать на чистую кассету: между прокрутками у автомата (canAct). */
+  protected canRecord(): boolean {
+    return this.tapeState === 'blank' && this.canAct();
+  }
+
+  /** Можно ли откатиться: есть запись, и сейчас либо между прокрутками, либо Коллектор пришёл (но рулетка не идёт: isChoosingDeal в ней снят). */
   protected canRewind(): boolean {
-    return this.isChoosingDeal && this.tapeState === 'recorded';
+    const isFree = this.canAct() || (this.isChoosingDeal && !this.isPaused);
+    return this.tapeState === 'recorded' && !this.isRewinding && !this.isGameOver && isFree;
   }
 
   /**

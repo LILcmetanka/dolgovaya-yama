@@ -54,10 +54,10 @@ export class GameScene extends ShotScene {
     super('GameScene');
   }
 
-  /** data.tape — запись кассеты: сцену перезапустили после отката (SaveScene.insertTape). */
-  create(data: { tape?: RunSave } = {}): void {
+  /** data.tape — запись кассеты: сцену перезапустили после отката (SaveScene.insertTape); data.tapesBought — сколько кассет куплено. */
+  create(data: { tape?: RunSave; tapesBought?: number } = {}): void {
     this.resetState();
-    if (data.tape) this.loadTape(data.tape); // откат — забег с кассеты (до частей: они строятся по состоянию)
+    if (data.tape) this.loadTape(data.tape, data.tapesBought ?? 0); // откат — забег с кассеты (до частей: они строятся по состоянию)
     this.setupCamera();
     drawRoom(this);
     const machineBody = drawMachineBody(this); // тело корпуса — его красит MachineBadge в цвет автомата
@@ -73,7 +73,7 @@ export class GameScene extends ShotScene {
     this.amuletRack = new AmuletRack(this, this.sockets, this.tooltip);
     this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip);
     this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip);
-    this.cassette = new Cassette(this, this.tapeState === 'forSale', () => this.buyTape(), () => this.insertTape(), this.tooltip);
+    this.cassette = new Cassette(this, this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip);
     this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx);
     this.bulletStand = new BulletStand(this, () => this.buyBullet(), this.tooltip);
     this.revolverTable = new RevolverTable(
@@ -304,12 +304,12 @@ export class GameScene extends ShotScene {
   }
 
   /**
-   * Клавиша 1–9 или 0: в магазине — купить; вне магазина 9 — вставить кассету (можно, когда Коллектор пришёл, а фишек не хватает);
+   * Клавиша 1–9 или 0: в магазине — купить; вне магазина 9 — кассета (записать или откатиться);
    * у Коллектора 1–6 — амулет, в игре 1–8 — включить предмет с полки.
    */
   private onNumber(index: number): void {
     if (this.isShopping) this.onShopNumber(index);
-    else if (index === TAPE_KEY) this.insertTape();
+    else if (index === TAPE_KEY) this.useTape();
     else if (this.isChoosingDeal) this.giveAmulet(index);
     else if (index < MAX_SLOTS) this.useItem(index);
   }

@@ -2,10 +2,11 @@ import { tapePrice, type RunSave } from '../save';
 import { ShopScene } from './ShopScene';
 
 /**
- * Слой кассеты — один откат за забег. В магазине кассета продаётся за билеты, и с каждым закрытым долгом она дороже.
- * Купил — она ложится на видеомагнитофон у монитора, а когда уходишь из магазина, записывает забег: каким начнётся раунд.
- * Коллектор пришёл, а фишек не хватает, — кассета светится: вставь её (клик или 9) — плёнка перематывается,
- * сцена перезапускается с записью, и раунд из записи начинается заново. Запись живёт только в памяти: закрыл вкладку — забег заново.
+ * Слой кассеты (шаг 45). В магазине кассета продаётся за билеты: 2, 3, 4… по купленным за забег.
+ * Купил — она ложится в отделение REC видеомагнитофона. Нажми на неё между прокрутками — она запишет забег как есть
+ * (посреди раунда тоже) и переедет в отделение PLAY; переписать нельзя. Нажми на записанную между прокрутками
+ * или у Коллектора (не в рулетке) — плёнка перематывается, сцена перезапускается с записью, а автомат съедает кассету:
+ * в магазине можно купить новую. Запись живёт только в памяти: закрыл вкладку — забег заново.
  */
 export abstract class SaveScene extends ShopScene {
   /** Магазин открылся (isAfterShot — после выстрела в автомат): у кассеты — её цена. */
@@ -20,24 +21,25 @@ export abstract class SaveScene extends ShopScene {
     this.showTapePrice();
   }
 
-  /** Цена кассеты (если её ещё продают); не хватает билетов — красная. */
+  /** Цена кассеты (если её сейчас продают); не хватает билетов — красная. */
   private showTapePrice(): void {
     if (this.tapeState !== 'forSale') return;
-    const price = tapePrice(this.closedDebts());
+    const price = tapePrice(this.tapesBought);
     this.cassette.showPrice(price, price <= this.tickets);
   }
 
-  /** Купить кассету (клик или 9): хватает билетов — она уезжает на видеомагнитофон, а запишет забег, когда уйдёшь из магазина. */
+  /** Купить кассету (клик или 9): хватает билетов — она уезжает на видеомагнитофон, в отделение REC. Одна за раз. */
   protected buyTape(): void {
     if (!this.isShopping || this.tapeState !== 'forSale') return;
-    const price = tapePrice(this.closedDebts());
+    const price = tapePrice(this.tapesBought);
     if (price > this.tickets) {
       this.sfx.play('deny');
       this.cassette.deny();
       return;
     }
     this.tickets -= price;
-    this.tapeState = 'bought';
+    this.tapesBought += 1;
+    this.tapeState = 'blank';
     this.sfx.play('buy');
     this.tooltip.hide();
     this.cassette.sell();
@@ -45,16 +47,32 @@ export abstract class SaveScene extends ShopScene {
     this.refreshShop();
   }
 
-  /** Из магазина — к автомату. Кассету купили в этом магазине — она записывает забег: таким начнётся раунд. */
-  protected leaveShop(): void {
-    if (this.isShopping && this.tapeState === 'bought') this.recordTape();
-    super.leaveShop();
+  /** Клик по кассете на видеомагнитофоне или 9 вне магазина: чистая — записать, записанная — откатиться. */
+  protected useTape(): void {
+    if (this.isGameOver) return;
+    if (this.tapeState === 'blank') this.recordTape();
+    else if (this.tapeState === 'recorded') this.insertTape();
   }
 
-  /** Записать на кассету забег в начале следующего раунда (магазин уже позади): лампочка записи мигает. */
+  /**
+   * Записать забег как есть (REC): раунд, прокрутки, кон, серию, фишки, билеты, предметы, амулеты, автомат, рулетку.
+   * Только между прокрутками у автомата; не сейчас — кассета трясётся. Переписать нельзя: запись одна, пока кассету не съест автомат.
+   */
   private recordTape(): void {
+    if (!this.canRecord()) {
+      this.sfx.play('deny');
+      this.cassette.denyUse();
+      return;
+    }
     this.tapeRecord = {
       round: this.round,
+      spinsLeft: this.spinsLeft,
+      pot: this.pot,
+      streak: this.streak,
+      isBloodNext: this.isBloodNext,
+      isLuckyNext: this.isLuckyNext,
+      roundShields: this.roundShields,
+      isDebtNewsShown: this.isDebtNewsShown,
       debt: this.debt,
       balance: this.balance,
       tickets: this.tickets,
@@ -70,39 +88,48 @@ export abstract class SaveScene extends ShopScene {
       diceDrought: this.diceDrought,
     };
     this.tapeState = 'recorded';
+    this.tooltip.hide();
     this.sfx.play('save');
     this.cassette.record();
+    this.refreshHud();
   }
 
   /**
-   * Вставить кассету (клик по ней или 9): можно, когда Коллектор пришёл, а фишек не хватает (canRewind).
-   * Плёнка перематывается, вид гаснет — сцена перезапускается с записью (create её загрузит). Не сейчас — кассета трясётся.
+   * Откатиться (PLAY): можно между прокрутками и у Коллектора, когда он ждёт (canRewind), в рулетке — нельзя.
+   * Плёнка перематывается, автомат съедает кассету, вид гаснет — сцена перезапускается с записью (create её загрузит).
+   * Не сейчас — кассета трясётся.
    */
-  protected insertTape(): void {
+  private insertTape(): void {
     const record = this.tapeRecord;
-    if (this.tapeState !== 'recorded' || !record || this.isGameOver) return; // кассеты нет или забег кончился — вставлять нечего
-    if (!this.canRewind()) {
+    if (!record || !this.canRewind()) {
       this.sfx.play('deny');
-      this.cassette.denyInsert();
+      this.cassette.denyUse();
       return;
     }
     this.isChoosingDeal = false; // Коллектор больше ничего не предлагает: ни амулеты, ни рулетку
     this.isRewinding = true;
-    this.tapeState = 'used';
     this.tapeRecord = null;
     this.tooltip.hide();
     this.refreshHud();
     this.sfx.play('rewind');
-    this.cassette.rewind(() => this.scene.restart({ tape: record }));
+    const tapesBought = this.tapesBought; // купленные кассеты откат не откатывает — иначе цена вернулась бы
+    this.cassette.rewind(() => this.scene.restart({ tape: record, tapesBought }));
   }
 
   /**
    * Сцена перезапустилась после отката: забег с кассеты. Зовётся до частей — они строятся по числу мест, гнёзд и долгу.
-   * Кон, серия, прокрутки и фаза — как в начале любого раунда: их ставит startRound (фаза — по числу закрытых долгов;
-   * забег уже в фазе 2 — снова новость «ФАЗА 2»). Кассета израсходована: её больше не продают.
+   * Прокрутки, кон, серия, кровь, клевер, щит бронежилета — как на записи (раунд идёт с того же места).
+   * Ржавчина не записывается. Кассету съел автомат: её снова продают.
    */
-  protected loadTape(record: RunSave): void {
+  protected loadTape(record: RunSave, tapesBought: number): void {
     this.round = record.round;
+    this.spinsLeft = record.spinsLeft;
+    this.pot = record.pot;
+    this.streak = record.streak;
+    this.isBloodNext = record.isBloodNext;
+    this.isLuckyNext = record.isLuckyNext;
+    this.roundShields = record.roundShields;
+    this.isDebtNewsShown = record.isDebtNewsShown;
     this.debt = record.debt; // после выстрела в автомат он больше обычного
     this.balance = record.balance;
     this.tickets = record.tickets;
@@ -116,11 +143,15 @@ export abstract class SaveScene extends ShopScene {
     this.bulletsBought = record.bulletsBought;
     this.machine = record.machine; // корпус его цвета и значок покажет MachineBadge — части строятся после
     this.diceDrought = record.diceDrought;
-    this.tapeState = 'used';
-    this.newsRound = record.round - 1; // новость этого раунда ещё не показывали
+    this.tapesBought = tapesBought;
+    this.tapeState = 'forSale';
+    this.newsRound = record.round; // новость этого раунда на записи уже была
   }
 
-  /** Части созданы: полка, амулеты и включённые предметы — как на кассете. Вид загорается, в углу «▶» — раунд начинается. */
+  /**
+   * Части созданы: полка, амулеты, включённые предметы, лампочки, кон и записка — как на кассете. Вид загорается, в углу «▶».
+   * Раунд идёт с того же места, новый (startRound) не начинается; фазу проверяем, как в начале раунда.
+   */
   protected playTape(): void {
     this.itemShelf.setItems(this.shelf);
     this.amuletRack.setAmulets(this.amulets);
@@ -128,6 +159,7 @@ export abstract class SaveScene extends ShopScene {
     this.showBones();
     this.collector.markNote(this.debt, this.hasEnoughForDebt());
     this.cassette.showPlay();
-    this.startRound();
+    this.checkPhase();
+    this.refreshHud();
   }
 }
