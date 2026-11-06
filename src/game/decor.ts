@@ -156,13 +156,15 @@ const TICKET_TEAR = 0.29; // линия отрыва
 const TICKET_IN_CELL = 0.72; // в клетке сетки билет шириной в такую долю клетки
 /** Записка с долгом. */
 const NOTE_TAPE = 12; // скотч заходит на листок сверху, px
-const NOTE_INK = '#334155'; // «ДОЛГ»
-const NOTE_DEBT_INK = '#991b1b'; // сумма — красной ручкой
+const NOTE_INK = '#1e293b'; // «ДОЛГ»
+const NOTE_DEBT_INK = '#7f1d1d'; // сумма — красной ручкой
+const NOTE_PAPER_LIGHT = '#a39679'; // бумага записки: светлее сверху слева…
+const NOTE_PAPER_DARK = '#7a6d55'; // …и темнее снизу справа
 const NOTE_DEBT_FONT_SIZE = 44; // сумма крупно; длинная сумма уменьшается, чтобы влезть на листок
 const NOTE_CHECK_COLOR = '#16a34a'; // галочка «фишек хватает»
 const NOTE_BAR_COLOR = '#16a34a'; // полоска долга: что уже на табло
 const NOTE_BAR_PENDING = 'rgba(22, 163, 74, 0.35)'; // …и что ещё на кону: заберёшь — будет на табло
-const NOTE_BAR_TRACK = 'rgba(51, 65, 85, 0.25)'; // пустая часть полоски
+const NOTE_BAR_TRACK = 'rgba(30, 41, 59, 0.4)'; // пустая часть полоски
 const NOTE_BAR_Y = 104; // полоска под суммой, под галочкой
 const NOTE_BAR_HEIGHT = 7;
 const NOTE_BAR_LEFT = 26; // правее красного поля записки
@@ -433,27 +435,49 @@ function drawNoteCheck(ctx: CanvasRenderingContext2D, width: number, height: num
   ctx.stroke();
 }
 
-/** Листок записки: тень на стене, бумага, линейки, поле и скотч. */
+/** Листок записки: тень на стене, старая тёмная бумага (в цвет комнаты) с пятнами и сгибом, линейки, поле и скотч. */
 function drawNotePaper(ctx: CanvasRenderingContext2D, width: number, height: number): void {
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-  ctx.fillRect(5, NOTE_TAPE + 5, width - 5, height - NOTE_TAPE - 5); // тень на стене
-  ctx.fillStyle = '#eee5cc';
-  ctx.fillRect(0, NOTE_TAPE, width - 5, height - NOTE_TAPE - 5); // листок
+  const paperWidth = width - 5;
+  const paperHeight = height - NOTE_TAPE - 5;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fillRect(5, NOTE_TAPE + 5, paperWidth, paperHeight); // тень на стене
+  // Бумага: пожелтевшая, тёмная, к краям ещё темнее — как дома у подвальной лампы.
+  const paper = ctx.createLinearGradient(0, NOTE_TAPE, paperWidth, NOTE_TAPE + paperHeight);
+  paper.addColorStop(0, NOTE_PAPER_LIGHT);
+  paper.addColorStop(1, NOTE_PAPER_DARK);
+  ctx.fillStyle = paper;
+  ctx.fillRect(0, NOTE_TAPE, paperWidth, paperHeight);
+  const vignette = ctx.createRadialGradient(paperWidth / 2, NOTE_TAPE + paperHeight / 2, paperHeight * 0.3, paperWidth / 2, NOTE_TAPE + paperHeight / 2, paperWidth * 0.75);
+  vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  vignette.addColorStop(1, 'rgba(20, 10, 0, 0.5)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, NOTE_TAPE, paperWidth, paperHeight);
+  ctx.fillStyle = 'rgba(92, 64, 24, 0.22)'; // пятна от времени: места всегда одни и те же
+  for (const [x, y, radius] of [[0.18, 0.72, 16], [0.8, 0.3, 12], [0.62, 0.88, 9]]) {
+    ctx.beginPath();
+    ctx.arc(paperWidth * x, NOTE_TAPE + paperHeight * y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.lineWidth = 1;
-  ctx.strokeStyle = 'rgba(147, 197, 253, 0.7)';
+  ctx.strokeStyle = 'rgba(40, 30, 10, 0.35)'; // сгиб посередине
+  ctx.beginPath();
+  ctx.moveTo(paperWidth * 0.55, NOTE_TAPE);
+  ctx.lineTo(paperWidth * 0.45, NOTE_TAPE + paperHeight);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(71, 85, 105, 0.5)';
   for (let y = NOTE_TAPE + 28; y < height - 10; y += 16) {
     ctx.beginPath();
     ctx.moveTo(3, y + 0.5);
     ctx.lineTo(width - 8, y + 0.5);
     ctx.stroke(); // линейка
   }
-  ctx.strokeStyle = 'rgba(248, 113, 113, 0.7)';
+  ctx.strokeStyle = 'rgba(153, 27, 27, 0.55)';
   ctx.beginPath();
   ctx.moveTo(18.5, NOTE_TAPE);
   ctx.lineTo(18.5, height - 5);
   ctx.stroke(); // красное поле
-  ctx.fillStyle = 'rgba(254, 243, 199, 0.7)';
-  ctx.fillRect(width / 2 - 30, 0, 60, NOTE_TAPE * 2); // скотч
+  ctx.fillStyle = 'rgba(180, 160, 110, 0.55)';
+  ctx.fillRect(width / 2 - 30, 0, 60, NOTE_TAPE * 2); // скотч, тоже потускнел
 }
 
 /**
