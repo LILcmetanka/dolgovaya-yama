@@ -11,7 +11,7 @@ import {
   type Side,
 } from '../collectorGame';
 import { DISPLAY, MAGNIFIER_SPOT } from '../layout';
-import { GREEN_TEXT, LAMP_RED } from '../theme';
+import { GREEN_TEXT, LAMP_OFF, LAMP_RED } from '../theme';
 import { SaveScene } from './SaveScene';
 
 // Порядок событий, мс.
@@ -21,13 +21,18 @@ const DEAL_PAUSE = 1400; // откупиться нечем — рулетка �
 const COLLECTOR_THINK_TIME = 700; // ход Коллектора: пауза, прежде чем он возьмёт револьвер
 const RESTART_SPACE_DELAY = 800; // Пробел на экране DEATH перезапускает игру не раньше, чем через столько
 const HAND_SOUND_DELAY = 0.6; // рука выдвигается, когда вид повернулся, с
+const KABOOM_WARN_TIME = 1800; // KABOOM мигает на экране автомата, потом взрыв
+const KABOOM_AFTER_TIME = 900; // после взрыва — пауза, потом всё темнеет
+const KABOOM_SHAKE_TIME = 700;
+const KABOOM_SHAKE = 0.03;
 const ROULETTE_TENSION = 1; // во время рулетки сердце в музыке бьётся быстрее всего
 
 /**
- * Слой Коллектора: в конце раунда вид поворачивается, тянется рука. Хватает фишек — отдаёшь долг, получаешь билеты, дальше магазин.
- * Не хватает — на экране автомата GOOD LUCK, потом игра с Коллектором: откупиться амулетом или рулетка — один раз за забег;
- * есть кассета — можно вставить её и откатиться (слой SaveScene).
- * Проиграл в рулетку или не хватило снова, а откупиться нечем и кассеты нет, — DEATH, конец забега.
+ * Слой Коллектора: в конце раунда вид поворачивается. Хватает фишек — из темноты выезжает банкомат, отдаёшь долг, получаешь купон
+ * (билет), дальше магазин. Не хватает — на экране автомата GOOD LUCK, потом тёмная комната с Коллектором в тени и дробовиком:
+ * откупиться амулетом или рулетка — один раз за забег; есть кассета — можно вставить её и откатиться (слой SaveScene).
+ * Выжил в рулетке — выезжает чемодан с фишками, долг оплачен, а счёт откатывается на один долг назад.
+ * Боевой в тебя — DEATH. Не хватило снова, а откупиться нечем и кассеты нет, — автомат говорит KABOOM и взрывается: конец забега.
  */
 export abstract class CollectorScene extends SaveScene {
   private cylinder: Bullet[] = []; // патроны в барабане по порядку выстрелов; пусто — рулетка не идёт
@@ -52,8 +57,12 @@ export abstract class CollectorScene extends SaveScene {
    * Фишек не хватает, а игра с ним ещё есть, — сначала на экране автомата загорается GOOD LUCK.
    */
   protected callCollector(isPaidEarly: boolean): void {
-    if (this.hasEnoughForDebt() || !this.canDeal()) {
+    if (this.hasEnoughForDebt()) {
       this.reachOut(isPaidEarly);
+      return;
+    }
+    if (!this.canDeal()) {
+      this.kaboom(); // не хватило, а выхода нет: автомат взрывается
       return;
     }
     this.sfx.play('warning');
@@ -132,7 +141,7 @@ export abstract class CollectorScene extends SaveScene {
    */
   private offerDeal(): void {
     if (!this.canDeal()) {
-      this.death();
+      this.kaboom();
       return;
     }
     const canPlay = this.canPlayRoulette();
@@ -250,13 +259,50 @@ export abstract class CollectorScene extends SaveScene {
     else this.time.delayedCall(COLLECTOR_THINK_TIME, () => this.fire('collector', collectorTarget(this.cylinder)));
   }
 
-  /** Ты выжил: Коллектор ранен — рука отдёргивается в темноту. Фишки на табло твои, тот же долг играется заново — прокрутки снова полные. */
+  /**
+   * Ты выжил: Коллектор ранен — глаза гаснут, вид возвращается к автомату. Выезжает чемодан с фишками: они летят на записку,
+   * долг оплачен (твои фишки на табло целы, билета нет), а счёт откатывается на один долг назад: следующий раунд — на номер меньше
+   * (первый остаётся первым). Дальше магазин.
+   */
   private surviveRoulette(): void {
     this.cylinder = [];
     this.revolverTable.hide();
     this.collector.clearGoodLuck();
     this.refreshHud();
-    this.collector.recoil(() => this.startRound());
+    this.collector.recoil(() => {
+      this.sfx.play('payment');
+      this.chipCase.open(() => {
+        this.round = Math.max(0, this.round - 2); // магазин прибавит единицу: раунд N − 1, а не N + 1
+        this.openShop();
+      });
+    });
+  }
+
+  /** Конец забега без выстрела: на экране автомата KABOOM, потом автомат взрывается, всё темнеет, и на нём — KABOOM, счёт, «ЗАНОВО». */
+  private kaboom(): void {
+    this.isGameOver = true;
+    this.cylinder = [];
+    this.refreshHud();
+    this.sfx.play('warning');
+    this.screen.flashLamps(LAMP_RED, KABOOM_WARN_TIME);
+    this.collector.warnGoodLuck('KABOOM');
+    this.time.delayedCall(KABOOM_WARN_TIME, () => {
+      this.sfx.play('shatter');
+      this.sfx.play('death');
+      this.collector.explode();
+      this.cameras.main.shake(KABOOM_SHAKE_TIME, KABOOM_SHAKE);
+      this.brokenScreen.shatter();
+      this.screen.setCalmColor(LAMP_OFF);
+      this.time.delayedCall(KABOOM_AFTER_TIME, () => {
+        this.collector.clearGoodLuck();
+        this.collector.blackout(() => {
+          this.collector.showDeath(this.closedDebts(), this.record, () => this.restartGame(), 'KABOOM');
+          this.time.delayedCall(RESTART_SPACE_DELAY, () => {
+            this.canRestartWithSpace = true;
+          });
+        });
+      });
+    });
   }
 
   /** Конец забега: экран гаснет, а когда загорается — на автомате DEATH, счёт и «ЗАНОВО». */

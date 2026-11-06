@@ -322,7 +322,12 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon()) {
       const res = collector(s, st, g);
       if (res === 'dead') break;
       if (res === 'rewind') { s = rewind(s, g); continue; }
-      if (res === 'survived') { startRound(s); continue; }
+      if (res === 'survived' && (econ.survive ?? 'same') === 'same') { startRound(s); continue; }
+      if (res === 'survived') {
+        // шаг 50: чемодан платит долг, счёт откатывается на один долг назад (следующий раунд — N − 1, не меньше 1)
+        if (econ.survive === 'back') s.balance = 0; // чемодан доплатил только нехватку: твои фишки ушли в долг
+        s.round = Math.max(0, s.round - 2); // openShop прибавит единицу
+      }
       openShop(s, st, g, econ);
     }
     g.maxClosed = Math.max(g.maxClosed, s.round - 1);

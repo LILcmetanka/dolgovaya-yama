@@ -32,6 +32,14 @@ const SCREEN_TITLE_STYLE = { ...LED_STYLE, fontSize: '64px', color: RED_TEXT, sh
 const GOOD_LUCK_DEPTH = POPUP_DEPTH - 1; // GOOD LUCK — над сеткой, под всплывающими надписями
 const HIT_COLOR = 0x991b1b; // Коллектор ранен: красная вспышка в темноте
 const HIT_ALPHA = 0.6;
+// Взрыв автомата (KABOOM): вспышка и огненные шары из экрана.
+const EXPLOSION_BALLS = 18;
+const EXPLOSION_COLORS = [0xfde047, 0xf97316, 0xdc2626, 0xffffff];
+const EXPLOSION_MIN_DISTANCE = 140;
+const EXPLOSION_MAX_DISTANCE = 380;
+const EXPLOSION_MIN_TIME = 500;
+const EXPLOSION_MAX_TIME = 950;
+const EXPLOSION_FLASH_TIME = 700;
 // Экран DEATH: счёт и кнопка «ЗАНОВО» под экраном автомата.
 const DEATH_SCORE_Y = 500;
 const DEATH_BUTTON_Y = 566;
@@ -300,9 +308,32 @@ export class Collector {
     });
   }
 
-  /** Фишек не хватает: экран автомата гаснет, на нём мигает красное GOOD LUCK — впереди игра с Коллектором. */
-  warnGoodLuck(): void {
-    this.goodLuck = this.screenTitle('GOOD LUCK', GOOD_LUCK_DEPTH);
+  /** Фишек не хватает: экран автомата гаснет, на нём мигает красное GOOD LUCK — впереди игра с Коллектором (или KABOOM). */
+  warnGoodLuck(text = 'GOOD LUCK'): void {
+    this.goodLuck = this.screenTitle(text, GOOD_LUCK_DEPTH);
+  }
+
+  /** Автомат взрывается: белая вспышка на весь вид и огненные шары из экрана в разные стороны. */
+  explode(): void {
+    const flash = this.scene.add.rectangle(CENTER_X, CENTER_Y, VIEW_WIDTH, 640, 0xffffff, 0.9).setDepth(POPUP_DEPTH + 1);
+    this.scene.tweens.add({ targets: flash, alpha: 0, duration: EXPLOSION_FLASH_TIME, onComplete: () => flash.destroy() });
+    for (let index = 0; index < EXPLOSION_BALLS; index++) {
+      const radius = Phaser.Math.RND.between(14, 30);
+      const color = Phaser.Math.RND.pick(EXPLOSION_COLORS);
+      const ball = this.scene.add.circle(SCREEN.x, SCREEN.y, radius, color, 0.95).setDepth(POPUP_DEPTH);
+      const angle = Phaser.Math.RND.realInRange(0, Math.PI * 2);
+      const distance = Phaser.Math.RND.between(EXPLOSION_MIN_DISTANCE, EXPLOSION_MAX_DISTANCE);
+      this.scene.tweens.add({
+        targets: ball,
+        x: SCREEN.x + distance * Math.cos(angle),
+        y: SCREEN.y + distance * Math.sin(angle) * 0.8,
+        scale: { from: 0.6, to: 2.6 },
+        alpha: 0,
+        duration: Phaser.Math.RND.between(EXPLOSION_MIN_TIME, EXPLOSION_MAX_TIME),
+        ease: 'Cubic.easeOut',
+        onComplete: () => ball.destroy(),
+      });
+    }
   }
 
   /** Игра с Коллектором кончилась, а забег идёт: GOOD LUCK тает, экран автомата снова горит. */
@@ -338,15 +369,15 @@ export class Collector {
     });
   }
 
-  /** Конец забега: всё темнеет, экран автомата чёрный, на нём мигает DEATH. Ниже — счёт, рекорд и «ЗАНОВО». */
-  showDeath(closedDebts: number, record: number, restart: () => void): void {
+  /** Конец забега: всё темнеет, экран автомата чёрный, на нём мигает title (DEATH или KABOOM). Ниже — счёт, рекорд и «ЗАНОВО». */
+  showDeath(closedDebts: number, record: number, restart: () => void, title = 'DEATH'): void {
     const shade = this.scene.add.rectangle(CENTER_X, CENTER_Y, VIEW_WIDTH, 640, 0x000000, 0.6); // на весь вид у автомата
     shade.setInteractive(); // ловит клики, чтобы кнопки под затемнением не нажимались
     const scoreText = `${t('debtsPaid')}: ${closedDebts} · ${t('best')}: ${record}`;
     const score = addText(this.scene, CENTER_X, DEATH_SCORE_Y, scoreText, { fontSize: '20px', color: GOLD_TEXT }).setOrigin(0.5);
     const button = this.makeButton(CENTER_X, DEATH_BUTTON_Y, t('again'), restart);
     for (const part of [shade, score, button.shadow, button.face]) part.setDepth(GAME_OVER_DEPTH);
-    this.screenTitle('DEATH', GAME_OVER_DEPTH);
+    this.screenTitle(title, GAME_OVER_DEPTH);
   }
 
   /** Кнопка: тень, корпус с золотой рамкой, блик сверху и крупная надпись. Нажимается и мышью, и пальцем. */

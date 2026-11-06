@@ -14,6 +14,7 @@ import type { Atmosphere } from '../parts/atmosphere';
 import type { BrokenScreen } from '../parts/brokenScreen';
 import type { BulletStand } from '../parts/bulletStand';
 import type { Cassette } from '../parts/cassette';
+import type { ChipCase } from '../parts/chipCase';
 import type { Collector } from '../parts/collector';
 import type { DealerTable } from '../parts/dealerTable';
 import type { Drum } from '../parts/drum';
@@ -119,7 +120,8 @@ export abstract class BaseScene extends Phaser.Scene {
   protected screen!: SlotScreen; // экран 5×3, стекло с паттернами, бегущие огни
   protected panel!: MachinePanel; // табло, окошко множителя, лампочки прокруток, рычаг
   protected payout!: PayoutWindow; // окошко выплаты: электронное табло с коном и кнопкой «забрать»
-  protected collector!: Collector; // записка с долгом, рука Коллектора, GOOD LUCK и DEATH
+  protected collector!: Collector; // записка с долгом, банкомат и Коллектор в тени, GOOD LUCK и DEATH
+  protected chipCase!: ChipCase; // чемодан с фишками: выжил в рулетке — долг оплачен
   protected itemShelf!: ItemShelf; // полка с предметами и включённые предметы у экрана
   protected amuletRack!: AmuletRack; // гнёзда с амулетами на верхушке корпуса
   protected shop!: Shop; // комната слева и торговый автомат

@@ -9,6 +9,7 @@ import { Atmosphere } from './parts/atmosphere';
 import { BrokenScreen } from './parts/brokenScreen';
 import { BulletStand } from './parts/bulletStand';
 import { Cassette } from './parts/cassette';
+import { ChipCase } from './parts/chipCase';
 import { Collector } from './parts/collector';
 import { CornerButtons } from './parts/cornerButtons';
 import { DealerTable } from './parts/dealerTable';
@@ -69,6 +70,7 @@ export class GameScene extends ShotScene {
     this.panel = new MachinePanel(this, () => this.spin());
     this.payout = new PayoutWindow(this, () => this.take());
     this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
+    this.chipCase = new ChipCase(this);
     this.itemShelf = new ItemShelf(this, this.slots, (slot) => this.useItem(slot), this.tooltip);
     this.amuletRack = new AmuletRack(this, this.sockets, this.tooltip);
     this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip);
