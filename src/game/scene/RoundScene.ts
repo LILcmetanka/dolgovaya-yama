@@ -9,7 +9,6 @@ import {
   owns,
   piggyCoins,
   spinsPerRound,
-  startStreak,
   vestShields,
   winFactor,
 } from '../amulets';
@@ -44,6 +43,7 @@ const NEW_ROUND_LAMPS_TIME = 1000; // новый раунд — зелёным
 const DEBT_LAMPS_TIME = 1500; // фишек на табло стало хватать на долг — зелёным
 const TICKET_BORDER = 0xf59e0b; // рамки на клетках с билетами, когда их три
 const SPIDER_BORDER = 0xa855f7; // рамки на пауках, когда они съели часть кона
+const REVEAL_NOTE_SPIN = 3; // после третьей прокрутки из тьмы проступает долг (первый забег)
 
 /** «+12», «+4 ×3 = +12» или с амулетами «+4 ×3 ×2 = +24». */
 function formatWin(win: number, multiplier: number, factor: number, gain: number): string {
@@ -72,11 +72,21 @@ export abstract class RoundScene extends MachineScene {
   /** Включили лупу с места полки slot — в рулетке она показывает следующий патрон. Её делает слой CollectorScene. */
   protected abstract useMagnifier(slot: number): void;
 
+  private spinsThisRun = 0; // сколько раз крутил за забег — на третьей прокрутке из тьмы проступает записка
+
+  /** Новый забег: прокруток ещё не было. */
+  protected resetState(): void {
+    super.resetState();
+    this.spinsThisRun = 0;
+  }
+
   // ---------- Прокрутка ----------
 
   /** Прокрутка (Пробел или рычаг): гаснет одна лампочка, дальше — roll. */
   protected spin(): void {
     if (!this.canAct()) return;
+    this.spinsThisRun += 1;
+    if (this.spinsThisRun === REVEAL_NOTE_SPIN) this.openRevealNote(); // записка впервые видна не с начала
     this.spinsLeft -= 1;
     this.panel.blinkSpinLamp(this.spinsLeft);
     this.roll(false);
@@ -386,16 +396,15 @@ export abstract class RoundScene extends MachineScene {
 
   /**
    * Новый раунд: прокрутки снова полные (лампочки загораются по очереди), огни бегут зелёным.
-   * Амулеты: «Жадность» забирает прокрутки, «Фальстарт» начинает с ×3, «Бронежилет» снова готов.
+   * Амулеты: «Жадность» забирает прокрутки, «Бронежилет» снова готов.
    */
   protected startRound(): void {
     const ids = this.amuletIds();
     this.isRoundOver = false;
     this.isDebtNewsShown = this.hasEnoughForDebt(); // фишек хватает с начала раунда — новости нет, записка и так светится
-    this.streak = startStreak(ids);
+    this.streak = 0; // серия всегда начинается с нуля
     this.spinsLeft = spinsPerRound(SPINS_PER_ROUND, ids);
     this.roundShields = vestShields(ids);
-    if (this.streak > 0) this.amuletRack.trigger('falseStart');
     if (owns(ids, 'greed')) this.amuletRack.trigger('greed');
     this.announceNewSymbols();
     this.panel.popSpinLamps();

@@ -11,6 +11,7 @@ import {
   type Side,
 } from '../collectorGame';
 import { DISPLAY, MAGNIFIER_SPOT } from '../layout';
+import { finishRun } from '../progress';
 import { GREEN_TEXT, LAMP_OFF, LAMP_RED } from '../theme';
 import { SaveScene } from './SaveScene';
 
@@ -56,6 +57,7 @@ export abstract class CollectorScene extends SaveScene {
    * Фишек не хватает, а игра с ним ещё есть, — сначала на экране автомата загорается GOOD LUCK.
    */
   protected callCollector(isPaidEarly: boolean): void {
+    this.finishTutorial(); // Коллектор пришёл — тьма рассеивается совсем (и обучение запоминается)
     if (this.hasEnoughForDebt()) {
       this.reachOut(isPaidEarly);
       return;
@@ -277,6 +279,7 @@ export abstract class CollectorScene extends SaveScene {
 
   /** Конец забега без выстрела: на экране автомата KABOOM, потом автомат взрывается, всё темнеет, и на нём — KABOOM, счёт, «ЗАНОВО». */
   private kaboom(): void {
+    finishRun(); // один забег — одна смерть: счётчик забегов растёт (progress.ts)
     this.isGameOver = true;
     this.cylinder = [];
     this.refreshHud();
@@ -304,6 +307,7 @@ export abstract class CollectorScene extends SaveScene {
 
   /** Конец забега: экран гаснет, а когда загорается — на автомате DEATH, счёт и «ЗАНОВО». */
   private death(): void {
+    finishRun(); // один забег — одна смерть: счётчик забегов растёт (progress.ts)
     this.isGameOver = true;
     this.cylinder = [];
     this.refreshHud();

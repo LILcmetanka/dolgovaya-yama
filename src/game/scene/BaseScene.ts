@@ -4,6 +4,7 @@ import { resetCodex } from '../codex';
 import { ORDINARY, type MachineCharacter } from '../characters';
 import { noEffects, START_SLOTS, type Item, type ItemEffects, type ShopItem } from '../items';
 import { PHASES, type Phase } from '../phases';
+import { hasAmulets, markTutorialDone } from '../progress';
 import { debtForRound, multiplierForStreak, SPINS_PER_ROUND } from '../rules';
 import type { RunSave, TapeState } from '../save';
 import { Sound } from '../sound';
@@ -23,6 +24,7 @@ import type { ItemShelf } from '../parts/itemShelf';
 import type { MachineBadge } from '../parts/machineBadge';
 import type { MachinePanel } from '../parts/panel';
 import type { PayoutWindow } from '../parts/payoutWindow';
+import type { Reveal } from '../parts/reveal';
 import type { ShotgunTable } from '../parts/shotgunTable';
 import type { Shop } from '../parts/shop';
 import type { SlotScreen } from '../parts/slotScreen';
@@ -137,6 +139,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected tooltip!: Tooltip; // подсказка при наведении мыши
   protected monitor!: WallScreen; // экран на стене справа: символы, паттерны, как играть
   protected effects!: Effects; // брызги фишек, всплывающие надписи, вспышка с тряской
+  protected reveal: Reveal | null = null; // тьма первого забега; null — обучение пройдено или его нет
 
   /** Начало забега: первый долг, пустое табло, 2 места на полке и 2 гнезда, ничего не включено, автомат обычный. */
   protected resetState(): void {
@@ -152,7 +155,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.shelf = new Array<Item | null>(START_SLOTS).fill(null);
     this.itemEffects = noEffects();
     this.offer = [];
-    this.sockets = START_SOCKETS;
+    this.sockets = hasAmulets() ? START_SOCKETS : 0; // в первом забеге все гнёзда закрыты
     this.amulets = [];
     this.amuletOffer = [];
     this.isTicketForSale = false;
@@ -280,6 +283,20 @@ export abstract class BaseScene extends Phaser.Scene {
   protected restartGame(): void {
     resetCodex(); // новый забег: встреченное забыто
     this.scene.restart({});
+  }
+
+  /** Из тьмы первого забега проступает записка с долгом (третья прокрутка). */
+  protected openRevealNote(): void {
+    this.reveal?.openNote();
+  }
+
+  /** Коллектор пришёл за долгом — обучение пройдено: тьма гаснет и больше не вернётся. */
+  protected finishTutorial(): void {
+    const reveal = this.reveal;
+    if (!reveal) return;
+    this.reveal = null;
+    markTutorialDone(); // сразу: сцена может перезапуститься посреди фейда
+    reveal.finish();
   }
 
   /** Счёт — сколько долгов закрыто. */

@@ -32,6 +32,7 @@ export const LED_COLOR = '#fbbf24';
 /** Слои: чем больше число, тем выше лежит объект. */
 export const CHIP_DEPTH = 5; // брызги фишек
 export const POPUP_DEPTH = 10; // всплывающие надписи
+export const REVEAL_DEPTH = 12; // тьма первого забега (reveal.ts): над частями и фишками (5), под подсказкой (25) и паузой
 export const TOOLTIP_DEPTH = 25; // подсказка при наведении — поверх всего, кроме экрана DEATH
 export const GAME_OVER_DEPTH = 30; // экран DEATH — конец забега
 

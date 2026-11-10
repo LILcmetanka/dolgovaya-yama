@@ -1,8 +1,9 @@
-import { amuletPrice, randomAmuletOffer, socketPrice, ticketPrice } from '../amulets';
+import { amuletPrice, copiesOf, randomAmuletOffer, socketPrice, ticketPrice } from '../amulets';
 import { amuletKey, itemKey, see, WHO_COLLECTOR } from '../codex';
 import { characterDebt } from '../characters';
 import { canWin, DRUM_SECTORS, drumChips, drumPrice, prizeItem, randomSector, type DrumPrize } from '../drum';
 import { itemPrice, MAX_SLOTS, randomOffer, slotPrice } from '../items';
+import { hasAmulets, hasDrum } from '../progress';
 import { debtForRound } from '../rules';
 import { debtAfterShot } from '../shot';
 import type { SoundName } from '../sound';
@@ -37,17 +38,19 @@ export abstract class ShopScene extends DealerScene {
     this.collector.flipNote(this.debt, this.hasEnoughForDebt());
     const offer = randomOffer();
     this.offer = offer;
-    const amuletOffer = randomAmuletOffer(this.amuletIds());
+    const amuletOffer = hasAmulets() ? randomAmuletOffer(this.amuletIds()) : [];
     this.amuletOffer = amuletOffer;
     this.isTicketForSale = true;
     this.seeInShop(offer.map((item) => itemKey(item.id)), amuletOffer.map((amulet) => amuletKey(amulet.id)));
     this.drumSpins = 0; // в новом магазине барабан снова дешёвый
-    this.amuletCase.fill({
-      amulets: amuletOffer,
-      amuletPrices: amuletOffer.map(amuletPrice),
-      ticketPrice: ticketPrice(this.debt),
-      socketPrice: socketPrice(this.sockets),
-    });
+    if (hasAmulets()) {
+      this.amuletCase.fill({
+        amulets: amuletOffer,
+        amuletPrices: amuletOffer.map(amuletPrice),
+        ticketPrice: ticketPrice(this.debt),
+        socketPrice: socketPrice(this.sockets),
+      });
+    }
     const prices = offer.map((item) => itemPrice(item, this.debt)); // цены — доля нового долга
     this.sfx.play('turn');
     this.shop.open(offer, prices, slotPrice(this.slots, this.debt), () => {
@@ -116,6 +119,7 @@ export abstract class ShopScene extends DealerScene {
 
   /** Купить место чемодана с амулетами: амулет, билет за фишки или гнездо. */
   protected buyFromCase(place: number): void {
+    if (!hasAmulets()) return;
     if (!this.isShopping || !this.amuletCase.isOpen) return; // чемодан ещё закрыт — покупать нечего
     if (place === TICKET_PLACE) this.buyTicket();
     else if (place === SOCKET_PLACE) this.buySocket();
@@ -126,6 +130,11 @@ export abstract class ShopScene extends DealerScene {
   private buyAmulet(place: number): void {
     const amulet = this.amuletOffer[place];
     if (!amulet) return;
+    if (copiesOf(this.amuletIds(), amulet.id) >= amulet.maxCopies) {
+      this.sfx.play('deny');
+      this.amuletCase.deny(place); // копий уже под потолок — ценник трясётся
+      return;
+    }
     const price = amuletPrice(amulet);
     if (price > this.tickets || this.amulets.length >= this.sockets) {
       this.sfx.play('deny');
@@ -182,6 +191,7 @@ export abstract class ShopScene extends DealerScene {
    * Какой сектор выпадет, решается сразу; пока колесо крутится, покупать и уходить нельзя (isShopping).
    */
   protected spinDrum(): void {
+    if (!hasDrum()) return;
     if (!this.isShopping) return;
     const price = drumPrice(this.drumSpins, this.debt);
     if (price > this.balance) {

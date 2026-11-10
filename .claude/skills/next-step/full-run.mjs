@@ -16,7 +16,7 @@ const DR = await import(SRC + 'drum.ts');
 const SH = await import(SRC + 'shot.ts');
 
 // Сила амулетов (шаг 7: забег с этим амулетом с первого раунда) — по ней игрок покупает и откупается самым слабым.
-const AMULET_POWER = { bones: 5.39, boost: 5.11, interest: 5.09, insurance: 5.02, cut: 4.88, cherryPit: 4.69, vest: 4.66, greed: 4.61, piggy: 4.43, skullPocket: 4.41, falseStart: 4.24, bell: 4.08 };
+const AMULET_POWER = { bones: 5.39, boost: 5.11, interest: 5.09, insurance: 5.02, cut: 4.88, cherryPit: 4.69, vest: 4.66, greed: 4.61, piggy: 4.43, skullPocket: 4.41, bell: 4.08 };
 const ITEM_ORDER = ['garlic', 'triple', 'cigarette', 'shield'];
 const SECONDS = { spin: 2.5, take: 1, dealer: 6, collector: 6, shop: 10, rewind: 5, shot: 7, rec: 1 };
 
@@ -71,7 +71,7 @@ function payPot(s) {
 
 function startRound(s) {
   const owned = ids(s);
-  s.streak = A.startStreak(owned); s.spinsLeft = A.spinsPerRound(R.SPINS_PER_ROUND, owned); s.roundShields = A.vestShields(owned);
+  s.streak = 0; s.spinsLeft = A.spinsPerRound(R.SPINS_PER_ROUND, owned); s.roundShields = A.vestShields(owned);
   s.phase = PH.phaseAt(s.round - 1);
 }
 

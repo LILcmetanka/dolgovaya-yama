@@ -1,4 +1,5 @@
 import { tapePrice, type RunSave } from '../save';
+import { hasCassette } from '../progress';
 import { ShopScene } from './ShopScene';
 
 /**
@@ -30,6 +31,7 @@ export abstract class SaveScene extends ShopScene {
 
   /** Купить кассету (клик или 9): хватает билетов — она уезжает на видеомагнитофон, в отделение REC. Одна за раз. */
   protected buyTape(): void {
+    if (!hasCassette()) return;
     if (!this.isShopping || this.tapeState !== 'forSale') return;
     const price = tapePrice(this.tapesBought);
     if (price > this.tickets) {
@@ -57,6 +59,7 @@ export abstract class SaveScene extends ShopScene {
   /**
    * Записать забег как есть (REC): раунд, прокрутки, кон, серию, фишки, билеты, предметы, амулеты, автомат, рулетку.
    * Только между прокрутками у автомата; не сейчас — кассета трясётся. Переписать нельзя: запись одна, пока кассету не съест автомат.
+   * Заморозка столбца и прошлая сетка в снимок не попадают: после отката первая прокрутка начинается без них.
    */
   private recordTape(): void {
     if (!this.canRecord()) {

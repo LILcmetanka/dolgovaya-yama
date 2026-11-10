@@ -81,6 +81,7 @@ export class AmuletCase {
   private readonly lidFront: Phaser.GameObjects.Container; // закрытая крышка: закрывает вещи
   private readonly lidBack: Phaser.GameObjects.Container; // откинутая крышка: стоит над чемоданом
   private open = false; // крышка откинута, вещи на местах — можно покупать
+  private readonly isAvailable: boolean; // амулеты открыты (со второго забега); нет — чемодан спрятан и не работает
 
   /** Чемодан открыт — можно покупать. */
   get isOpen(): boolean {
@@ -88,8 +89,9 @@ export class AmuletCase {
   }
 
   /** buy(place) — кликнули по месту витрины. */
-  constructor(scene: Phaser.Scene, buy: (place: number) => void, hint: Hint) {
+  constructor(scene: Phaser.Scene, buy: (place: number) => void, hint: Hint, isAvailable: boolean) {
     this.scene = scene;
+    this.isAvailable = isAvailable;
     createChipTextures(scene);
     createTicketTexture(scene);
     createAmuletTextures(scene, AMULETS, AMULET_SIZE);
@@ -107,6 +109,14 @@ export class AmuletCase {
       const icon = paysWithChips(place) ? CHIP_TEXTURE : TICKET_TEXTURE;
       this.priceIcons.push(scene.add.image(x - 18, AMULET_CASE_PRICE_Y, icon).setScale(PRICE_ICON_SCALE).setDepth(GOODS_DEPTH).setVisible(false));
       this.priceTexts.push(addText(scene, x - 6, AMULET_CASE_PRICE_Y, '', { ...LED_STYLE, fontSize: '16px' }).setOrigin(0, 0.5).setDepth(GOODS_DEPTH));
+    }
+    if (!isAvailable) this.hideAll();
+  }
+
+  /** Амулетов ещё нет: чемодан целиком спрятан — его не видно и не открыть. */
+  private hideAll(): void {
+    for (const part of [this.suitcase, this.lidFront, this.lidBack, ...this.goods, ...this.priceIcons, ...this.priceTexts]) {
+      part.setVisible(false);
     }
   }
 
@@ -187,6 +197,7 @@ export class AmuletCase {
 
   /** Разложить товар. Амулетов может быть меньше мест — тогда место пустое. */
   fill(stock: CaseStock): void {
+    if (!this.isAvailable) return; // амулетов ещё нет — чемодан не открываем
     this.amulets = [];
     this.prices = [];
     for (let place = 0; place < AMULET_OFFER_SIZE; place++) {

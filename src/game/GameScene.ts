@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { drawMachineBody, drawRoom } from './decor';
 import { lang, toggleLang, type Lang } from './lang';
-import { HOME_SCROLL, ZOOM } from './layout';
+import { BODY, HOME_SCROLL, NOTE, ZOOM } from './layout';
 import { amuletKey, itemKey, see } from './codex';
 import { AmuletCase } from './parts/amuletCase';
 import { AmuletRack } from './parts/amuletRack';
@@ -20,6 +20,7 @@ import { MachineBadge } from './parts/machineBadge';
 import { MachinePanel } from './parts/panel';
 import { PauseScreen } from './parts/pauseScreen';
 import { PayoutWindow } from './parts/payoutWindow';
+import { Reveal } from './parts/reveal';
 import { ShotgunTable } from './parts/shotgunTable';
 import { addRotateHint } from './parts/rotateHint';
 import { SettingsPanel } from './parts/settingsPanel';
@@ -29,6 +30,7 @@ import { WallScreen } from './parts/wallScreen';
 import { Tooltip } from './parts/tooltip';
 import { ShotScene } from './scene/ShotScene';
 import { MAX_SLOTS } from './items';
+import { hasAmulets, hasCassette, hasDrum, isTutorialDone, markTutorialDone } from './progress';
 import type { RunSave } from './save';
 import { getVolumes, isSilent, setVolume, toggleSound, volumeShare, type VolumeKind } from './settings';
 
@@ -75,9 +77,9 @@ export class GameScene extends ShotScene {
     this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
     this.chipCase = new ChipCase(this);
     this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip);
-    this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip);
-    this.cassette = new Cassette(this, this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip);
-    this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx);
+    this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip, hasAmulets());
+    this.cassette = new Cassette(this, hasCassette() && this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip);
+    this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx, hasDrum());
     this.bulletStand = new BulletStand(this, () => this.buyBullet(), this.tooltip);
     this.shotgunTable = new ShotgunTable(
       this,
@@ -95,6 +97,13 @@ export class GameScene extends ShotScene {
     this.pauseScreen = new PauseScreen(this, () => this.resumeGame());
     this.settingsPanel = new SettingsPanel(this, (kind, level) => this.changeVolume(kind, level), (language) => this.chooseLanguage(language));
     addRotateHint(this);
+    // Первый забег — в кромешной тьме: виден только автомат в пятне света (после обучения тьмы нет).
+    this.reveal = isTutorialDone() ? null : new Reveal(this, HOME_SCROLL, BODY, NOTE);
+    // Canvas не создался — тьмы нет: обучение считаем пройденным, иначе оно зациклится (каждый забег снова «первый»).
+    if (this.reveal && !this.reveal.isActive) {
+      markTutorialDone();
+      this.reveal = null;
+    }
     this.setupKeyboard();
     this.setupSound();
     this.setupPause();
@@ -226,6 +235,7 @@ export class GameScene extends ShotScene {
   /** Открыть большой экран со вкладками (символы, паттерны, как играть). Только между прокрутками: пока он открыт, крутить нельзя. */
   private lookAtMonitor(): void {
     if (!this.canAct()) return;
+    if (this.reveal?.isActive) return; // тьма первого забега закрывает экран — телевизор не открываем
     this.isAtMonitor = true;
     this.seeOwned();
     this.tooltip.hide();
