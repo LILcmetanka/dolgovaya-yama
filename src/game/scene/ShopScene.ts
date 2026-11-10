@@ -1,7 +1,9 @@
-import { amuletPrice, randomAmuletOffer, socketPrice, ticketPrice } from '../amulets';
+import { amuletPrice, copiesOf, randomAmuletOffer, socketPrice, ticketPrice } from '../amulets';
+import { amuletKey, itemKey, see, WHO_COLLECTOR } from '../codex';
 import { characterDebt } from '../characters';
 import { canWin, DRUM_SECTORS, drumChips, drumPrice, prizeItem, randomSector, type DrumPrize } from '../drum';
 import { itemPrice, MAX_SLOTS, randomOffer, slotPrice } from '../items';
+import { hasAmulets, hasDrum } from '../progress';
 import { debtForRound } from '../rules';
 import { debtAfterShot } from '../shot';
 import type { SoundName } from '../sound';
@@ -36,22 +38,31 @@ export abstract class ShopScene extends DealerScene {
     this.collector.flipNote(this.debt, this.hasEnoughForDebt());
     const offer = randomOffer();
     this.offer = offer;
-    const amuletOffer = randomAmuletOffer(this.amuletIds());
+    const amuletOffer = hasAmulets() ? randomAmuletOffer(this.amuletIds()) : [];
     this.amuletOffer = amuletOffer;
     this.isTicketForSale = true;
+    this.seeInShop(offer.map((item) => itemKey(item.id)), amuletOffer.map((amulet) => amuletKey(amulet.id)));
     this.drumSpins = 0; // в новом магазине барабан снова дешёвый
-    this.amuletCase.fill({
-      amulets: amuletOffer,
-      amuletPrices: amuletOffer.map(amuletPrice),
-      ticketPrice: ticketPrice(this.debt),
-      socketPrice: socketPrice(this.sockets),
-    });
+    if (hasAmulets()) {
+      this.amuletCase.fill({
+        amulets: amuletOffer,
+        amuletPrices: amuletOffer.map(amuletPrice),
+        ticketPrice: ticketPrice(this.debt),
+        socketPrice: socketPrice(this.sockets),
+      });
+    }
     const prices = offer.map((item) => itemPrice(item, this.debt)); // цены — доля нового долга
     this.sfx.play('turn');
     this.shop.open(offer, prices, slotPrice(this.slots, this.debt), () => {
       this.isShopping = true;
       this.refreshShop();
     });
+  }
+
+  /** В магазине показали предметы и амулеты (и Коллектор уже приходил): всё это теперь на экране на стене; впервые — там мигает «NEW». */
+  private seeInShop(...keys: string[][]): void {
+    const isNew = [WHO_COLLECTOR, ...keys.flat()].map(see).some(Boolean); // see — для каждого ключа, поэтому без короткого замыкания
+    if (isNew) this.monitor.notify('new');
   }
 
   /** Купить ряд торгового автомата row: предмет — на свободное место полки, нижний ряд — ещё одно место. */
@@ -106,9 +117,10 @@ export abstract class ShopScene extends DealerScene {
     return this.slots - 1;
   }
 
-  /** Купить место витрины амулетов: амулет, билет за фишки или гнездо. */
+  /** Купить место чемодана с амулетами: амулет, билет за фишки или гнездо. */
   protected buyFromCase(place: number): void {
-    if (!this.isShopping) return;
+    if (!hasAmulets()) return;
+    if (!this.isShopping || !this.amuletCase.isOpen) return; // чемодан ещё закрыт — покупать нечего
     if (place === TICKET_PLACE) this.buyTicket();
     else if (place === SOCKET_PLACE) this.buySocket();
     else this.buyAmulet(place);
@@ -118,6 +130,11 @@ export abstract class ShopScene extends DealerScene {
   private buyAmulet(place: number): void {
     const amulet = this.amuletOffer[place];
     if (!amulet) return;
+    if (copiesOf(this.amuletIds(), amulet.id) >= amulet.maxCopies) {
+      this.sfx.play('deny');
+      this.amuletCase.deny(place); // копий уже под потолок — ценник трясётся
+      return;
+    }
     const price = amuletPrice(amulet);
     if (price > this.tickets || this.amulets.length >= this.sockets) {
       this.sfx.play('deny');
@@ -174,6 +191,7 @@ export abstract class ShopScene extends DealerScene {
    * Какой сектор выпадет, решается сразу; пока колесо крутится, покупать и уходить нельзя (isShopping).
    */
   protected spinDrum(): void {
+    if (!hasDrum()) return;
     if (!this.isShopping) return;
     const price = drumPrice(this.drumSpins, this.debt);
     if (price > this.balance) {
@@ -186,7 +204,7 @@ export abstract class ShopScene extends DealerScene {
     this.drumSpins += 1;
     this.isShopping = false;
     this.afterPurchase('chips');
-    this.drum.spin(sector, (x, y) => this.winDrum(DRUM_SECTORS[sector], x, y));
+    this.drum.spin(sector, (x, y) => this.winDrum(DRUM_SECTORS[sector], x, y, price));
   }
 
   /** Какие сектора барабана могут выпасть: предмету нужно свободное место на полке, месту — чтобы полки ещё не были полными. */
@@ -196,8 +214,8 @@ export abstract class ShopScene extends DealerScene {
     return DRUM_SECTORS.map((prize) => canWin(prize, hasFreeSlot, canAddSlot));
   }
 
-  /** Колесо встало: приз вылетает из сектора (x, y) — предмет на свободное место полки, билет и фишки на табло, место — доски слетают. */
-  private winDrum(prize: DrumPrize, x: number, y: number): void {
+  /** Колесо встало: приз вылетает из сектора (x, y) — предмет на свободное место полки, билет и фишки на табло, место — доски слетают. paid — цена этой прокрутки: «фишки» выплачивают её ×2. */
+  private winDrum(prize: DrumPrize, x: number, y: number, paid: number): void {
     const item = prizeItem(prize);
     if (item) {
       const slot = this.shelf.indexOf(null); // место есть: иначе предмет не мог выпасть
@@ -209,7 +227,7 @@ export abstract class ShopScene extends DealerScene {
     } else if (prize === 'slot') {
       this.itemShelf.openSlot(this.addSlot());
     } else {
-      const chips = drumChips(this.debt);
+      const chips = drumChips(paid);
       this.balance += chips;
       this.effects.popupAt(x, y - PRIZE_POPUP_RISE, `+${chips}`, GOLD_TEXT);
       this.drum.payOut(x, y, () => this.panel.pulseBoard());

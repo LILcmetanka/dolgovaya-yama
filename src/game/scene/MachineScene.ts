@@ -1,3 +1,4 @@
+import { machineKey, see } from '../codex';
 import { jamGrid, randomCharacter, rustColumn } from '../characters';
 import type { Grid, WeightOf } from '../rules';
 import { BonusScene } from './BonusScene';
@@ -55,6 +56,8 @@ export abstract class MachineScene extends BonusScene {
   /** Новый автомат встал на место разбитого: корпус его цвета, значок, на стекле — значок и название. */
   protected showNewMachine(): void {
     this.machineBadge.arrive(this.machine);
+    see(machineKey(this.machine.id));
+    this.monitor.notify('update'); // на экране на стене — жёлтое UPDATE, в «Кто есть кто» появился автомат
     this.screen.announceMachine(this.machine);
     this.sfx.play('news', 0.3);
   }

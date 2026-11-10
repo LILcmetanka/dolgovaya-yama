@@ -1,13 +1,15 @@
 import Phaser from 'phaser';
 import { drawMachineBody, drawRoom } from './decor';
 import { lang, toggleLang, type Lang } from './lang';
-import { HOME_SCROLL, ZOOM } from './layout';
+import { BODY, HOME_SCROLL, NOTE, ZOOM } from './layout';
+import { amuletKey, itemKey, see } from './codex';
 import { AmuletCase } from './parts/amuletCase';
 import { AmuletRack } from './parts/amuletRack';
 import { Atmosphere } from './parts/atmosphere';
 import { BrokenScreen } from './parts/brokenScreen';
 import { BulletStand } from './parts/bulletStand';
 import { Cassette } from './parts/cassette';
+import { ChipCase } from './parts/chipCase';
 import { Collector } from './parts/collector';
 import { CornerButtons } from './parts/cornerButtons';
 import { DealerTable } from './parts/dealerTable';
@@ -18,15 +20,17 @@ import { MachineBadge } from './parts/machineBadge';
 import { MachinePanel } from './parts/panel';
 import { PauseScreen } from './parts/pauseScreen';
 import { PayoutWindow } from './parts/payoutWindow';
-import { RevolverTable } from './parts/revolverTable';
+import { Reveal } from './parts/reveal';
+import { ShotgunTable } from './parts/shotgunTable';
 import { addRotateHint } from './parts/rotateHint';
 import { SettingsPanel } from './parts/settingsPanel';
 import { Shop } from './parts/shop';
 import { SlotScreen } from './parts/slotScreen';
-import { SymbolMonitor } from './parts/symbolMonitor';
+import { WallScreen } from './parts/wallScreen';
 import { Tooltip } from './parts/tooltip';
 import { ShotScene } from './scene/ShotScene';
 import { MAX_SLOTS } from './items';
+import { hasAmulets, hasCassette, hasDrum, isTutorialDone, markTutorialDone } from './progress';
 import type { RunSave } from './save';
 import { getVolumes, isSilent, setVolume, toggleSound, volumeShare, type VolumeKind } from './settings';
 
@@ -37,7 +41,6 @@ const VENDING_KEYS = 4; // сколько клавиш у торгового а�
 const CASE_KEYS = 4; // сколько клавиш у витрины амулетов; за ними — кассета (9) и барабан (0)
 const TAPE_KEY = VENDING_KEYS + CASE_KEYS; // номер клавиши кассеты в NUMBER_KEYS
 const MUSIC_TICK = 100; // как часто музыка планирует удары «сердца» вперёд, мс
-const MONITOR_SOUND_DELAY = 0.6; // монитор щёлкает, когда вид к нему повернулся, с
 
 /**
  * Единственная сцена игры «Долговая яма» — верхний слой: создаёт части автомата и разбирает клавиши.
@@ -48,34 +51,37 @@ export class GameScene extends ShotScene {
   private corner!: CornerButtons; // значки в углу: настройки, «звук выключен», во весь экран
   private pauseScreen!: PauseScreen; // экран паузы
   private settingsPanel!: SettingsPanel; // настройки на экране паузы
+  private languageAtPause!: Lang; // язык, какой был, когда встали на паузу: после «▶» записка переворачивается, только если он другой
 
   constructor() {
     super('GameScene');
   }
 
-  /** data.tape — запись кассеты: сцену перезапустили после отката (SaveScene.insertTape). */
-  create(data: { tape?: RunSave } = {}): void {
+  /** data.tape — запись кассеты: сцену перезапустили после отката (SaveScene.insertTape); data.tapesBought — сколько кассет куплено. */
+  create(data: { tape?: RunSave; tapesBought?: number } = {}): void {
     this.resetState();
-    if (data.tape) this.loadTape(data.tape); // откат — забег с кассеты (до частей: они строятся по состоянию)
+    if (data.tape) this.loadTape(data.tape, data.tapesBought ?? 0); // откат — забег с кассеты (до частей: они строятся по состоянию)
     this.setupCamera();
     drawRoom(this);
     const machineBody = drawMachineBody(this); // тело корпуса — его красит MachineBadge в цвет автомата
-    this.monitor = new SymbolMonitor(this, this.round, () => this.toggleMonitor()); // мебель комнаты: под рычагом и рукой Коллектора
+    this.monitor = new WallScreen(this, this.round, () => this.toggleMonitor()); // мебель комнаты: под рычагом и рукой Коллектора
     this.tooltip = new Tooltip(this);
     this.screen = new SlotScreen(this, this.sfx);
     this.brokenScreen = new BrokenScreen(this); // поверх сетки: дыра и трещины после выстрела в автомат
     this.machineBadge = new MachineBadge(this, machineBody, this.machine, this.tooltip);
     this.panel = new MachinePanel(this, () => this.spin());
     this.payout = new PayoutWindow(this, () => this.take());
-    this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
     this.itemShelf = new ItemShelf(this, this.slots, (slot) => this.useItem(slot), this.tooltip);
     this.amuletRack = new AmuletRack(this, this.sockets, this.tooltip);
+    // Полка с включёнными предметами и гнёзда амулетов — до Коллектора: его тёмная комната закрывает всё, что нарисовано раньше неё.
+    this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
+    this.chipCase = new ChipCase(this);
     this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip);
-    this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip);
-    this.cassette = new Cassette(this, this.tapeState === 'forSale', () => this.buyTape(), () => this.insertTape(), this.tooltip);
-    this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx);
+    this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip, hasAmulets());
+    this.cassette = new Cassette(this, hasCassette() && this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip);
+    this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx, hasDrum());
     this.bulletStand = new BulletStand(this, () => this.buyBullet(), this.tooltip);
-    this.revolverTable = new RevolverTable(
+    this.shotgunTable = new ShotgunTable(
       this,
       () => this.playRoulette(),
       (target) => this.shoot(target),
@@ -91,11 +97,19 @@ export class GameScene extends ShotScene {
     this.pauseScreen = new PauseScreen(this, () => this.resumeGame());
     this.settingsPanel = new SettingsPanel(this, (kind, level) => this.changeVolume(kind, level), (language) => this.chooseLanguage(language));
     addRotateHint(this);
+    // Первый забег — в кромешной тьме: виден только автомат в пятне света (после обучения тьмы нет).
+    this.reveal = isTutorialDone() ? null : new Reveal(this, HOME_SCROLL, BODY, NOTE);
+    // Canvas не создался — тьмы нет: обучение считаем пройденным, иначе оно зациклится (каждый забег снова «первый»).
+    if (this.reveal && !this.reveal.isActive) {
+      markTutorialDone();
+      this.reveal = null;
+    }
     this.setupKeyboard();
     this.setupSound();
     this.setupPause();
     this.refreshHud();
     if (data.tape) this.playTape();
+    else this.panel.callLever(); // новый забег: пока ни разу не крутил — рычаг зовёт (после отката кассетой он не нужен)
   }
 
   /**
@@ -134,7 +148,8 @@ export class GameScene extends ShotScene {
 
   /** Esc, P или значок ⚙: пауза с настройками или продолжить. */
   private togglePause(): void {
-    if (this.isPaused) this.resumeGame();
+    if (this.isAtMonitor) this.lookBack(); // Esc сначала закрывает большой экран на стене
+    else if (this.isPaused) this.resumeGame();
     else this.pauseGame();
   }
 
@@ -146,6 +161,7 @@ export class GameScene extends ShotScene {
   private pauseGame(): void {
     if (this.isPaused || this.isRewinding || this.isGameOver) return;
     this.isPaused = true;
+    this.languageAtPause = lang();
     this.tweens.pauseAll();
     this.time.paused = true;
     this.sfx.setPaused(true);
@@ -163,6 +179,8 @@ export class GameScene extends ShotScene {
     this.sfx.setPaused(false);
     this.time.paused = false;
     this.tweens.resumeAll();
+    if (lang() !== this.languageAtPause) this.collector.flipNote(this.debt, this.hasEnoughForDebt());
+    this.refreshHud(); // на паузе приборы могли выключиться (телевизор закрыли, кнопки не нажимались) — снова включить
   }
 
   // ---------- Настройки: громкость звуков, громкость музыки, язык ----------
@@ -193,43 +211,49 @@ export class GameScene extends ShotScene {
 
   /**
    * L или RU/EN на панели: сменить язык. Подсказки, новости и экран DEATH берут язык, когда появляются,
-   * а постоянные надписи меняем сразу: «Пробел» у рычага, в магазине и у стола Коллектора, «ДОЛГ» на записке (она переворачивается).
+   * а постоянные надписи меняем сразу: «ПАУЗА», экран монитора, «ДОЛГ» на записке (она переворачивается).
+   * На паузе твины стоят, и каждое нажатие копило бы переворот записки: RU → EN → RU — и после «▶» она переворачивалась
+   * без смены языка. Поэтому на паузе записку не трогаем — её переворачивает resumeGame, если язык и правда другой.
    */
   private toggleLanguage(): void {
     toggleLang();
     this.settingsPanel.showLanguage(lang());
     this.tooltip.hide();
-    this.panel.relabel();
-    this.shop.relabel();
-    this.revolverTable.relabel();
     this.pauseScreen.relabel();
     this.monitor.relabel();
-    this.collector.flipNote(this.debt, this.hasEnoughForDebt());
+    if (!this.isPaused) this.collector.flipNote(this.debt, this.hasEnoughForDebt());
   }
 
-  // ---------- Монитор символов ----------
+  // ---------- Экран на стене ----------
 
-  /** → или клик по монитору: повернуться к монитору или обратно к автомату. */
+  /** → или клик по экрану на стене: открыть большой экран или закрыть. */
   private toggleMonitor(): void {
     if (this.isAtMonitor) this.lookBack();
     else this.lookAtMonitor();
   }
 
-  /** Повернуться к монитору справа — там цены символов и что делает каждый. Только между прокрутками: пока смотришь, крутить нельзя. */
+  /** Открыть большой экран со вкладками (символы, паттерны, как играть). Только между прокрутками: пока он открыт, крутить нельзя. */
   private lookAtMonitor(): void {
     if (!this.canAct()) return;
+    if (this.reveal?.isActive) return; // тьма первого забега закрывает экран — телевизор не открываем
     this.isAtMonitor = true;
+    this.seeOwned();
     this.tooltip.hide();
-    this.sfx.play('turn');
-    this.sfx.play('monitor', MONITOR_SOUND_DELAY);
+    this.sfx.play('monitor');
     this.monitor.open();
     this.refreshHud();
   }
 
-  /** Назад к автомату (Пробел, ←, → или клик по монитору); повернулся — снова можно крутить. */
+  /** Что лежит на полке и в гнёздах, то уже встречено (барабан, откат кассетой) — для вкладки «Предметы». */
+  private seeOwned(): void {
+    for (const item of this.shelf) if (item) see(itemKey(item.id));
+    for (const amulet of this.amulets) see(amuletKey(amulet.id));
+  }
+
+  /** Закрыть большой экран (клик мимо, ✕, Esc, Пробел, ← или →); снова можно крутить. */
   private lookBack(): void {
     if (!this.isAtMonitor) return;
-    this.sfx.play('turn');
+    this.sfx.play('monitor');
     this.monitor.close(() => {
       this.isAtMonitor = false;
       this.refreshHud();
@@ -253,7 +277,8 @@ export class GameScene extends ShotScene {
     this.onKey('MINUS', () => this.buyBullet()); // в магазине — купить патрон
     this.onKey('UP', () => this.onUp());
     this.onKey('DOWN', () => this.onDown());
-    this.onKey('RIGHT', () => this.toggleMonitor()); // монитор — справа
+    this.onKey('PLUS', () => this.guess('equal')); // у Дилера — «=»: в Phaser клавиша «= / +» зовётся PLUS (код 187)
+    this.onKey('RIGHT', () => this.toggleMonitor()); // экран на стене — справа
     this.onKey('LEFT', () => this.lookBack());
   }
 
@@ -294,23 +319,23 @@ export class GameScene extends ShotScene {
   }
 
   /**
-   * Клавиша 1–9 или 0: в магазине — купить; вне магазина 9 — вставить кассету (можно, когда Коллектор пришёл, а фишек не хватает);
+   * Клавиша 1–9 или 0: в магазине — купить; вне магазина 9 — кассета (записать или откатиться);
    * у Коллектора 1–6 — амулет, в игре 1–8 — включить предмет с полки.
    */
   private onNumber(index: number): void {
     if (this.isShopping) this.onShopNumber(index);
-    else if (index === TAPE_KEY) this.insertTape();
+    else if (index === TAPE_KEY) this.useTape();
     else if (this.isChoosingDeal) this.giveAmulet(index);
     else if (index < MAX_SLOTS) this.useItem(index);
   }
 
-  /** ↑: в рулетке — выстрел в Коллектора, у Дилера — «больше». */
+  /** ↑: в рулетке — выстрел в Коллектора, у Дилера — «>» (больше). */
   private onUp(): void {
     if (this.isAiming) this.shoot('collector');
     else this.guess('higher');
   }
 
-  /** ↓: в рулетке — выстрел в себя, у Дилера — «меньше». */
+  /** ↓: в рулетке — выстрел в себя, у Дилера — «<» (меньше). */
   private onDown(): void {
     if (this.isAiming) this.shoot('player');
     else this.guess('lower');

@@ -15,7 +15,6 @@ const LANG_KEY = 'dolgovaya-yama-lang'; // ключ выбранного язы�
 /** Все надписи игры. Текста на экране минимум — поэтому их так мало. */
 const TEXTS = {
   debt: { ru: 'ДОЛГ', en: 'DEBT' }, // на записке
-  space: { ru: 'Пробел', en: 'Space' }, // подсказка клавиши
   again: { ru: 'ЗАНОВО', en: 'AGAIN' },
   debtsPaid: { ru: 'Долгов закрыто', en: 'Debts paid' },
   best: { ru: 'Рекорд', en: 'Best' },
@@ -24,6 +23,30 @@ const TEXTS = {
   phase: { ru: 'ФАЗА', en: 'PHASE' }, // «ФАЗА 2» на стекле
   debtCovered: { ru: 'ДАЛЬШЕ — ПРИБЫЛЬ', en: "NOW IT'S PROFIT" }, // на стекле: на долг хватает — дальше крутишь себе в плюс
   pause: { ru: 'ПАУЗА', en: 'PAUSE' }, // над знаком паузы
+  // Экран на стене (WallScreen): вкладки и их надписи.
+  tabSymbols: { ru: 'СИМВОЛЫ', en: 'SYMBOLS' },
+  tabHowTo: { ru: 'КАК ИГРАТЬ', en: 'HOW TO PLAY' },
+  tabWho: { ru: 'КТО ЕСТЬ КТО', en: "WHO'S WHO" },
+  tabItems: { ru: 'ПРЕДМЕТЫ', en: 'ITEMS' },
+  tabEmpty: { ru: 'Пока ничего не встретил', en: 'Nothing met yet' },
+  whoCollector: { ru: 'Коллектор', en: 'Collector' },
+  whoCollectorWhat: {
+    ru: 'Приходит за долгом. Фишек не хватает: отдай амулет, сыграй с ним в рулетку (раз за забег) или вставь кассету',
+    en: "Comes for the debt. Short on chips: give an amulet, play roulette (once per run) or insert the tape",
+  },
+  whoDealer: { ru: 'Дилер', en: 'Dealer' },
+  whoDealerWhat: {
+    ru: 'Приходит, когда выпал кубик 🎲. Угадай, следующая карта больше, меньше или такая же: «>» и «<» ×1,5, «=» ×8. Не угадал: кон сгорает',
+    en: 'Comes when the 🎲 drops. Guess if the next card is higher, lower or the same: ">" and "<" ×1.5, "=" ×8. Wrong: the pot burns',
+  },
+  howToGoal: {
+    ru: 'Цель. Отдать долг, пока не кончились прокрутки. Каждый раунд долг больше.\n\nКрути автомат: паттерны из одинаковых символов добавляют фишки в кон. Каждая прокрутка подряд поднимает множитель кона. Череп сжигает кон, пока ты его не забрал.\n\nЗабрать: кон уходит на табло, множитель сбрасывается.\n\nФишек на долг хватает: отдай его записке или руке Коллектора, потом магазин. Не хватает: у Коллектора можно отдать амулет, сыграть в рулетку (раз за забег) или вставить кассету.',
+    en: 'Goal. Pay the debt before you run out of spins. The debt grows every round.\n\nSpin the machine: patterns of matching symbols add chips to the pot. Each spin in a row raises the pot multiplier. A skull burns the pot until you take it.\n\nTake: the pot goes to the board, the multiplier resets.\n\nEnough chips for the debt: hand it to the note or the Collector, then the shop. Not enough: at the Collector you can give an amulet, play roulette (once per run) or insert the tape.',
+  },
+  howToKeys: {
+    ru: 'Клавиши\nПробел: крутить, назад из магазина\nEnter: забрать кон, отдать долг\nD: отдать долг раньше\n1–8: предмет с полки\n→ или клик: этот экран\nEsc или P: пауза\nM: звук\nL: язык\n\nВ магазине\n1–4: торговый автомат\n5–8: чемодан с амулетами\n9: кассета, 0: барабан, «-»: патрон',
+    en: 'Keys\nSpace: spin, leave the shop\nEnter: take the pot, pay the debt\nD: pay the debt early\n1–8: shelf item\n→ or click: this screen\nEsc or P: pause\nM: sound\nL: language\n\nIn the shop\n1–4: vending machine\n5–8: amulet suitcase\n9: tape, 0: drum, "-": bullet',
+  },
   closedSlot: { ru: 'Закрытое место', en: 'Locked slot' },
   closedSlotHow: { ru: 'Открывается за фишки в магазине', en: 'Opens for chips in the shop' },
   shelfSlot: { ru: 'Место на полке', en: 'Shelf slot' },
@@ -36,8 +59,8 @@ const TEXTS = {
   ticketWhat: { ru: 'На амулеты и гнёзда', en: 'Buys amulets and sockets' },
   giveAmulet: { ru: 'Отдать — долг закрыт', en: 'Give it — debt paid' },
   notEnough: { ru: 'Не хватит на долг', en: 'Not enough for the debt' },
-  revolver: { ru: 'Рулетка', en: 'Roulette' }, // револьвер на столе Коллектора
-  revolverWhat: { ru: 'Один раз за забег. Выжил — тот же долг заново, фишки твои', en: 'Once per run. Survive — same debt again, keep your chips' },
+  shotgun: { ru: 'Рулетка', en: 'Roulette' }, // дробовик на столе Коллектора
+  shotgunWhat: { ru: 'Один раз за забег. Выжил — чемодан платит долг, но счёт откатывается на один долг назад', en: 'Once per run. Survive — a case of chips pays the debt, but the score rolls back one debt' },
   liveBullet: { ru: 'Боевой', en: 'Live round' },
   blankBullet: { ru: 'Холостой', en: 'Blank' },
   bulletsWhat: { ru: 'Столько в барабане, порядок неизвестен', en: 'This many in the cylinder, order unknown' },
@@ -49,11 +72,11 @@ const TEXTS = {
   drum: { ru: 'Барабан', en: 'Wheel' }, // колесо в магазине
   drumWhat: { ru: 'Крути за фишки. Каждая следующая прокрутка — цена ×{0}', en: 'Spin for chips. Each next spin: price ×{0}' },
   tape: { ru: 'Кассета', en: 'Cassette' },
-  tapeWhat: { ru: 'Запишет начало следующего раунда. Не хватит на долг — вернёшься туда. Один раз', en: 'Records the start of the next round. Short on the debt — go back there. Once per run' },
-  tapeRecorded: { ru: 'Не хватает на долг — вставь: забег вернётся к записи', en: 'Short on the debt — insert it: the run goes back to the recording' },
+  tapeWhat: { ru: 'Запиши забег как есть — и вернись к записи, когда попадёшь в беду. Автомат съест кассету', en: 'Record the run as it is — and go back to it when things go wrong. The machine eats the tape' },
+  tapeBlank: { ru: 'Чистая. Между прокрутками — запиши забег как есть, переписать нельзя', en: 'Blank. Between spins — record the run as it is, no re-recording' },
+  tapeRecorded: { ru: 'Записано. Между прокрутками или у Коллектора (не в рулетке) — вернись к записи', en: 'Recorded. Between spins or at the Collector (not in roulette) — go back to the recording' },
   vcr: { ru: 'Видеомагнитофон', en: 'VCR' },
   vcrWhat: { ru: 'Кассета к нему — в магазине', en: 'Its cassette is sold in the shop' },
-  vcrUsed: { ru: 'Кассета израсходована', en: 'The cassette is used up' },
   // Монитор справа: что делает каждый особый символ. {0}, {1} — числа из правил (их подставляет монитор).
   skullNote: { ru: 'Паттерн из черепов сжигает кон', en: 'A skull pattern burns the pot' },
   ticketNote: { ru: '{0} на экране — билет', en: '{0} on screen — a ticket' },

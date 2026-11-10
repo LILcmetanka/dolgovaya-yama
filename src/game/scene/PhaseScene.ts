@@ -29,6 +29,7 @@ export abstract class PhaseScene extends BaseScene {
     this.screen.setCalmColor(this.calmLampColor()); // сначала цвет огней в покое, потом вспышка (наоборот — цвет погасит вспышку)
     this.screen.flashLamps(LAMP_RED, PHASE_LAMPS_TIME);
     this.sfx.play('warning');
+    this.monitor.notify('update'); // на экране на стене — жёлтое UPDATE
     this.refreshHud();
   }
 }

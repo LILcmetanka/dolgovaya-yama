@@ -26,12 +26,13 @@ export const GREEN_TEXT = '#4ade80';
 export const RED_TEXT = '#f87171';
 export const BLUE_TEXT = '#38bdf8';
 export const PURPLE_TEXT = '#c084fc'; // паук съел часть кона
-export const HINT_TEXT = 'rgba(255, 255, 255, 0.55)'; // подсказки клавиш
+export const HINT_TEXT = 'rgba(255, 255, 255, 0.55)'; // бледный значок в углу (🔇)
 export const LED_COLOR = '#fbbf24';
 
 /** Слои: чем больше число, тем выше лежит объект. */
 export const CHIP_DEPTH = 5; // брызги фишек
 export const POPUP_DEPTH = 10; // всплывающие надписи
+export const REVEAL_DEPTH = 12; // тьма первого забега (reveal.ts): над частями и фишками (5), под подсказкой (25) и паузой
 export const TOOLTIP_DEPTH = 25; // подсказка при наведении — поверх всего, кроме экрана DEATH
 export const GAME_OVER_DEPTH = 30; // экран DEATH — конец забега
 
@@ -64,21 +65,10 @@ export function addText(
 }
 
 /**
- * Телефон или планшет: мыши нет, наведения нет — управляют пальцем. Тогда клавиатуры нет и подсказки клавиш не нужны,
- * а подсказка вещи появляется от долгого нажатия (tooltip.ts). Это CSS-запрос: главный указатель не умеет наводиться
- * и он грубый (палец). Одного «не наводится» мало: так отвечает и компьютер совсем без мыши.
+ * Телефон или планшет: мыши нет, наведения нет — управляют пальцем. Тогда подсказка вещи появляется от долгого нажатия
+ * (tooltip.ts). Это CSS-запрос: главный указатель не умеет наводиться и он грубый (палец). Одного «не наводится» мало: так отвечает и компьютер совсем без мыши.
  */
 export const IS_TOUCH_ONLY = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
-
-/** Текст подсказки клавиши («Пробел», «1»…). На телефоне клавиатуры нет — пусто. */
-export function keyHint(key: string): string {
-  return IS_TOUCH_ONLY ? '' : key;
-}
-
-/** Подсказка клавиши — мелкая серая надпись с серединой в (x, y). На телефоне она пустая. */
-export function addKeyHint(scene: Phaser.Scene, x: number, y: number, key: string, fontSize = '13px'): Phaser.GameObjects.Text {
-  return addText(scene, x, y, keyHint(key), { fontSize, color: HINT_TEXT }).setOrigin(0.5);
-}
 
 /** Надпись или картинка коротко пульсирует: увеличивается в scale раз и возвращается к обычному размеру base. */
 export function pulse(

@@ -10,12 +10,14 @@ import {
   LEVER_ROD_TEXTURE,
   TICKET_TEXTURE,
 } from '../decor';
-import { t } from '../lang';
 import {
   BOARD_CHIP_X,
   BOARD_CHIPS_MAX_WIDTH,
   BOARD_CHIPS_TEXT_X,
+  BOARD_CHIP_HEIGHT,
+  BOARD_TICKET_HEIGHT,
   BOARD_TICKET_X,
+  BOARD_TICKETS_MAX_WIDTH,
   BOARD_TICKETS_TEXT_X,
   CENTER_X,
   DISPLAY,
@@ -27,9 +29,7 @@ import {
 } from '../layout';
 import { SPINS_PER_ROUND } from '../rules';
 import {
-  addKeyHint,
   addText,
-  keyHint,
   LAMP_GOLD,
   LAMP_OFF,
   LAMP_RED,
@@ -54,7 +54,7 @@ const WINK_TIMES = 2; // волна проходит дважды
 const LAMP_STAGGER = 45; // каждая следующая лампочка — на столько мс позже
 const BURN_OUT_TIME = 300; // лампочка гаснет, мс
 // Табло.
-const BOARD_FONT_SIZE = 32; // число фишек; длинное — мельче, чтобы влезло
+const BOARD_FONT_SIZE = 30; // числа фишек и билетов — одним шрифтом; длинное — мельче, чтобы влезло
 const BOARD_MIN_FONT_SIZE = 18;
 const TICKET_FLY_TIME = 600; // полученные билеты летят на табло, мс
 const TICKET_FLY_STAGGER = 120;
@@ -79,7 +79,21 @@ const LEVER_ROD_LENGTH = 142;
 const LEVER_PULL_SCALE = -0.4; // рычаг дёрнули: штанга переворачивается, шарик уходит вниз «на игрока»
 const LEVER_PULL_TIME = 130; // рывок вниз, столько же — обратно, мс
 const LEVER_HOLD_TIME = 60; // сколько рычаг держится внизу, мс
+const LEVER_CALL_RADIUS = 34; // кольцо вокруг шарика, пока ни разу не крутили: «потяни меня»
+const LEVER_CALL_GROW = 1.25; // кольцо расходится до такого размера и гаснет
+const LEVER_CALL_TIME = 900; // один «вздох» кольца, мс
 const LEVER_BALL_GROW = 0.15; // внизу шарик ближе к игроку — на столько крупнее (на каждую единицу укорочения штанги)
+
+/** Число на табло: шрифт BOARD_FONT_SIZE, а длинное число — мельче, чтобы не вылезло шире maxWidth. */
+function fitBoardNumber(text: Phaser.GameObjects.Text, value: number, maxWidth: number): void {
+  text.setText(String(value));
+  let size = BOARD_FONT_SIZE;
+  text.setFontSize(size);
+  while (text.width > maxWidth && size > BOARD_MIN_FONT_SIZE) {
+    size -= 2;
+    text.setFontSize(size);
+  }
+}
 
 /** Цвет горящих лампочек прокруток: когда их мало — красные. */
 function spinLampColor(spinsLeft: number): number {
@@ -91,12 +105,13 @@ export class MachinePanel {
   private readonly scene: Phaser.Scene;
   private readonly boardText: Phaser.GameObjects.Text; // табло: сколько у тебя фишек
   private readonly ticketsText: Phaser.GameObjects.Text; // табло: сколько у тебя билетов
+  private readonly ticketScale: number; // билет на табло во столько раз больше своей картинки — туда долетают билеты
   private readonly multiplierText: Phaser.GameObjects.Text; // окошко множителя серии
   private readonly spinLamps: Phaser.GameObjects.Arc[] = []; // лампочки прокруток: одна на прокрутку
   private freeLamps: Phaser.GameObjects.Image[] = []; // бесплатные прокрутки за короны — короны в конце ряда лампочек
   private readonly leverRod: Phaser.GameObjects.Image; // штанга рычага, низ — точка вращения
   private readonly leverBall: Phaser.GameObjects.Image; // шарик на конце штанги
-  private readonly leverHint: Phaser.GameObjects.Text; // «Пробел» под рычагом
+  private leverCall: Phaser.GameObjects.Arc | null = null; // кольцо вокруг шарика: рычаг зовёт, пока не крутили
   private phaseSigns: Phaser.GameObjects.Text[] = []; // знаки фазы 2 под окошком множителя; в фазе 1 их нет
 
   /** pullLever — что делать, когда рычаг дёрнули кликом (Пробел сцена ловит сама). */
@@ -108,16 +123,20 @@ export class MachinePanel {
     createLeverTextures(scene, LEVER_ROD_LENGTH);
 
     // Табло сверху: слева фишки (сюда летит забранное, отсюда отдаётся долг), справа билеты (на амулеты).
-    scene.add.image(BOARD_CHIP_X, DISPLAY.y, CHIP_TEXTURE).setScale(1.1);
+    // Фишка и билет на глаз одного размера, числа — одним шрифтом.
+    const chip = scene.add.image(BOARD_CHIP_X, DISPLAY.y, CHIP_TEXTURE);
+    chip.setScale(BOARD_CHIP_HEIGHT / chip.height);
     this.boardText = addText(scene, BOARD_CHIPS_TEXT_X, DISPLAY.y, '', LED_STYLE).setOrigin(0, 0.5);
-    scene.add.image(BOARD_TICKET_X, DISPLAY.y, TICKET_TEXTURE).setScale(0.9);
-    this.ticketsText = addText(scene, BOARD_TICKETS_TEXT_X, DISPLAY.y, '', { ...LED_STYLE, fontSize: '22px' }).setOrigin(0, 0.5);
+    const ticket = scene.add.image(BOARD_TICKET_X, DISPLAY.y, TICKET_TEXTURE);
+    this.ticketScale = BOARD_TICKET_HEIGHT / ticket.height;
+    ticket.setScale(this.ticketScale);
+    this.ticketsText = addText(scene, BOARD_TICKETS_TEXT_X, DISPLAY.y, '', LED_STYLE).setOrigin(0, 0.5);
 
     this.addSpinLamps(SPINS_PER_ROUND);
     // Окошко множителя серии: «×3» — с таким множителем пойдёт следующая прокрутка.
     this.multiplierText = addText(scene, MULTIPLIER_WINDOW.x, MULTIPLIER_WINDOW.y, '', LED_STYLE).setOrigin(0.5);
 
-    // Рычаг справа: штанга и шарик на её конце, под креплением — подсказка клавиши.
+    // Рычаг справа: штанга и шарик на её конце.
     this.leverRod = scene.add.image(LEVER_MOUNT.x, LEVER_MOUNT.y, LEVER_ROD_TEXTURE).setOrigin(0.5, 1);
     this.leverBall = scene.add.image(LEVER_MOUNT.x, LEVER_MOUNT.y, LEVER_BALL_TEXTURE);
     this.placeLeverBall();
@@ -125,13 +144,6 @@ export class MachinePanel {
       part.setInteractive({ useHandCursor: true });
       part.on('pointerdown', pullLever);
     }
-    const hintY = LEVER_MOUNT.y + LEVER_MOUNT.height / 2 + 14;
-    this.leverHint = addKeyHint(scene, LEVER_MOUNT.x, hintY, t('space'));
-  }
-
-  /** Сменился язык: подсказка клавиши под рычагом — на новом. */
-  relabel(): void {
-    this.leverHint.setText(keyHint(t('space')));
   }
 
   /** Ещё count лампочек прокруток в конец ряда; весь ряд снова по центру. pop — новые появляются с подскоком. */
@@ -170,20 +182,14 @@ export class MachinePanel {
     this.placeSpinLamps();
   }
 
-  /** Табло: сколько у тебя фишек. Длинное число — мельче, чтобы не вылезло из табло. */
+  /** Табло: сколько у тебя фишек. */
   showBalance(balance: number): void {
-    this.boardText.setText(String(balance));
-    let size = BOARD_FONT_SIZE;
-    this.boardText.setFontSize(size);
-    while (this.boardText.width > BOARD_CHIPS_MAX_WIDTH && size > BOARD_MIN_FONT_SIZE) {
-      size -= 2;
-      this.boardText.setFontSize(size);
-    }
+    fitBoardNumber(this.boardText, balance, BOARD_CHIPS_MAX_WIDTH);
   }
 
   /** Табло: сколько у тебя билетов. */
   showTickets(tickets: number): void {
-    this.ticketsText.setText(String(tickets));
+    fitBoardNumber(this.ticketsText, tickets, BOARD_TICKETS_MAX_WIDTH);
   }
 
   /** Билеты летят на табло из (fromX, fromY) — от руки Коллектора или из витрины; долетели — число подпрыгивает. */
@@ -194,7 +200,7 @@ export class MachinePanel {
         targets: ticket,
         x: BOARD_TICKET_X,
         y: DISPLAY.y,
-        scale: 0.9,
+        scale: this.ticketScale,
         angle: 360,
         delay: index * TICKET_FLY_STAGGER,
         duration: TICKET_FLY_TIME,
@@ -320,6 +326,7 @@ export class MachinePanel {
 
   /** Рычаг дёргается: штанга переворачивается (шарик уходит вниз «на игрока») и возвращается. Шарик едет за концом штанги. */
   pullLever(): void {
+    this.stopCallingLever();
     this.scene.tweens.killTweensOf(this.leverRod);
     this.leverRod.setScale(1);
     this.scene.tweens.add({
@@ -332,6 +339,33 @@ export class MachinePanel {
       onUpdate: () => this.placeLeverBall(),
       onComplete: () => this.placeLeverBall(),
     });
+  }
+
+  /**
+   * Рычаг зовёт: вокруг шарика расходится золотое кольцо — первый раз игрок видит, что тянуть надо сюда.
+   * Гаснет с первой же прокруткой (pullLever).
+   */
+  callLever(): void {
+    if (this.leverCall) return;
+    const ring = this.scene.add.circle(this.leverBall.x, this.leverBall.y, LEVER_CALL_RADIUS);
+    ring.setStrokeStyle(4, LAMP_GOLD).setFillStyle(LAMP_GOLD, 0.15);
+    this.scene.tweens.add({
+      targets: ring,
+      scale: { from: 1, to: LEVER_CALL_GROW },
+      alpha: { from: 1, to: 0 },
+      duration: LEVER_CALL_TIME,
+      repeat: -1,
+      ease: 'Sine.easeOut',
+    });
+    this.leverCall = ring;
+  }
+
+  /** Кольцо вокруг шарика убрать. */
+  private stopCallingLever(): void {
+    if (!this.leverCall) return;
+    this.scene.tweens.killTweensOf(this.leverCall);
+    this.leverCall.destroy();
+    this.leverCall = null;
   }
 
   /** Шарик всегда на конце штанги: штанга короче — шарик ниже. Внизу он ближе к игроку — чуть крупнее. */

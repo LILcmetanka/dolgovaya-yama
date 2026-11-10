@@ -1,8 +1,10 @@
 import Phaser from 'phaser';
 import { multiplierStep, START_SOCKETS, type Amulet, type AmuletId } from '../amulets';
+import { resetCodex } from '../codex';
 import { ORDINARY, type MachineCharacter } from '../characters';
 import { noEffects, START_SLOTS, type Item, type ItemEffects, type ShopItem } from '../items';
 import { PHASES, type Phase } from '../phases';
+import { hasAmulets, markTutorialDone } from '../progress';
 import { debtForRound, multiplierForStreak, SPINS_PER_ROUND } from '../rules';
 import type { RunSave, TapeState } from '../save';
 import { Sound } from '../sound';
@@ -13,6 +15,7 @@ import type { Atmosphere } from '../parts/atmosphere';
 import type { BrokenScreen } from '../parts/brokenScreen';
 import type { BulletStand } from '../parts/bulletStand';
 import type { Cassette } from '../parts/cassette';
+import type { ChipCase } from '../parts/chipCase';
 import type { Collector } from '../parts/collector';
 import type { DealerTable } from '../parts/dealerTable';
 import type { Drum } from '../parts/drum';
@@ -21,10 +24,11 @@ import type { ItemShelf } from '../parts/itemShelf';
 import type { MachineBadge } from '../parts/machineBadge';
 import type { MachinePanel } from '../parts/panel';
 import type { PayoutWindow } from '../parts/payoutWindow';
-import type { RevolverTable } from '../parts/revolverTable';
+import type { Reveal } from '../parts/reveal';
+import type { ShotgunTable } from '../parts/shotgunTable';
 import type { Shop } from '../parts/shop';
 import type { SlotScreen } from '../parts/slotScreen';
-import type { SymbolMonitor } from '../parts/symbolMonitor';
+import type { WallScreen } from '../parts/wallScreen';
 import type { Tooltip } from '../parts/tooltip';
 
 const RECORD_KEY = 'dolgovaya-yama-record'; // ключ рекорда в localStorage
@@ -95,7 +99,8 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isLuckyNext = false; // на экране был клевер: следующая прокрутка — с паттерном наверняка
   protected freeSpins = 0; // сколько бесплатных прокруток за короны ещё впереди — они крутятся сами
   protected phase: Phase = PHASES[0]; // какая фаза сейчас (phases.ts) — по числу закрытых долгов
-  protected tapeState: TapeState = 'forSale'; // кассета: продаётся, куплена (запишет забег на выходе из магазина), записана или уже вставлена
+  protected tapeState: TapeState = 'forSale'; // кассета: продаётся, чистая (в REC) или записана (в PLAY)
+  protected tapesBought = 0; // сколько кассет куплено за забег — от этого цена; откат этого числа не откатывает
   protected tapeRecord: RunSave | null = null; // что записано на кассету: забег в начале раунда
   protected isSpinning = false; // сетка крутится — ввод игнорируется
   protected isRoundOver = false; // прокрутки кончились — расплата и магазин, крутить и забирать нельзя
@@ -107,7 +112,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isGameOver = false; // долг не отдан — DEATH, конец забега
   protected isRewinding = false; // кассету вставили — плёнка перематывается, потом сцена перезапустится с записью
   protected isPaused = false; // пауза (Esc, P, ⏸): анимации, таймеры и звук стоят
-  protected isAtMonitor = false; // вид повёрнут к монитору символов — крутить и забирать нельзя
+  protected isAtMonitor = false; // большой экран на стене открыт — крутить и забирать нельзя
   protected canRestartWithSpace = false; // Пробел на экране DEATH срабатывает не сразу
 
   // Звук создаётся один раз вместе со сценой и живёт весь сеанс: при scene.restart() он тот же (аудиоконтекстов в браузере мало).
@@ -116,23 +121,25 @@ export abstract class BaseScene extends Phaser.Scene {
   // Части автомата и комнаты. GameScene создаёт их заново в каждом create(), поэтому картинки и анимации всегда свежие.
   protected screen!: SlotScreen; // экран 5×3, стекло с паттернами, бегущие огни
   protected panel!: MachinePanel; // табло, окошко множителя, лампочки прокруток, рычаг
-  protected payout!: PayoutWindow; // окошко выплаты: электронное табло с коном и красной кнопкой
-  protected collector!: Collector; // записка с долгом, рука Коллектора, GOOD LUCK и DEATH
+  protected payout!: PayoutWindow; // окошко выплаты: электронное табло с коном и кнопкой «забрать»
+  protected collector!: Collector; // записка с долгом, банкомат и Коллектор в тени, GOOD LUCK и DEATH
+  protected chipCase!: ChipCase; // чемодан с фишками: выжил в рулетке — долг оплачен
   protected itemShelf!: ItemShelf; // полка с предметами и включённые предметы у экрана
   protected amuletRack!: AmuletRack; // гнёзда с амулетами на верхушке корпуса
   protected shop!: Shop; // комната слева и торговый автомат
   protected cassette!: Cassette; // кассета в магазине и видеомагнитофон у монитора
-  protected amuletCase!: AmuletCase; // витрина амулетов над торговым автоматом
+  protected amuletCase!: AmuletCase; // чемодан с амулетами над торговым автоматом
   protected drum!: Drum; // «барабан» в магазине: колесо с призами за фишки
-  protected revolverTable!: RevolverTable; // стол Коллектора: рулетка с револьвером и лоток для откупа амулетом
+  protected shotgunTable!: ShotgunTable; // стол Коллектора: рулетка с дробовиком и лоток для откупа амулетом
   protected bulletStand!: BulletStand; // патрон на стене магазина: его покупают за билеты
   protected brokenScreen!: BrokenScreen; // дыра и трещины на экране автомата после выстрела
   protected machineBadge!: MachineBadge; // характер автомата: цвет корпуса и значок
   protected dealerTable!: DealerTable; // стол Дилера поверх экрана
   protected atmosphere!: Atmosphere; // пыль, полосы на экране, мигание света, тёмные края от тревоги
   protected tooltip!: Tooltip; // подсказка при наведении мыши
-  protected monitor!: SymbolMonitor; // монитор символов у правой стены: цены и что делает каждый символ
+  protected monitor!: WallScreen; // экран на стене справа: символы, паттерны, как играть
   protected effects!: Effects; // брызги фишек, всплывающие надписи, вспышка с тряской
+  protected reveal: Reveal | null = null; // тьма первого забега; null — обучение пройдено или его нет
 
   /** Начало забега: первый долг, пустое табло, 2 места на полке и 2 гнезда, ничего не включено, автомат обычный. */
   protected resetState(): void {
@@ -148,7 +155,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.shelf = new Array<Item | null>(START_SLOTS).fill(null);
     this.itemEffects = noEffects();
     this.offer = [];
-    this.sockets = START_SOCKETS;
+    this.sockets = hasAmulets() ? START_SOCKETS : 0; // в первом забеге все гнёзда закрыты
     this.amulets = [];
     this.amuletOffer = [];
     this.isTicketForSale = false;
@@ -166,6 +173,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.freeSpins = 0;
     this.phase = PHASES[0];
     this.tapeState = 'forSale';
+    this.tapesBought = 0;
     this.tapeRecord = null;
     this.isDealing = false;
     this.isSpinning = false;
@@ -191,7 +199,8 @@ export abstract class BaseScene extends Phaser.Scene {
     this.payout.showPot(this.pot, this.debt);
     this.payout.setEnabled(this.canAct());
     this.collector.showPayable(this.canPayEarly());
-    this.cassette.showUsable(this.canRewind());
+    this.collector.showProgress(this.debt, this.balance, this.pot);
+    this.cassette.showUsable(this.canRecord() || this.canRewind());
     this.monitor.setEnabled(this.canAct() || this.isAtMonitor); // к монитору — между прокрутками, от него — всегда
     const tension = this.tension();
     this.sfx.setTension(tension);
@@ -256,9 +265,15 @@ export abstract class BaseScene extends Phaser.Scene {
     return this.hasEnoughForDebt() && isRoundGoing && this.spinsLeft <= PAY_EARLY_GLOW_SPINS;
   }
 
-  /** Можно ли вставить кассету — тогда она светится: Коллектор пришёл, а фишек не хватает, и на кассете есть запись. */
+  /** Можно ли записать на чистую кассету: между прокрутками у автомата (canAct). */
+  protected canRecord(): boolean {
+    return this.tapeState === 'blank' && this.canAct();
+  }
+
+  /** Можно ли откатиться: есть запись, и сейчас либо между прокрутками, либо Коллектор пришёл (но рулетка не идёт: isChoosingDeal в ней снят). */
   protected canRewind(): boolean {
-    return this.isChoosingDeal && this.tapeState === 'recorded';
+    const isFree = this.canAct() || (this.isChoosingDeal && !this.isPaused);
+    return this.tapeState === 'recorded' && !this.isRewinding && !this.isGameOver && isFree;
   }
 
   /**
@@ -266,7 +281,22 @@ export abstract class BaseScene extends Phaser.Scene {
    * и «заново» снова откатило бы забег.
    */
   protected restartGame(): void {
+    resetCodex(); // новый забег: встреченное забыто
     this.scene.restart({});
+  }
+
+  /** Из тьмы первого забега проступает записка с долгом (третья прокрутка). */
+  protected openRevealNote(): void {
+    this.reveal?.openNote();
+  }
+
+  /** Коллектор пришёл за долгом — обучение пройдено: тьма гаснет и больше не вернётся. */
+  protected finishTutorial(): void {
+    const reveal = this.reveal;
+    if (!reveal) return;
+    this.reveal = null;
+    markTutorialDone(); // сразу: сцена может перезапуститься посреди фейда
+    reveal.finish();
   }
 
   /** Счёт — сколько долгов закрыто. */

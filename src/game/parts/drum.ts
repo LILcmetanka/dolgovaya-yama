@@ -17,15 +17,14 @@ import { ITEMS } from '../items';
 import { t } from '../lang';
 import { BOARD_CHIP_X, DISPLAY, DRUM_RADIUS, DRUM_WHEEL, ITEM_SIZE } from '../layout';
 import type { Sfx } from '../sound';
-import { addKeyHint, addText, CHIP_DEPTH, LED_COLOR, LED_STYLE, RED_TEXT } from '../theme';
+import { addText, CHIP_DEPTH, LED_COLOR, LED_STYLE, RED_TEXT } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
-// Где что: стрелка — над колесом (остриё заходит за обод), ценник — под колесом, номер клавиши — над стрелкой.
+// Где что: стрелка — над колесом (остриё заходит за обод), ценник — под колесом.
 const POINTER_BOTTOM = DRUM_WHEEL.y - DRUM_RADIUS + 8;
 const PRICE_Y = DRUM_WHEEL.y + DRUM_RADIUS + 24;
 const PRICE_PLATE = { width: 78, height: 26 }; // тёмная табличка под ценником
 const PRICE_ICON_SCALE = 0.75;
-const KEY_Y = DRUM_WHEEL.y - DRUM_RADIUS - 30;
 const PRIZE_AT = 0.62; // приз вылетает оттуда, где нарисована его картинка: такая доля радиуса от середины колеса
 // Анимации.
 const SPIN_TURNS = 3; // колесо делает столько полных оборотов, прежде чем встать
@@ -58,24 +57,27 @@ export class Drum {
   private available: boolean[] = []; // какие сектора сейчас могут выпасть — так нарисовано колесо
 
   /** spin — кликнули по колесу; sfx — щелчки стрелки, пока колесо крутится. */
-  constructor(scene: Phaser.Scene, spin: () => void, hint: Hint, sfx: Sfx) {
+  constructor(scene: Phaser.Scene, spin: () => void, hint: Hint, sfx: Sfx, isAvailable: boolean) {
     this.scene = scene;
     this.sfx = sfx;
     createChipTextures(scene);
     createItemTextures(scene, [...ITEMS, MAGNIFIER], ITEM_SIZE);
     createDrumTextures(scene, DRUM_RADIUS, DRUM_SECTORS.length);
-    scene.add.image(DRUM_WHEEL.x, DRUM_WHEEL.y, DRUM_BACK_TEXTURE);
+    const back = scene.add.image(DRUM_WHEEL.x, DRUM_WHEEL.y, DRUM_BACK_TEXTURE);
     this.showAvailable(DRUM_SECTORS.map(() => true));
     this.wheel = scene.add.image(DRUM_WHEEL.x, DRUM_WHEEL.y, DRUM_WHEEL_TEXTURE);
     this.wheel.setInteractive({ useHandCursor: true });
     attachHint(this.wheel, hint, () => [t('drum'), t('drumWhat', DRUM_PRICE_GROWTH)], spin);
     this.glow = scene.add.image(DRUM_WHEEL.x, DRUM_WHEEL.y, DRUM_GLOW_TEXTURE).setOrigin(0.5, 1).setAlpha(0);
-    scene.add.image(DRUM_WHEEL.x, POINTER_BOTTOM, DRUM_POINTER_TEXTURE).setOrigin(0.5, 1);
-    addKeyHint(scene, DRUM_WHEEL.x, KEY_Y, '0');
-
-    scene.add.rectangle(DRUM_WHEEL.x, PRICE_Y, PRICE_PLATE.width, PRICE_PLATE.height, 0x020617).setRounded(5);
-    scene.add.image(DRUM_WHEEL.x - 22, PRICE_Y, CHIP_TEXTURE).setScale(PRICE_ICON_SCALE);
+    const pointer = scene.add.image(DRUM_WHEEL.x, POINTER_BOTTOM, DRUM_POINTER_TEXTURE).setOrigin(0.5, 1);
+    const plate = scene.add.rectangle(DRUM_WHEEL.x, PRICE_Y, PRICE_PLATE.width, PRICE_PLATE.height, 0x020617).setRounded(5);
+    const priceIcon = scene.add.image(DRUM_WHEEL.x - 22, PRICE_Y, CHIP_TEXTURE).setScale(PRICE_ICON_SCALE);
     this.priceText = addText(scene, DRUM_WHEEL.x - 8, PRICE_Y, '', { ...LED_STYLE, fontSize: '17px' }).setOrigin(0, 0.5);
+    if (!isAvailable) {
+      // Барабана ещё нет: все части спрятаны, колесо не кликается.
+      for (const part of [back, this.wheel, this.glow, pointer, plate, priceIcon, this.priceText]) part.setVisible(false);
+      this.wheel.disableInteractive();
+    }
   }
 
   /** Какие сектора могут выпасть (по сектору): остальные затемнены. Поменялось — колесо перерисовывается. */

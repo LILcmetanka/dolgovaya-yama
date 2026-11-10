@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { createPauseIconTexture, createPlayButtonTexture, PAUSE_ICON_TEXTURE, PLAY_BUTTON_TEXTURE } from '../decor';
 import { t } from '../lang';
 import { VIEW_CENTER_X, VIEW_WIDTH } from '../layout';
-import { addKeyHint, addText, GAME_OVER_DEPTH, POPUP_STYLE } from '../theme';
+import { addText, GAME_OVER_DEPTH, POPUP_STYLE } from '../theme';
 
 const SHADE_ALPHA = 0.85; // игру почти не видно: пауза — это остановка, а не время рассмотреть всё не спеша
 const TITLE_Y = 100; // слово «ПАУЗА» — над знаком паузы (под знаком уже настройки)
@@ -31,8 +31,7 @@ export class PauseScreen {
     const play = scene.add.image(VIEW_CENTER_X, PLAY_Y, PLAY_BUTTON_TEXTURE);
     play.setInteractive({ useHandCursor: true });
     play.on('pointerdown', resume);
-    const key = addKeyHint(scene, VIEW_CENTER_X, PLAY_Y + 44, 'Esc');
-    this.parts = [shade, this.title, icon, play, key];
+    this.parts = [shade, this.title, icon, play];
     for (const part of this.parts) part.setDepth(PAUSE_DEPTH).setScrollFactor(0).setVisible(false);
   }
 
