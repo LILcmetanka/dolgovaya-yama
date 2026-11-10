@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { MAGNIFIER } from '../collectorGame';
 import {
   CHIP_TEXTURE,
   createChipTextures,
@@ -61,7 +62,7 @@ export class Drum {
     this.scene = scene;
     this.sfx = sfx;
     createChipTextures(scene);
-    createItemTextures(scene, ITEMS, ITEM_SIZE);
+    createItemTextures(scene, [...ITEMS, MAGNIFIER], ITEM_SIZE);
     createDrumTextures(scene, DRUM_RADIUS, DRUM_SECTORS.length);
     scene.add.image(DRUM_WHEEL.x, DRUM_WHEEL.y, DRUM_BACK_TEXTURE);
     this.showAvailable(DRUM_SECTORS.map(() => true));

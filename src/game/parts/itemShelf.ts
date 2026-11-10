@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { MAGNIFIER } from '../collectorGame';
 import { createItemTextures, createShelfTextures, itemTexture, SHELF_CELL_TEXTURE, SHELF_PLANKS_TEXTURE } from '../decor';
 import { ITEMS, MAX_SLOTS, type Item, type ItemEffects } from '../items';
 import { t } from '../lang';
@@ -50,7 +51,7 @@ export class ItemShelf {
   /** slots — сколько клеток открыто; use — что делать, когда кликнули по предмету в клетке. */
   constructor(scene: Phaser.Scene, slots: number, use: (slot: number) => void, hint: Hint) {
     this.scene = scene;
-    createItemTextures(scene, [...ITEMS, BULLET], ITEM_SIZE); // и патрон: он тоже лежит на полке
+    createItemTextures(scene, [...ITEMS, BULLET, MAGNIFIER], ITEM_SIZE); // и патрон, и лупа: они тоже лежат на полке
     createShelfTextures(scene, SHELF_CELL);
 
     for (let slot = 0; slot < MAX_SLOTS; slot++) {

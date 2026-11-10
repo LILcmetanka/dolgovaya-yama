@@ -69,6 +69,8 @@ export abstract class RoundScene extends MachineScene {
   protected abstract startDealerGame(done: () => void): void;
   /** Включили патрон с места полки slot — выстрел в автомат. Его делает слой ShotScene. */
   protected abstract shootMachine(slot: number): void;
+  /** Включили лупу с места полки slot — в рулетке она показывает следующий патрон. Её делает слой CollectorScene. */
+  protected abstract useMagnifier(slot: number): void;
 
   // ---------- Прокрутка ----------
 
@@ -329,10 +331,15 @@ export abstract class RoundScene extends MachineScene {
 
   // ---------- Предметы ----------
 
-  /** Включить предмет с места полки slot (клик по нему или клавиша). Только между прокрутками. */
+  /** Включить предмет с места полки slot (клик по нему или клавиша). Только между прокрутками; лупа — в рулетке. */
   protected useItem(slot: number): void {
     const item = this.shelf[slot];
-    if (!item || !this.canAct()) return;
+    if (!item) return;
+    if (item.id === 'magnifier') {
+      this.useMagnifier(slot); // лупа — у стола Коллектора, в твой ход рулетки: там canAct() нет
+      return;
+    }
+    if (!this.canAct()) return;
     if (item.id === 'bullet') {
       this.shootMachine(slot); // патрон — не предмет у экрана, а выстрел в автомат
       return;
