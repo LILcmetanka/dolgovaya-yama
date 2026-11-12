@@ -4,23 +4,26 @@ import { addText, GAME_OVER_DEPTH, HINT_TEXT, IS_TOUCH_ONLY } from '../theme';
 
 // Значки в левом нижнем углу экрана.
 const CORNER_Y = 618;
-const GEAR_X = 26; // пауза и настройки
-const SILENT_X = 62; // 🔇 — виден, только когда звук выключен
-const FULLSCREEN_X = 98; // во весь экран — только на телефоне
+const GEAR_X = 26; // пауза и настройки — только на телефоне: на планшете они есть, но во время прокрутки его не открыть
 const ICON_ALPHA = 0.55; // значки-картинки бледные, как подсказки
+const SILENT_X = IS_TOUCH_ONLY ? 62 : 26; // 🔇 — виден, только когда звук выключен
+const FULLSCREEN_X = IS_TOUCH_ONLY ? 98 : 62; // во весь экран — только на телефоне
 const CORNER_DEPTH = GAME_OVER_DEPTH + 1; // над экраном DEATH и паузой
 
 /**
- * Значки в углу экрана, поверх всей игры: ⚙ — пауза и настройки, 🔇 — звук выключен (нажми — включится),
- * на телефоне ещё «во весь экран». Что делать по нажатию, решает сцена (колбэки); значки только показывают.
+ * Значки в углу экрана, поверх всей игры: 🔇 — звук выключен (нажми — включится), на телефоне ещё ⚙ (пауза с настройками)
+ * и «во весь экран». На компьютере ⚙ нет: там настройки открываются с планшета (WallScreen) или клавишами Esc и P.
+ * Что делать по нажатию, решает сцена (колбэки); значки только показывают.
  */
 export class CornerButtons {
   private readonly silent: Phaser.GameObjects.Text;
 
-  /** openSettings — нажали ⚙, unmute — нажали 🔇. */
+  /** openSettings — нажали ⚙ (есть только на телефоне), unmute — нажали 🔇. */
   constructor(scene: Phaser.Scene, openSettings: () => void, unmute: () => void) {
-    createGearTexture(scene);
-    this.addButton(scene.add.image(GEAR_X, CORNER_Y, GEAR_TEXTURE).setAlpha(ICON_ALPHA), openSettings);
+    if (IS_TOUCH_ONLY) {
+      createGearTexture(scene);
+      this.addButton(scene.add.image(GEAR_X, CORNER_Y, GEAR_TEXTURE).setAlpha(ICON_ALPHA), openSettings);
+    }
     this.silent = this.addButton(addText(scene, SILENT_X, CORNER_Y, '🔇', { fontSize: '20px', color: HINT_TEXT }), unmute);
     if (IS_TOUCH_ONLY && scene.sys.game.device.fullscreen.available) {
       createFullscreenTexture(scene);

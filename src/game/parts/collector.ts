@@ -151,7 +151,8 @@ export class Collector {
 
   /**
    * Справа от автомата выезжает банкомат (камера стоит на месте). Фишек хватает — на его экране долг, ждёт оплаты — ready().
-   * Не хватает — на экране красное GOOD LUCK: через GOOD_LUCK_TIME оно гаснет, и начинается последний шанс — ready().
+   * Не хватает — на экране красное GOOD LUCK: через GOOD_LUCK_TIME оно гаснет, банкомат уезжает —
+   * и только когда он уехал, ready(): иначе переключатель режима встал бы на его место.
    */
   reachOut(debt: number, isEnough: boolean, ready: () => void): void {
     this.atm.slideIn(debt, isEnough, () => {
@@ -159,10 +160,9 @@ export class Collector {
         ready();
         return;
       }
-      // GOOD LUCK погорел — банкомат уезжает, пока автомат начинает крутить сам: он больше не нужен.
+      // GOOD LUCK погорел — банкомат уезжает: он больше не нужен, автомат крутит сам.
       this.scene.time.delayedCall(GOOD_LUCK_TIME, () => {
-        this.atm.slideOut(() => {});
-        ready();
+        this.atm.slideOut(ready);
       });
     });
   }
@@ -170,6 +170,11 @@ export class Collector {
   /** Долг отдан: фишки летят с табло в щель, банкомат печатает купон — paid(x, y) с места купона, уезжает — done(). */
   takePayment(paid: (x: number, y: number) => void, done: () => void): void {
     this.atm.swallowAndPrint(paid, () => this.leave(done));
+  }
+
+  /** Банкомат выехал к игроку: его место занято, переключатель режима туда возвращать нельзя. */
+  get isAtmOut(): boolean {
+    return this.atm.isOut;
   }
 
   /** Банкомат уезжает вбок — потом done(). */

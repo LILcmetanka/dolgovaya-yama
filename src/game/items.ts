@@ -85,7 +85,8 @@ export const ITEMS: ShopItem[] = [
     id: 'luck', sign: '🍀',
     name: { ru: 'Удача', en: 'Luck' },
     description: { ru: 'До конца раунда клеверов и корон вдвое больше', en: 'Twice as many clovers and crowns until the round ends' },
-    color: 0x16a34a, priceShare: 0.5,
+    // С 9-го раунда: корона входит только с 9-го, а без неё предмет дал бы половину (клевер один есть с 7-го).
+    color: 0x16a34a, priceShare: 0.5, unlockRound: 9,
   },
   {
     id: 'risk', sign: '💀',
@@ -201,14 +202,28 @@ export function slotPrice(slots: number, debt: number): number | null {
 }
 
 /** Что лежит в торговом автомате: OFFER_SIZE разных предметов в случайном порядке. Предметы с unlockRound раньше раунда не продаются. */
-export function randomOffer(round: number): ShopItem[] {
-  const pool = ITEMS.filter((item) => (item.unlockRound ?? 1) <= round);
+export function randomOffer(round: number, isAllowed: (item: ShopItem) => boolean = () => true): ShopItem[] {
+  const pool = ITEMS.filter((item) => (item.unlockRound ?? 1) <= round && isAllowed(item));
   const offer: ShopItem[] = [];
   while (offer.length < OFFER_SIZE && pool.length > 0) {
     const index = Math.floor(Math.random() * pool.length);
     offer.push(pool.splice(index, 1)[0]);
   }
   return offer;
+}
+
+/**
+ * Новый предмет на место купленного: из пула этого раунда, которого нет ни в остальных рядах витрины, ни среди
+ * только что купленного (его сцена тоже передаёт сюда). Пул кончился — null: ряд остаётся пустым, как раньше.
+ */
+export function offerReplacement(
+  offer: readonly (ShopItem | null)[],
+  round: number,
+  isAllowed: (item: ShopItem) => boolean = () => true,
+): ShopItem | null {
+  const taken = new Set(offer.filter((item): item is ShopItem => item !== null).map((item) => item.id));
+  const pool = ITEMS.filter((item) => (item.unlockRound ?? 1) <= round && !taken.has(item.id) && isAllowed(item));
+  return pool.length > 0 ? pool[Math.floor(Math.random() * pool.length)] : null;
 }
 
 /** Вес символа с включёнными бустами: чеснок, вишни, колокола, удача. */
@@ -240,6 +255,55 @@ export function isItemOn(id: ItemId, effects: ItemEffects): boolean {
     case 'shuffle': return effects.shuffle;
     case 'swap': return effects.swap;
     default: return false; // сигарета, щит, ×3
+  }
+}
+
+/**
+ * Столбик включённых предметов у экрана: столько мест, сколько видно сразу. Пятый предмет включается,
+ * только когда игрок кликом освободил место у экрана, — сам собой ничего не вытесняется.
+ */
+export const EFFECT_SLOTS = 4;
+
+/** Предметы, которые занимают место в столбике. Чеснока и сигареты тут нет: чеснок красит огни, сигарета мгновенная. */
+export type SlotEffectId = Exclude<ItemId, 'garlic' | 'cigarette'>;
+
+/** Порядок столбика: в нём включённые предметы стоят сверху вниз. */
+export const SLOT_EFFECT_IDS: SlotEffectId[] = [
+  'shield', 'triple', 'candle', 'risk', 'hammer', 'luckSpin', 'shuffle', 'swap', 'cherries', 'bells', 'diamonds', 'luck',
+];
+
+/** Занимает ли предмет место в столбике у экрана (чеснок и сигарета — не занимают). */
+export function takesEffectSlot(id: ItemId): id is SlotEffectId {
+  return id !== 'garlic' && id !== 'cigarette';
+}
+
+/** Сколько раз ещё сработает включённый предмет (у бустов и флагов — 1, пока действуют). */
+export function effectCount(effects: ItemEffects, id: SlotEffectId): number {
+  if (id === 'shield') return effects.shields;
+  if (id === 'triple') return effects.tripleTakes;
+  return isItemOn(id, effects) ? 1 : 0;
+}
+
+/** Какие предметы сейчас занимают места у экрана — по порядку столбика. */
+export function activeSlotEffects(effects: ItemEffects): SlotEffectId[] {
+  return SLOT_EFFECT_IDS.filter((id) => effectCount(effects, id) > 0);
+}
+
+/** Убрать предмет совсем: игрок кликом освободил его место у экрана. */
+export function clearEffect(id: SlotEffectId, effects: ItemEffects): void {
+  switch (id) {
+    case 'shield': effects.shields = 0; break;
+    case 'triple': effects.tripleTakes = 0; break;
+    case 'candle': effects.candle = false; break;
+    case 'risk': effects.risk = false; break;
+    case 'hammer': effects.hammer = false; break;
+    case 'luckSpin': effects.luckSpin = false; break;
+    case 'shuffle': effects.shuffle = false; break;
+    case 'swap': effects.swap = false; break;
+    case 'cherries': delete effects.symbolBoost.cherry; break;
+    case 'bells': delete effects.symbolBoost.bell; break;
+    case 'diamonds': delete effects.symbolBoost.diamond; break;
+    case 'luck': delete effects.symbolBoost.clover; delete effects.symbolBoost.crown; break;
   }
 }
 

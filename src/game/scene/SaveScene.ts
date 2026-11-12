@@ -1,6 +1,6 @@
 import { copyEffects } from '../items';
+import { copyMachineSet, copyMachineState, machineStatesFrom } from '../machines';
 import { tapePrice, type RunSave } from '../save';
-import { hasCassette } from '../progress';
 import { ShopScene } from './ShopScene';
 
 /**
@@ -32,7 +32,7 @@ export abstract class SaveScene extends ShopScene {
 
   /** Купить кассету (клик или 9): хватает билетов — она уезжает на видеомагнитофон, в отделение REC. Одна за раз. */
   protected buyTape(): void {
-    if (!hasCassette()) return;
+    if (!this.cassetteUnlocked()) return;
     if (!this.isShopping || this.tapeState !== 'forSale') return;
     const price = tapePrice(this.tapesBought);
     if (price > this.tickets) {
@@ -87,9 +87,11 @@ export abstract class SaveScene extends ShopScene {
       amulets: [...this.amulets],
       amuletCounts: { ...this.amuletCounts },
       bones: this.bones,
-      machine: this.machine,
+      machine: copyMachineState(this.machineState),
+      machineSet: copyMachineSet(this.machineStates), // уровни всех трёх: прокачка не пропадает после отката
       diceDrought: this.diceDrought,
-      lastChanceUsed: this.lastChanceUsed, // на записи флаг такой, какой был: запись до нехватки — шанс ещё есть
+      secondWindUsed: this.secondWindUsed, // на записи флаг такой, какой был: запись до провала — дыхание ещё есть
+      insuranceUsed: this.insuranceUsed,
     };
     this.tapeState = 'recorded';
     this.tooltip.hide();
@@ -116,7 +118,14 @@ export abstract class SaveScene extends ShopScene {
     this.refreshHud();
     this.sfx.play('rewind');
     const tapesBought = this.tapesBought; // купленные кассеты откат не откатывает — иначе цена вернулась бы
-    this.cassette.rewind(() => this.scene.restart({ tape: record, tapesBought }));
+    // Откат не пополняет ни «второе дыхание», ни страховку: что уже потрачено, записью не возвращается.
+    // Страховка живёт в раунде: к записи из прошлого раунда её трата не относится.
+    const tape: RunSave = {
+      ...record,
+      secondWindUsed: this.secondWindUsed || (record.secondWindUsed ?? false),
+      insuranceUsed: (record.round === this.round ? this.insuranceUsed : false) || (record.insuranceUsed ?? false),
+    };
+    this.cassette.rewind(() => this.scene.restart({ tape, tapesBought }));
   }
 
   /**
@@ -143,10 +152,14 @@ export abstract class SaveScene extends ShopScene {
     this.amulets = [...record.amulets];
     this.amuletCounts = { ...record.amuletCounts };
     this.bones = record.bones;
-    this.machine = record.machine; // корпус его цвета и значок покажет MachineBadge — части строятся после
+    // Запись без набора автоматов (старая кассета) знала только один — остальные с первого уровня.
+    this.machineStates = record.machineSet ? copyMachineSet(record.machineSet) : machineStatesFrom(record.machine ?? this.machineState);
+    this.machineId = record.machine?.id ?? this.machineId;
+    // Корпус его цвета и значок покажет MachineBadge — части строятся после.
     this.diceDrought = record.diceDrought;
-    // Шанс — точно как на записи: записано до нехватки — он ещё есть; записано после — уже израсходован.
-    this.lastChanceUsed = record.lastChanceUsed;
+    // Откат не пополняет ни дыхание, ни страховку: то, что уже потрачено, записью не возвращается.
+    this.secondWindUsed = this.secondWindUsed || (record.secondWindUsed ?? false);
+    this.insuranceUsed = this.insuranceUsed || (record.insuranceUsed ?? false);
     this.tapesBought = tapesBought;
     this.tapeState = 'forSale';
     this.newsRound = record.round; // новость этого раунда на записи уже была

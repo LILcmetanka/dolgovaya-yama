@@ -1,8 +1,12 @@
 import { interestCoins, TICKETS_PER_DEBT } from '../amulets';
-import { GOOD_LUCK_TIME, isLastChanceWon, LAST_CHANCE_SPINS } from '../lastChance';
+import { diceWeight } from '../evil';
+import { bestMultiplier, GOOD_LUCK_TIME, isLastChanceGoalMet, isLastChanceSymbol, LAST_CHANCE_ACTIONS } from '../lastChance';
+import { t } from '../lang';
 import { DISPLAY } from '../layout';
-import { finishRun } from '../progress';
-import { GREEN_TEXT, LAMP_OFF, LAMP_RED } from '../theme';
+import { evaluateGrid, TOP_MULTIPLIER } from '../patterns';
+import { GRID_ROWS, randomSymbol, weightsForRound, JOKER, type Grid, type SlotSymbol, type WeightOf } from '../rules';
+import { GOLD_TEXT, GREEN_TEXT, LAMP_OFF, LAMP_RED } from '../theme';
+import type { LastChanceAction } from '../parts/lastChanceBar';
 import { SaveScene } from './SaveScene';
 
 // Порядок событий, мс.
@@ -12,21 +16,32 @@ const KABOOM_AFTER_TIME = 900; // после взрыва — пауза, пот
 const KABOOM_SHAKE_TIME = 700;
 const KABOOM_SHAKE = 0.03;
 const LAST_CHANCE_TENSION = 1; // в последнем шансе сердце в музыке бьётся быстрее всего
+const SECOND_WIND_PAUSE = 1200; // провал с «вторым дыханием»: столько видно, что случилось, потом магазин
 
 /**
- * Слой Коллектора: в конце раунда к автомату приходит Коллектор. Хватает фишек — из темноты выезжает банкомат, отдаёшь долг, получаешь купон
- * (билет), дальше магазин. Не хватает — на экране банкомата GOOD LUCK, и автомат сходит с ума: сам крутит LAST_CHANCE_SPINS прокруток,
- * кон копится, у игрока одна кнопка «забрать». Забрал не меньше доли нехватки (lastChance.ts) — выжил: выезжает чемодан с фишками,
- * долг оплачен, фишки целы, билета нет, а счёт откатывается на один долг назад. Не добрал — автомат говорит KABOOM и взрывается:
- * конец забега. Шанс один за забег (lastChanceUsed): вторая нехватка кончает забег на GOOD LUCK, без прокруток.
+ * Слой Коллектора: в конце раунда к автомату приходит Коллектор. Хватает фишек — из темноты выезжает банкомат, отдаёшь долг,
+ * получаешь купон (билет), дальше магазин. Не хватает — на экране банкомата GOOD LUCK, автомат делает ОДНУ чистую прокрутку
+ * (без черепов и злых символов), и у игрока два действия: перекрутить столбец или поставить джокера в клетку; заморозка
+ * столбца бесплатная. Побил лучший паттерн на сетке — выезжает чемодан с фишками: долг оплачен, фишки целы, билета нет,
+ * счёт на один долг назад. Не побил (или сдался) — провал: первый за забег даёт «второе дыхание» (счёт −1, магазин),
+ * второй — KABOOM. Флаг secondWindUsed живёт в записи забега и в кассете: откат дыхание не пополняет.
  */
 export abstract class CollectorScene extends SaveScene {
-  private isStoppingLastChance = false; // нажали «забрать»: новые прокрутки не начинаются, кон банкуется
+  // Последний шанс: сетка, которую игрок доделывает, и сколько действий у него осталось.
+  private lastChanceGrid: Grid | null = null;
+  private lastChanceGoal = 0; // какой множитель надо побить; 0 — собрать хоть какой-нибудь паттерн
+  private lastChanceActions = 0;
+  private readonly frozenColumns = new Set<number>(); // замороженные столбцы: перекрут их не трогает
+  private isFreezeMode = false; // кнопка «лёд» включена: клик по столбцу морозит, а не перекручивает
 
-  /** Новый забег: последний шанс не идёт. */
+  /** Новый забег: последний шанс не идёт, заморозки нет. */
   protected resetState(): void {
     super.resetState();
-    this.isStoppingLastChance = false;
+    this.lastChanceGrid = null;
+    this.lastChanceGoal = 0;
+    this.lastChanceActions = 0;
+    this.frozenColumns.clear();
+    this.isFreezeMode = false;
   }
 
   /** В последнем шансе сердце в музыке бьётся быстрее всего. */
@@ -49,8 +64,7 @@ export abstract class CollectorScene extends SaveScene {
 
   /**
    * Выезжает банкомат. Хватает фишек — ждём «отдать» (а если долг отдают раньше — isPaidEarly — банкомат сразу забирает:
-   * игрок уже решил); не хватает — на его экране GOOD LUCK, потом последний шанс. Если шанс в этом забеге уже был —
-   * GOOD LUCK догорает и забег кончается: KABOOM (единственная дорога провала).
+   * игрок уже решил); не хватает — на его экране GOOD LUCK, банкомат уезжает, начинается последний шанс.
    */
   private reachOut(isPaidEarly: boolean): void {
     const enough = this.hasEnoughForDebt();
@@ -59,10 +73,9 @@ export abstract class CollectorScene extends SaveScene {
     this.sfx.play('hand'); // банкомат выезжает
     this.collector.reachOut(this.debt, enough, () => {
       if (!enough) {
-        // Банкомат уехал после GOOD LUCK — переключатель снова виден (в последнем шансе режим всё равно не выбрать).
+        // Банкомат уехал после GOOD LUCK — переключатель снова виден.
         this.panel.setModeVisible(true);
-        if (this.lastChanceUsed) this.kaboom();
-        else this.startLastChance();
+        this.startLastChance();
         return;
       }
       this.isAwaitingPayment = true; // теперь можно кликнуть по банкомату или нажать Enter
@@ -72,23 +85,28 @@ export abstract class CollectorScene extends SaveScene {
 
   /**
    * Отдать долг: фишки уходят с табло в банкомат, остаток остаётся на табло (с «Процентами» растёт),
-   * за долг — билеты: они летят из купона на табло. Банкомат уедет — магазин.
+   * за долг — билеты: они летят из купона на табло. Числа меняются по ходу анимации: фишки — когда купон напечатан,
+   * билет — когда он долетел до табло, и только тогда refreshHud. Банкомат уедет — магазин.
    */
   protected payDebt(): void {
     if (!this.isAwaitingPayment) return;
     this.isAwaitingPayment = false;
-    this.balance -= this.debt;
-    const interest = interestCoins(this.balance, this.amuletIds());
-    if (interest > 0) {
-      this.balance += interest;
-      this.amuletRack.trigger('interest');
-      this.effects.popupAt(DISPLAY.x, DISPLAY.y + 50, `+${interest}`, GREEN_TEXT); // проценты капают на табло
-    }
-    this.tickets += TICKETS_PER_DEBT;
-    this.refreshHud();
     this.sfx.play('payment');
     this.collector.takePayment(
-      (x, y) => this.panel.flyTickets(TICKETS_PER_DEBT, x, y),
+      (x, y) => {
+        this.balance -= this.debt;
+        const interest = interestCoins(this.balance, this.amuletIds());
+        if (interest > 0) {
+          this.balance += interest;
+          this.amuletRack.trigger('interest');
+          this.effects.popupAt(DISPLAY.x, DISPLAY.y + 50, `+${interest}`, GREEN_TEXT); // проценты капают на табло
+        }
+        // Билет начисляется, когда последний билет долетел до табло: до этого на нём ещё старое число.
+        this.panel.flyTickets(TICKETS_PER_DEBT, x, y, () => {
+          this.tickets += TICKETS_PER_DEBT;
+          this.refreshHud();
+        });
+      },
       () => {
         this.panel.setModeVisible(true); // банкомат уехал — переключатель режима снова на месте
         this.openShop();
@@ -98,53 +116,158 @@ export abstract class CollectorScene extends SaveScene {
 
   // ---------- Последний шанс ----------
 
-  /** Фишек не хватило: автомат крутит сам. Шанс один за забег — отмечаем. Кон с нуля, серия с ×1, впереди LAST_CHANCE_SPINS прокруток. */
+  /**
+   * Фишек не хватило: одна чистая прокрутка (её делает автомат), потом два действия игрока.
+   * Цель — побить лучший паттерн на этой сетке; если паттернов нет — собрать хоть один.
+   */
   private startLastChance(): void {
-    this.lastChanceUsed = true;
     this.isLastChance = true;
-    this.isStoppingLastChance = false;
     this.pot = 0;
-    this.streak = 0;
-    this.spinsLeft = LAST_CHANCE_SPINS;
-    this.refreshHud(); // окошко выплаты показывает «× 0 / порог», лампочки — сколько прокруток впереди
-    this.nextLastChanceSpin();
+    this.frozenColumns.clear();
+    this.isFreezeMode = false;
+    this.screen.showFrozen([]);
+    this.lastChanceBar.close();
+    this.refreshHud();
+    this.rollLastChance((grid) => {
+      this.lastChanceGrid = grid;
+      this.lastChanceGoal = bestMultiplier(evaluateGrid(grid));
+      this.lastChanceActions = LAST_CHANCE_ACTIONS;
+      this.refreshHud();
+      if (this.lastChanceGoal >= TOP_MULTIPLIER) {
+        // Сильнее уже не собрать (джекпот) — цель выполнена сразу, действия ни к чему.
+        this.winLastChance();
+        return;
+      }
+      this.sfx.play('news', 0.3);
+      this.lastChanceBar.open(this.lastChanceGoal, this.lastChanceActions);
+    });
   }
 
-  /** Следующая прокрутка последнего шанса: гаснет лампочка, автомат крутит сам и сам решает, когда остановиться. */
-  private nextLastChanceSpin(): void {
-    if (this.isStoppingLastChance || this.spinsLeft <= 0) {
-      this.endLastChance();
-      return;
-    }
-    this.spinsLeft -= 1;
-    this.lastChanceRoll(() => this.nextLastChanceSpin());
+  /** Одна прокрутка последнего шанса: обычные веса раунда, но без черепов и злых символов. */
+  private rollLastChance(done: (grid: Grid) => void): void {
+    this.panel.pullLever();
+    this.sfx.play('lever');
+    this.sfx.play('roll', 0.1);
+    this.isSpinning = true;
+    this.screen.clearHighlights();
+    const weightOf = this.cleanWeight();
+    const grid = this.rollGrid(weightOf);
+    this.screen.spin(grid, weightOf, () => {
+      this.isSpinning = false;
+      done(grid);
+    });
   }
 
-  /** «Забрать» в последнем шансе: кон банкуется. Пока сетка крутится — ждём её остановки (endLastChance позовёт оценка). */
-  protected stopLastChance(): void {
-    if (!this.isLastChance || this.isStoppingLastChance) return;
-    this.isStoppingLastChance = true;
-    this.payout.press();
-    this.sfx.play('take');
-    if (!this.isSpinning) this.endLastChance();
+  /** Веса чистой сетки: обычные веса раунда, но у черепов, кубика, паука, замка и крови вес 0. */
+  private cleanWeight(): WeightOf {
+    const base = weightsForRound(this.round, diceWeight(this.diceDrought));
+    return (symbol: SlotSymbol): number => (isLastChanceSymbol(symbol) ? base(symbol) : 0);
   }
 
   /**
-   * Последний шанс кончился — одной дорогой: забрали сами или прокрутки кончились. Собранное сравнивается с порогом
-   * (доля нехватки): добрал — выжил, не добрал — конец забега.
+   * Нажали кнопку в полосе: «сдаться» — сразу провал, «лёд» — режим заморозки (бесплатно и без действий),
+   * «перекрут» и «джокер» ждут клика по сетке.
    */
-  private endLastChance(): void {
-    const collected = this.pot;
-    const won = isLastChanceWon(collected, this.debt, this.balance);
-    this.pot = 0;
-    this.streak = 0;
-    this.isLastChance = false;
-    this.isStoppingLastChance = false;
-    this.refreshHud();
-    if (!won) {
-      this.kaboom();
+  protected onLastChanceButton(action: LastChanceAction): void {
+    if (!this.isLastChance || !this.lastChanceGrid || this.isSpinning) return; // пока столбец крутится, кнопки ждут
+    if (action === 'surrender') {
+      this.failLastChance();
       return;
     }
+    if (action === 'freeze') {
+      this.isFreezeMode = !this.isFreezeMode; // повторное нажатие выключает режим
+      this.lastChanceBar.setFreezeMode(this.isFreezeMode);
+      if (this.isFreezeMode) this.screen.beginPick('column', (row, col) => this.onLastChancePick('freeze', row, col));
+      else this.screen.endPick();
+      return;
+    }
+    this.isFreezeMode = false;
+    this.lastChanceBar.setFreezeMode(false);
+    this.screen.beginPick(action === 'reroll' ? 'column' : 'cell', (row, col) => this.onLastChancePick(action, row, col));
+  }
+
+  /** Клик по сетке в последнем шансе: морозим столбец, перекручиваем столбец или ставим джокера. */
+  private onLastChancePick(action: 'freeze' | 'reroll' | 'joker', row: number, col: number): void {
+    if (!this.isLastChance || !this.lastChanceGrid) return;
+    if (action === 'freeze') {
+      this.toggleFreeze(col);
+      return;
+    }
+    if (action === 'reroll') this.rerollColumn(col);
+    else this.placeJoker(row, col);
+  }
+
+  /** Заморозка столбца: бесплатно, действий не тратит. Замороженный столбец перекрут не трогает. */
+  private toggleFreeze(col: number): void {
+    if (this.frozenColumns.has(col)) this.frozenColumns.delete(col);
+    else this.frozenColumns.add(col);
+    this.screen.showFrozen([...this.frozenColumns]);
+    this.sfx.play('rust'); // лёд хрустит, как ржавый столбец
+  }
+
+  /** Перекрут столбца: он выпадает заново чистыми символами. Одно действие. */
+  private rerollColumn(col: number): void {
+    const grid = this.lastChanceGrid;
+    if (!grid) return;
+    if (this.frozenColumns.has(col)) {
+      this.sfx.play('deny'); // столбец заморожен: сначала разморозь, действий не тратим
+      return;
+    }
+    const weightOf = this.cleanWeight();
+    for (let row = 0; row < GRID_ROWS; row++) grid[row][col] = randomSymbol(weightOf);
+    this.spendAction();
+    this.sfx.play('item');
+    this.isSpinning = true;
+    this.screen.endPick(); // пока столбец крутится, выбирать нечего
+    this.screen.rerollColumn(col, weightOf, (row) => grid[row][col], () => {
+      this.isSpinning = false;
+      this.afterLastChanceAction();
+    });
+  }
+
+  /** Джокер в клетку: там встаёт 🃏, клетка подпрыгивает. Одно действие. В занятую джокером клетку не ставим. */
+  private placeJoker(row: number, col: number): void {
+    const grid = this.lastChanceGrid;
+    if (!grid) return;
+    if (grid[row][col].id === 'joker') {
+      this.sfx.play('deny'); // тут уже джокер: действие не тратим
+      return;
+    }
+    grid[row][col] = JOKER;
+    this.spendAction();
+    this.sfx.play('item');
+    this.isSpinning = true;
+    this.screen.endPick();
+    this.screen.revealCell(row, col, JOKER, () => {
+      this.isSpinning = false;
+      this.afterLastChanceAction();
+    });
+  }
+
+  private spendAction(): void {
+    this.lastChanceActions = Math.max(0, this.lastChanceActions - 1);
+    this.lastChanceBar.setActions(this.lastChanceActions);
+  }
+
+  /** Действие отработало: есть ещё — ждём следующей кнопки, кончились — проверяем цель. */
+  private afterLastChanceAction(): void {
+    if (!this.isLastChance) return;
+    this.refreshHud();
+    if (this.lastChanceActions > 0) return;
+    this.finishLastChance();
+  }
+
+  /** Действия кончились: собрал паттерн сильнее лучшего — долг оплачен, нет — провал. */
+  private finishLastChance(): void {
+    const grid = this.lastChanceGrid;
+    const best = grid ? bestMultiplier(evaluateGrid(grid)) : 0;
+    if (isLastChanceGoalMet(best, this.lastChanceGoal)) this.winLastChance();
+    else this.failLastChance();
+  }
+
+  /** Победил: чемодан закрывает долг, фишки целы, билета нет, счёт на один долг назад — и магазин. */
+  private winLastChance(): void {
+    this.closeLastChance();
     this.sfx.play('payment');
     this.collector.clearGoodLuck();
     this.chipCase.open(() => {
@@ -153,11 +276,44 @@ export abstract class CollectorScene extends SaveScene {
     });
   }
 
+  /**
+   * Провал: первый за забег — «второе дыхание»: счёт −1 и магазин, забег живёт дальше.
+   * Второй (флаг secondWindUsed уже стоит) — KABOOM.
+   */
+  private failLastChance(): void {
+    this.closeLastChance();
+    if (this.secondWindUsed) {
+      this.kaboom();
+      return;
+    }
+    this.secondWindUsed = true;
+    this.sfx.play('warning');
+    this.effects.popup(t('lcSecondWind'), GOLD_TEXT);
+    this.time.delayedCall(SECOND_WIND_PAUSE, () => {
+      this.round = Math.max(0, this.round - 2); // счёт на один долг назад, как после выигранного шанса
+      this.openShop();
+    });
+  }
+
+  /** Последний шанс кончился любой дорогой: убрать полосу, сетку выбора и мороз, снять isLastChance. */
+  private closeLastChance(): void {
+    this.screen.endPick();
+    this.screen.showFrozen([]);
+    this.lastChanceBar.close();
+    this.collector.clearGoodLuck(); // GOOD LUCK с экрана уходит и после провала
+    this.frozenColumns.clear();
+    this.isFreezeMode = false;
+    this.lastChanceGrid = null;
+    this.isLastChance = false;
+    this.isSpinning = false;
+    this.pot = 0;
+    this.refreshHud();
+  }
+
   // ---------- Конец забега ----------
 
   /** Конец забега: на экране автомата KABOOM, потом автомат взрывается, всё темнеет, и на нём — KABOOM, счёт, «ЗАНОВО». */
   private kaboom(): void {
-    finishRun(); // один забег — одна смерть: счётчик забегов растёт (progress.ts)
     this.isGameOver = true;
     this.refreshHud();
     this.sfx.play('warning');

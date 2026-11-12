@@ -53,6 +53,7 @@ export class Drum {
   private readonly wheel: Phaser.GameObjects.Image;
   private readonly glow: Phaser.GameObjects.Image; // вспышка выпавшего сектора
   private readonly priceText: Phaser.GameObjects.Text; // «× 15» под колесом
+  private readonly parts: (Phaser.GameObjects.Image | Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = []; // всё колесо с ценником: прячется и показывается целиком
   private available: boolean[] = []; // какие сектора сейчас могут выпасть — так нарисовано колесо
 
   /** spin — кликнули по колесу; sfx — щелчки стрелки, пока колесо крутится; layer — слой магазина: колесо с ценником на панели. */
@@ -72,12 +73,16 @@ export class Drum {
     const plate = scene.add.rectangle(DRUM_WHEEL.x, PRICE_Y, PRICE_PLATE.width, PRICE_PLATE.height, 0x020617).setRounded(5);
     const priceIcon = scene.add.image(DRUM_WHEEL.x - 22, PRICE_Y, CHIP_TEXTURE).setScale(PRICE_ICON_SCALE);
     this.priceText = addText(scene, DRUM_WHEEL.x - 8, PRICE_Y, '', { ...LED_STYLE, fontSize: '17px' }).setOrigin(0, 0.5);
+    this.parts.push(back, this.wheel, this.glow, pointer, plate, priceIcon, this.priceText);
     layer.add([back, this.wheel, this.glow, pointer, plate, priceIcon, this.priceText]); // колесо — на панели магазина
-    if (!isAvailable) {
-      // Барабана ещё нет: все части спрятаны, колесо не кликается.
-      for (const part of [back, this.wheel, this.glow, pointer, plate, priceIcon, this.priceText]) part.setVisible(false);
-      this.wheel.disableInteractive();
-    }
+    this.setAvailable(isAvailable);
+  }
+
+  /** Барабан открыт (закрыто два долга): колесо с ценником видно и оно кликается; нет — всё спрятано. */
+  setAvailable(isAvailable: boolean): void {
+    for (const part of this.parts) part.setVisible(isAvailable);
+    if (isAvailable) this.wheel.setInteractive({ useHandCursor: true });
+    else this.wheel.disableInteractive();
   }
 
   /** Какие сектора могут выпасть (по сектору): остальные затемнены. Поменялось — колесо перерисовывается. */

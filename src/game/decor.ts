@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import type { Amulet, Rarity } from './amulets';
-import type { MachineCharacter } from './characters';
+import type { MachineSpec } from './machines';
 import type { Item } from './items';
 import { t } from './lang';
 import {
@@ -77,7 +77,6 @@ export const SHELF_CELL_TEXTURE = 'shelf-cell'; // клетка полки с п
 export const SHELF_DOOR_TEXTURE = 'shelf-door'; // стальная дверца с кодовым замком поверх закрытого отсека
 export const DOOR_CODE_WIDTH = 50; // окошко колёсиков кода на дверце
 export const DOOR_CODE_HEIGHT = 24;
-export const LEAVE_BUTTON_TEXTURE = 'leave-button'; // круглая кнопка со стрелкой «назад к автомату»
 export const TICKET_TEXTURE = 'ticket'; // красный билет — вторая валюта
 export const SOCKET_CAP_TEXTURE = 'socket-cap'; // заглушка закрытого гнезда для амулета
 export const CRACK_TEXTURE = 'screen-crack'; // дыра и трещины на экране автомата после взрыва
@@ -94,7 +93,9 @@ const ROOM_TEXTURE = 'room';
 const MACHINE_TEXTURE = 'machine'; // детали корпуса: окантовка, табло, стекло, окна, гнёзда
 const MACHINE_SHELL_TEXTURE = 'machine-shell'; // тело корпуса — его красят в цвет автомата
 const SHOP_PANEL_TEXTURE = 'shop-panel'; // фон панели магазина — она выезжает сверху поверх комнаты
-const SHOP_MACHINE_TEXTURE = 'shop-machine'; // торговый автомат на панели магазина
+const SHOP_MACHINE_TEXTURE = 'shop-machine'; // корпус торгового автомата на панели магазина
+const SHOP_SPIRALS_TEXTURE = 'shop-spirals'; // спирали витрины — отдельно: они поверх товара
+const SHOP_GLASS_TEXTURE = 'shop-glass'; // стекло витрины — ещё выше: плёнка и блик
 /** Комната: тёмная стена в полоску и пол. Она на весь вид по ширине (VIEW_WIDTH): камера стоит на месте. */
 const ROOM_WIDTH = Math.ceil(VIEW_WIDTH);
 const WALL_COLOR = 0x15100d;
@@ -866,23 +867,7 @@ function drawShelfDoor(ctx: CanvasRenderingContext2D, size: number): void {
   }
 }
 
-/** Круглая кнопка со стрелкой вправо: «назад к игровому автомату». */
-export function createLeaveButtonTexture(scene: Phaser.Scene): void {
-  if (scene.textures.exists(LEAVE_BUTTON_TEXTURE)) return;
-  const g = scene.add.graphics();
-  g.fillStyle(0x000000, 0.45);
-  g.fillCircle(31, 33, 28); // тень
-  g.fillStyle(0x1c1917);
-  g.fillCircle(30, 30, 28);
-  g.lineStyle(3, 0xfbbf24);
-  g.strokeCircle(30, 30, 26);
-  g.fillStyle(0xffffff);
-  g.fillRect(16, 26, 18, 8); // древко стрелки
-  g.fillTriangle(32, 16, 46, 30, 32, 44); // наконечник
-  bake(g, LEAVE_BUTTON_TEXTURE, 62, 62);
-}
-
-/** Кнопка «▶ продолжить» на экране паузы: как кнопка «назад», только вместо стрелки — треугольник. */
+/** Кнопка «▶ продолжить» на экране паузы: круг с золотым ободком, вместо стрелки — треугольник. */
 export const PLAY_BUTTON_TEXTURE = 'play-button';
 
 export function createPlayButtonTexture(scene: Phaser.Scene): void {
@@ -1039,8 +1024,9 @@ function drawSignTriangles(g: Phaser.GameObjects.Graphics, bases: number[], dire
 }
 
 /**
- * Панель магазина: фон и торговый автомат — две неподвижные картинки (запекаются один раз). Фон идёт первым:
- * Shop вешает на него клики, чтобы они не проходили сквозь панель на рычаг, телевизор и полку.
+ * Панель магазина: неподвижные картинки, запекаются один раз. Фон идёт первым: Shop вешает на него клики,
+ * чтобы они не проходили сквозь панель на рычаг, телевизор и полку. Порядок картинок — от задних к передним:
+ * фон → корпус автомата → (товар, его кладёт Shop между ними) → спирали → стекло витрины.
  * Чемодан с амулетами, барабан и кассету кладут поверх части AmuletCase, Drum и Cassette.
  */
 export function drawShopPanel(scene: Phaser.Scene, rows: number): Phaser.GameObjects.Image[] {
@@ -1048,13 +1034,16 @@ export function drawShopPanel(scene: Phaser.Scene, rows: number): Phaser.GameObj
   const { left, top } = topLeft(SHOP_PANEL);
   return [
     scene.add.image(left, top, SHOP_PANEL_TEXTURE).setOrigin(0), // фон панели
-    scene.add.image(left, top, SHOP_MACHINE_TEXTURE).setOrigin(0), // торговый автомат на ней
+    scene.add.image(left, top, SHOP_MACHINE_TEXTURE).setOrigin(0), // корпус торгового автомата
+    scene.add.image(left, top, SHOP_SPIRALS_TEXTURE).setOrigin(0), // спирали: они поверх товара
+    scene.add.image(left, top, SHOP_GLASS_TEXTURE).setOrigin(0), // стекло витрины: оно поверх всего в проёме
   ];
 }
 
 /**
- * Панель магазина — в текстуры SHOP_PANEL_TEXTURE (фон) и SHOP_MACHINE_TEXTURE (торговый автомат).
- * Координаты частей — мировые (из layout.ts), их сдвигаем к началу панели.
+ * Панель магазина — в текстуры SHOP_PANEL_TEXTURE (фон), SHOP_MACHINE_TEXTURE (корпус), SHOP_SPIRALS_TEXTURE
+ * (спирали под товаром) и SHOP_GLASS_TEXTURE (стекло витрины). Координаты частей — мировые (из layout.ts),
+ * их сдвигаем к началу панели.
  */
 function bakeShopPanel(scene: Phaser.Scene, rows: number): void {
   const { left, top } = topLeft(SHOP_PANEL);
@@ -1104,14 +1093,24 @@ function bakeShopPanel(scene: Phaser.Scene, rows: number): void {
   panel.generateTexture(SHOP_PANEL_TEXTURE, width, height);
   panel.destroy();
 
+  const glass = local(VENDING_GLASS);
+  const rowLayout = { goodX: VENDING_GOOD_X - left, priceX: VENDING_PRICE_X - left };
+
   // Торговый автомат — поверх фона; он с резкими линиями, поэтому запекается крупно (TEXTURE_SCALE).
   const machine = scene.add.graphics();
   const coinSlot = { x: VENDING_COIN_SLOT.x - left, y: VENDING_COIN_SLOT.y - top };
-  drawVendingMachine(machine, vending, local(VENDING_GLASS), local(VENDING_BIN), coinSlot, rows, {
-    goodX: VENDING_GOOD_X - left,
-    priceX: VENDING_PRICE_X - left,
-  });
+  drawVendingMachine(machine, vending, glass, local(VENDING_BIN), coinSlot, rows, rowLayout);
   bake(machine, SHOP_MACHINE_TEXTURE, width, height);
+
+  // Спирали отдельной картинкой: Shop кладёт их поверх товара, чтобы предмет лежал за спиралью, а не наклейкой.
+  const spirals = scene.add.graphics();
+  drawVendingSpirals(spirals, glass, rows, rowLayout);
+  bake(spirals, SHOP_SPIRALS_TEXTURE, width, height);
+
+  // Стекло витрины — ещё выше: полупрозрачная плёнка и блик поверх товара и спиралей.
+  const glassPane = scene.add.graphics();
+  drawVendingGlass(glassPane, glass);
+  bake(glassPane, SHOP_GLASS_TEXTURE, width, height);
 }
 
 /** Где в ряду торгового автомата предмет и ценник (мировые x, сдвинутые к началу картинки). */
@@ -1120,7 +1119,32 @@ interface VendingRowLayout {
   priceX: number;
 }
 
-/** Торговый автомат: корпус, неоновая вывеска, витрина с рядами (предмет в спирали, справа табличка ценника), панель с щелью, лоток. */
+/**
+ * Спирали витрины — отдельной картинкой поверх товара: предмет стоит в витрине за спиралью, а не наклейкой.
+ * Ряд считаем так же, как корпус: полка — низ ряда, спираль под предметом.
+ */
+function drawVendingSpirals(g: Phaser.GameObjects.Graphics, glass: Box, rows: number, row: VendingRowLayout): void {
+  const glassTop = glass.y - glass.height / 2;
+  const rowHeight = glass.height / rows;
+  g.lineStyle(2, 0x64748b);
+  for (let index = 0; index < rows; index++) {
+    const shelfY = glassTop + rowHeight * (index + 1) - 8;
+    for (let x = row.goodX - 24; x <= row.goodX + 24; x += 12) g.strokeEllipse(x, shelfY - 6, 10, 14);
+  }
+}
+
+/** Стекло витрины: полупрозрачная плёнка на весь проём и диагональный блик — поверх товара и спиралей. */
+function drawVendingGlass(g: Phaser.GameObjects.Graphics, glass: Box): void {
+  const left = glass.x - glass.width / 2;
+  const top = glass.y - glass.height / 2;
+  g.fillStyle(0xffffff, 0.07);
+  g.fillRoundedRect(left, top, glass.width, glass.height, 8); // стекло чуть отсвечивает
+  g.fillStyle(0xffffff, 0.1);
+  g.fillTriangle(left, top + 60, left + 90, top, left + 130, top); // блик по диагонали
+  g.fillTriangle(left, top + 60, left, top + 100, left + 130, top);
+}
+
+/** Торговый автомат: корпус, неоновая вывеска, витрина с рядами (справа табличка ценника), панель с щелью, лоток. */
 function drawVendingMachine(
   g: Phaser.GameObjects.Graphics,
   body: Box,
@@ -1152,7 +1176,7 @@ function drawVendingMachine(
   g.fillStyle(0x67e8f9);
   for (let i = 0; i < 3; i++) g.fillCircle(body.x - 24 + i * 24 + side / 2, signTop + 12, 4); // три огонька внутри
 
-  // Витрина: тёмное стекло, полки рядов, спирали под предметами, таблички ценников и блики.
+  // Витрина: тёмное нутро и полки рядов; спирали и стекло — отдельными картинками поверх товара.
   const glassLeft = glass.x - glass.width / 2;
   const glassTop = glass.y - glass.height / 2;
   g.fillStyle(0x94a3b8);
@@ -1165,14 +1189,9 @@ function drawVendingMachine(
     const shelfY = rowTop + rowHeight - 8; // полка ряда
     g.fillStyle(0x334155);
     g.fillRect(glassLeft + 6, shelfY, glass.width - 12, 4);
-    g.lineStyle(2, 0x64748b);
-    for (let x = row.goodX - 24; x <= row.goodX + 24; x += 12) g.strokeEllipse(x, shelfY - 6, 10, 14); // спираль под предметом
     g.fillStyle(0x020617);
     g.fillRoundedRect(row.priceX - 16, rowTop + rowHeight / 2 - 13, glassLeft + glass.width - row.priceX + 8, 26, 5); // табличка ценника
   }
-  g.fillStyle(0xffffff, 0.04);
-  g.fillTriangle(glassLeft, glassTop + 60, glassLeft + 90, glassTop, glassLeft + 130, glassTop); // блик
-  g.fillTriangle(glassLeft, glassTop + 60, glassLeft, glassTop + 100, glassLeft + 130, glassTop);
 
   // Панель справа от витрины: щель для фишек и кнопки.
   const { x: slotX, y: slotY } = coinSlot;
@@ -1404,19 +1423,19 @@ function drawAmulet(ctx: CanvasRenderingContext2D, amulet: Amulet, size: number)
   drawMedallion(ctx, amulet.sign, RARITY_COLORS[amulet.rarity], size, amulet.rarity !== 'common');
 }
 
-/** Имя текстуры значка автомата с характером, например 'machine-greedy'. */
-export function characterTexture(character: MachineCharacter): string {
-  return `machine-${character.id}`;
+/** Имя текстуры значка автомата, например 'machine-greedy'. */
+export function characterTexture(machine: MachineSpec): string {
+  return `machine-${machine.id}`;
 }
 
-/** Значки автоматов с характером — такие же медальоны, как амулеты, с золотым ободком: на корпусе и в новости на стекле. */
-export function createCharacterTextures(scene: Phaser.Scene, characters: MachineCharacter[], size: number): void {
-  for (const character of characters) {
-    const key = characterTexture(character);
+/** Значки автоматов — такие же медальоны, как амулеты, с золотым ободком: в выборе автомата, на корпусе и в новости на стекле. */
+export function createCharacterTextures(scene: Phaser.Scene, machines: MachineSpec[], size: number): void {
+  for (const machine of machines) {
+    const key = characterTexture(machine);
     if (scene.textures.exists(key)) continue;
     const texture = createSharpCanvas(scene, key, size, size);
     if (!texture) continue;
-    drawMedallion(texture.context, character.sign, CHARACTER_RING, size, true);
+    drawMedallion(texture.context, machine.sign, CHARACTER_RING, size, true);
     texture.refresh(); // передать нарисованное в видеокарту
   }
 }

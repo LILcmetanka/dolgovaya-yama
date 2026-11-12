@@ -183,8 +183,9 @@ export function debtForRound(round: number): number {
 }
 
 /**
- * Множитель прокрутки. streak — серия: +1 за каждую прокрутку без паттерна из черепов; черепа и новый раунд её обнуляют,
- * «забрать» уменьшает (streakAfterTake). 0 → ×1, 1 → ×2, 2 → ×3… (при шаге MULTIPLIER_STEP = 1; амулет «Разгон» делает шаг больше).
+ * Множитель прокрутки. streak — серия: +1 за каждую прокрутку без паттерна из черепов; черепа её обнуляют,
+ * «забрать» уменьшает (streakAfterTake), а между раундами она сохраняется — новый раунд начинает с той же серии.
+ * 0 → ×1, 1 → ×2, 2 → ×3… (при шаге MULTIPLIER_STEP = 1; амулет «Разгон» делает шаг больше).
  */
 export function multiplierForStreak(streak: number, step = MULTIPLIER_STEP): number {
   return 1 + streak * step;

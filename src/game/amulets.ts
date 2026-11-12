@@ -44,7 +44,7 @@ export const AMULET_PRICES: Record<Rarity, number> = { common: 1, rare: 3, legen
 export const CHERRY_PIT_FACTOR = 2; // косточка: паттерны из 🍒 платят во столько раз больше за каждую копию
 export const BELL_SPINS = 2; // колокольчик: столько прокруток за каждый паттерн из 🔔 за каждую копию
 export const PIGGY_COINS = 2; // копилка: прокрутка без выигрыша кладёт на кон столько × множитель (в степени копий)
-export const INSURANCE_SHARE = 1; // страховка: такая доля сгоревшего кона всё равно уходит на табло
+export const INSURANCE_SHARE = 0.75; // страховка: такая доля сгоревшего кона всё равно уходит на табло (один раз за раунд)
 export const BOOST_BONUS = 1; // разгон: множитель растёт на столько больше за прокрутку за каждую копию (обычный шаг — MULTIPLIER_STEP)
 export const VEST_SHIELDS = 1; // бронежилет: столько паттернов из черепов за раунд не сжигают кон за каждую копию
 export const CUT_FACTOR = 2; // огранка: 💎 выпадает во столько раз чаще за каждую копию (в степени копий)
@@ -81,10 +81,13 @@ export const AMULETS: Amulet[] = [
   {
     id: 'insurance', sign: '🧾',
     name: { ru: 'Страховка', en: 'Insurance' },
-    description: { ru: 'Сгоревший кон не пропадает: в раунде уходит на табло, в последнем шансе остаётся собранным', en: 'A burned pot is not lost: it goes to your chips in a round, or stays collected in the last chance' },
+    description: {
+      ru: `Сгоревший кон отдаёт ${Math.round(INSURANCE_SHARE * 100)}% на табло — один раз за раунд, потом сгорает`,
+      en: `A burned pot pays ${Math.round(INSURANCE_SHARE * 100)}% back to your chips — once per round, then it burns out`,
+    },
     rarity: 'legendary',
     maxCopies: 1,
-    price: 4,
+    price: 6, // дорогая: снимает самый частый проигрыш — сгоревший кон
   },
   {
     id: 'boost', sign: '⚡',
@@ -143,12 +146,10 @@ export const AMULETS: Amulet[] = [
 export const START_SOCKETS = 2;
 export const MAX_SOCKETS = 6;
 export const SOCKET_PRICES = [2, 3, 4, 5]; // цена 3-го, 4-го, 5-го и 6-го гнезда в билетах
-export const AMULET_OFFER_SIZE = 2; // столько амулетов в витрине за раз
+export const AMULET_OFFER_SIZE = 3; // столько амулетов в витрине за раз
 export const TICKETS_PER_DEBT = 1; // столько билетов за каждый отданный долг (с двумя гнёзда и амулеты заполнялись к 3–4-му долгу)
 export const EARLY_PAY_MIN_SPINS = 3; // долг отдан раньше, а прокруток осталось столько или больше — ещё EARLY_PAY_TICKETS
 export const EARLY_PAY_TICKETS = 1;
-export const TICKET_PRICE_SHARE = 1; // билет в витрине стоит такую долю долга следующего раунда — целый долг (один за посещение)
-const TICKET_PRICE_ROUND_TO = 5; // цена билета круглая: до 5 фишек
 
 /**
  * Сколько копий каждого амулета: в гнёздах стоят уникальные амулеты, а дубли считаются счётчиком (шаг 62б).
@@ -197,11 +198,6 @@ export function amuletPrice(amulet: Amulet): number {
 /** Сколько билетов за долг, отданный раньше конца раунда: оставшиеся прокрутки пропадают, а за EARLY_PAY_MIN_SPINS и больше — билет. */
 export function earlyPayTickets(spinsLeft: number): number {
   return spinsLeft >= EARLY_PAY_MIN_SPINS ? EARLY_PAY_TICKETS : 0;
-}
-
-/** Цена билета в фишках, когда долг следующего раунда — debt. */
-export function ticketPrice(debt: number): number {
-  return Math.max(TICKET_PRICE_ROUND_TO, Math.round((TICKET_PRICE_SHARE * debt) / TICKET_PRICE_ROUND_TO) * TICKET_PRICE_ROUND_TO);
 }
 
 /** Цена следующего гнезда (сейчас гнёзд sockets). Гнёзд уже MAX_SOCKETS — null. */
@@ -280,7 +276,7 @@ export function piggyCoins(multiplier: number, owned: AmuletId[]): number {
   return owns(owned, 'piggy') ? PIGGY_COINS ** copiesOf(owned, 'piggy') * multiplier : 0;
 }
 
-/** Сколько сгоревшего кона страховка всё равно отдаёт на табло. */
+/** Сколько сгоревшего кона страховка всё равно отдаёт на табло (доля INSURANCE_SHARE). */
 export function insuranceRefund(lost: number, owned: AmuletId[]): number {
   return owns(owned, 'insurance') ? Math.floor(lost * INSURANCE_SHARE) : 0;
 }

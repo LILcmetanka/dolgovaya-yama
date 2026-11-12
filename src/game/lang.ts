@@ -26,6 +26,19 @@ const TEXTS = {
   rerollColumn: { ru: 'КАКОЙ СТОЛБЕЦ?', en: 'WHICH COLUMN?' },
   rerollCell: { ru: 'КАКАЯ КЛЕТКА?', en: 'WHICH CELL?' },
   rerollSkip: { ru: 'Пропустить', en: 'Skip' }, // ✕ в окне
+  // Последний шанс: цель, два действия и четыре кнопки.
+  lcGoalAny: { ru: 'ЦЕЛЬ: СОБРАТЬ ЛЮБОЙ ПАТТЕРН', en: 'GOAL: LAND ANY PATTERN' },
+  lcGoalBeat: { ru: 'ЦЕЛЬ: ПАТТЕРН СИЛЬНЕЕ ×{0}', en: 'GOAL: BEAT ×{0}' },
+  lcActions: { ru: 'ДЕЙСТВИЙ: {0} · КЛАВИШИ 1–4', en: 'ACTIONS: {0} · KEYS 1–4' },
+  lcFreeze: { ru: 'Заморозка', en: 'Freeze' },
+  lcFreezeWhat: { ru: 'Клавиша 1. Столбец останется как есть, перекрут его не тронет. Бесплатно, действий не тратит', en: 'Key 1. The column stays as it is: a reroll won\'t touch it. Free, costs no actions' },
+  lcReroll: { ru: 'Перекрут', en: 'Respin' },
+  lcRerollWhat: { ru: 'Клавиша 2. Выбери столбец мышью — он выпадет заново чистыми символами. Одно действие', en: 'Key 2. Pick a column with the mouse — it drops again with clean symbols. One action' },
+  lcJoker: { ru: 'Джокер', en: 'Joker' },
+  lcJokerWhat: { ru: 'Клавиша 3. Выбери клетку мышью — в ней встанет 🃏. Одно действие', en: 'Key 3. Pick a cell with the mouse — a 🃏 takes its place. One action' },
+  lcSurrender: { ru: 'Сдаться', en: 'Give up' },
+  lcSurrenderWhat: { ru: 'Клавиша 4. Сразу провал последнего шанса', en: 'Key 4. Fail the last chance right away' },
+  lcSecondWind: { ru: 'ВТОРОЕ ДЫХАНИЕ', en: 'SECOND WIND' },
   pause: { ru: 'ПАУЗА', en: 'PAUSE' }, // над знаком паузы
   // Экран на стене (WallScreen): вкладки и их надписи.
   tabSymbols: { ru: 'СИМВОЛЫ', en: 'SYMBOLS' },
@@ -35,17 +48,17 @@ const TEXTS = {
   tabEmpty: { ru: 'Пока ничего не встретил', en: 'Nothing met yet' },
   whoCollector: { ru: 'Коллектор', en: 'Collector' },
   whoCollectorWhat: {
-    ru: 'Приходит за долгом. Фишек не хватает: на экране GOOD LUCK, и автомат крутит сам — забери кон, когда он возьмёт порог. Добрал — чемодан платит долг, но счёт откатывается на один долг назад',
-    en: 'Comes for the debt. Short on chips: GOOD LUCK on the screen and the machine spins by itself — take the pot once it reaches the goal. Reach it and a case of chips pays the debt, but the score rolls back one debt',
+    ru: 'Приходит за долгом. Не хватает фишек — GOOD LUCK: одна чистая прокрутка и два действия, чтобы побить паттерн',
+    en: 'Comes for the debt. Short on chips — GOOD LUCK: one clean spin and two actions to beat a pattern',
   },
   whoDealer: { ru: 'Дилер', en: 'Dealer' },
   whoDealerWhat: {
-    ru: 'Приходит, когда выпал кубик 🎲. Угадай, следующая карта больше, меньше или такая же: «>» и «<» ×1,5, «=» ×8. Не угадал: кон сгорает',
-    en: 'Comes when the 🎲 drops. Guess if the next card is higher, lower or the same: ">" and "<" ×1.5, "=" ×8. Wrong: the pot burns',
+    ru: 'Выпал 🎲 — угадай: «>», «<» ×1,5, «=» ×8. Не угадал — кон сгорает',
+    en: 'The 🎲 drops — guess: ">", "<" ×1.5, "=" ×8. Wrong — the pot burns',
   },
   howToGoal: {
-    ru: 'Цель. Отдать долг, пока не кончились прокрутки. Каждый раунд долг больше.\n\nКрути автомат: паттерны из одинаковых символов добавляют фишки в кон. Каждая прокрутка подряд поднимает множитель кона. Череп сжигает кон, пока ты его не забрал.\n\nЗабрать: кон уходит на табло, множитель сбрасывается.\n\nФишек на долг хватает: отдай его записке или банкомату Коллектора, потом магазин. Не хватает: на экране GOOD LUCK, и автомат крутит сам — забери кон, когда он возьмёт порог. Добрал — долг закрыт, фишки целы, счёт на один долг назад; не добрал — конец забега.',
-    en: 'Goal. Pay the debt before you run out of spins. The debt grows every round.\n\nSpin the machine: patterns of matching symbols add chips to the pot. Each spin in a row raises the pot multiplier. A skull burns the pot until you take it.\n\nTake: the pot goes to the board, the multiplier resets.\n\nEnough chips for the debt: hand it to the note or the Collector\'s ATM, then the shop. Not enough: GOOD LUCK on the screen and the machine spins by itself — take the pot once it reaches the goal. Reach it and the debt is paid, your chips stay, the score goes one debt back; miss it and the run is over.',
+    ru: 'Цель. Отдать долг, пока не кончились прокрутки. Каждый раунд долг больше.\n\nКрути автомат: паттерны из одинаковых символов добавляют фишки в кон. Каждая прокрутка подряд поднимает множитель кона. Череп сжигает кон, пока ты его не забрал.\n\nЗабрать: кон уходит на табло, множитель сбрасывается.\n\nФишек на долг хватает: отдай его записке или банкомату Коллектора, потом магазин. Не хватает: на экране GOOD LUCK, автомат делает одну чистую прокрутку — без черепов и злых символов. У тебя два действия: перекрутить столбец или поставить джокера в клетку, заморозка столбца бесплатная. Побей лучший паттерн на сетке — долг закрыт, фишки целы, счёт на один долг назад. Не побей или сдайся — провал: первый за забег даёт второе дыхание (счёт −1 и магазин), второй — конец забега.',
+    en: 'Goal. Pay the debt before you run out of spins. The debt grows every round.\n\nSpin the machine: patterns of matching symbols add chips to the pot. Each spin in a row raises the pot multiplier. A skull burns the pot until you take it.\n\nTake: the pot goes to the board, the multiplier resets.\n\nEnough chips for the debt: hand it to the note or the Collector\'s ATM, then the shop. Not enough: GOOD LUCK on the screen and the machine makes one clean spin — no skulls, no evil symbols. You have two actions: reroll a column or drop a joker into a cell; freezing a column is free. Beat the best pattern on the grid — the debt is paid, your chips stay, the score goes one debt back. Miss it or give up — you fail: the first failure gives a second wind (score −1 and the shop), the second ends the run.',
   },
   howToKeys: {
     ru: 'Клавиши\nПробел: крутить, назад из магазина\nEnter: забрать кон, отдать долг\nD: отдать долг раньше\n1–8: предмет с полки\n→ или клик: этот экран\nEsc или P: пауза\nM: звук\nL: язык\nT: режим прокрутки\n\nВ магазине\n1–4: торговый автомат\n5–8: чемодан с амулетами\n9: кассета, 0: барабан',
@@ -86,6 +99,19 @@ const TEXTS = {
   tapeRecorded: { ru: 'Записано. Между прокрутками — вернись к записи', en: 'Recorded. Between spins — go back to the recording' },
   vcr: { ru: 'Видеомагнитофон', en: 'VCR' },
   vcrWhat: { ru: 'Кассета к нему — в магазине', en: 'Its cassette is sold in the shop' },
+  // Включённые предметы у экрана: четыре места, лишний предмет не включается, пока место не освободили кликом.
+  effectsFull: { ru: 'Все 4 места заняты — снимите предмет у экрана', en: 'All 4 slots are taken — remove an item from the screen' },
+  effectRemove: { ru: 'Нажмите, чтобы убрать', en: 'Click to remove' },
+  // Выбор автомата в магазине: сам выбор бесплатный, прокачка — за билеты.
+  machinePickWhat: { ru: 'Выбрать бесплатно: встанет со следующего раунда', en: 'Pick for free: takes effect next round' },
+  machineUpgrade: { ru: 'Прокачать до ур. {0}', en: 'Upgrade to lvl {0}' },
+  machineUpgradeWhat: { ru: 'Билетов: {0}', en: 'Tickets: {0}' },
+  machineUpgradeBranch: {
+    ru: 'На 3-м уровне ветка по умолчанию — «−10% черепа», потом меняется кнопкой',
+    en: 'At level 3 the branch defaults to −10% skulls; change it with the button',
+  },
+  machineMaxLevel: { ru: 'Последний уровень', en: 'Top level' },
+  machineBranchWhat: { ru: 'Что даёт третий уровень: ветку можно выбрать одну', en: 'What level 3 gives: pick one branch' },
   // Монитор справа: что делает каждый особый символ. {0}, {1} — числа из правил (их подставляет монитор).
   skullNote: { ru: 'Паттерн из черепов сжигает кон', en: 'A skull pattern burns the pot' },
   ticketNote: { ru: '{0} на экране — билет', en: '{0} on screen — a ticket' },
@@ -94,7 +120,10 @@ const TEXTS = {
   spiderNote: { ru: 'Съедает {0}% кона', en: 'Eats {0}% of the pot' },
   cloverNote: { ru: 'Следующая прокрутка — с паттерном', en: 'Next spin hits a pattern' },
   lockNote: { ru: 'Паттерны через его столбец не считаются', en: "Patterns through its column don't count" },
-  crownNote: { ru: '{0} на экране — прокрутки без черепов: {1}', en: '{0} on screen — free spins, no skulls: {1}' },
+  crownNote: {
+    ru: '{0} на экране — прокрутки без черепов, кубика, пауков, замков и крови: {1}',
+    en: '{0} on screen — free spins, no skulls, dice, spiders, locks or blood: {1}',
+  },
   bloodNote: { ru: 'Следующая прокрутка ×{0}, но черепа жгут и табло', en: 'Next spin ×{0}, but skulls burn your chips too' },
   jackpotNote: { ru: 'Джекпот: билеты +{0}, прокрутки +{1}', en: 'Jackpot: tickets +{0}, spins +{1}' },
 } satisfies Record<string, Words>;

@@ -1,12 +1,13 @@
-import { machineKey, see } from '../codex';
 import { jamGrid, rustColumn } from '../characters';
+import { machineKey, see } from '../codex';
+import { machineSpec } from '../machines';
 import type { Grid, WeightOf } from '../rules';
 import { BonusScene } from './BonusScene';
 
 /**
- * Слой характера автомата (числа — в characters.ts). Веса символов и выплаты характера считает RoundScene, долг — ShopScene;
- * здесь — особое правило Ржавого (столбец заедает) и приход нового автомата событием на сетке (шаг 67):
- * прокрутка пустая, значок встаёт на корпус (showNewMachine).
+ * Слой автомата (спеки и числа — в machines.ts). Веса и выплаты автомата считает RoundScene;
+ * здесь — ржавчина столбца (шанс берётся из спеки; у всех трёх автоматов он 0) и смена автомата:
+ * выбранный в магазине встаёт на место перед новым раундом (showNewMachine).
  * Между BonusScene и RoundScene: RoundScene и так вырос за 440 строк.
  */
 export abstract class MachineScene extends BonusScene {
@@ -44,7 +45,7 @@ export abstract class MachineScene extends BonusScene {
   protected rustAfterSpin(grid: Grid): void {
     this.lastGrid = grid;
     if (this.freeSpins > 0 || this.isLuckyNext || this.spinsLeft === 0) return;
-    const column = rustColumn(this.machine);
+    const column = rustColumn(machineSpec(this.machineState).rustChance);
     if (column === null) return;
     this.rustyColumn = column;
     this.screen.showRust(column);
@@ -57,12 +58,16 @@ export abstract class MachineScene extends BonusScene {
     this.screen.clearRust();
   }
 
-  /** Новый автомат встал на место: корпус его цвета, значок, на стекле — значок и название. Откуда он — решает RoundScene (machineArrives). */
+  /**
+   * На место встал выбранный в магазине автомат (или тот же, но прокачанный): корпус его цвета, значок,
+   * на стекле — значок и название. Зовёт ShopScene.leaveShop перед startRound.
+   */
   protected showNewMachine(): void {
-    this.machineBadge.arrive(this.machine);
-    see(machineKey(this.machine.id));
+    const machine = machineSpec(this.machineState);
+    this.machineBadge.arrive(machine);
+    see(machineKey(this.machineState.id));
     this.monitor.notify('update'); // на экране на стене — жёлтое UPDATE, в «Кто есть кто» появился автомат
-    this.screen.announceMachine(this.machine);
+    this.screen.announceMachine(machine);
     this.sfx.play('news', 0.3);
   }
 }

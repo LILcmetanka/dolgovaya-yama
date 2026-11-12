@@ -30,9 +30,12 @@ export const PATTERNS: Pattern[] = [
   { id: 'zigzag', multiplier: 3, cells: [[0, 0], [1, 1], [0, 2], [1, 3], [0, 4]] }, // через всю сетку: верх-низ-верх
   { id: 'zigzagUp', multiplier: 3, cells: [[1, 0], [0, 1], [1, 2], [0, 3], [1, 4]] }, // низ-верх-низ
   { id: 'frame', multiplier: 6, cells: [[0, 0], [0, 1], [0, 2], [1, 0], [1, 2], [2, 0], [2, 1], [2, 2]] }, // рамка 3×3 без середины
-  { id: 'eye', multiplier: 8, cells: [[1, 0], [0, 1], [0, 2], [0, 3], [1, 4], [2, 1], [2, 2], [2, 3], [1, 2]] }, // глаз со зрачком
-  { id: 'jackpot', multiplier: 10, cells: allCells() }, // все 15 клеток
+  { id: 'eye', multiplier: 10, cells: [[1, 0], [0, 1], [0, 2], [0, 3], [1, 4], [2, 1], [2, 2], [2, 3], [1, 2]] }, // глаз со зрачком
+  { id: 'jackpot', multiplier: 100, cells: allCells() }, // все 15 клеток: джекпот платит в сто раз
 ];
+
+/** Самый сильный паттерн: сильнее него на сетке ничего не собрать (последнему шансу важно — цели выше не бывает). */
+export const TOP_MULTIPLIER = Math.max(...PATTERNS.map((pattern) => pattern.multiplier));
 
 /** Паттерн из одних джокеров платит как самый дорогой символ. */
 const BEST_SYMBOL = SYMBOLS.reduce((best, symbol) => (symbol.price > best.price ? symbol : best));

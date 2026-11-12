@@ -3,9 +3,11 @@ import { CROWNS_FOR_FREE_SPINS, FREE_SPINS, JACKPOT_SPINS, JACKPOT_TICKETS } fro
 import {
   amuletTexture,
   createAmuletTextures,
+  createGearTexture,
   createItemTextures,
   createWallTvTexture,
   drawMonitorScreen,
+  GEAR_TEXTURE,
   itemTexture,
   MONITOR_SCREEN_TEXTURE,
   type MonitorNote,
@@ -15,7 +17,7 @@ import {
 } from '../decor';
 import { AMULETS } from '../amulets';
 import { amuletKey, isSeen, itemKey, machineKey, WHO_COLLECTOR, WHO_DEALER } from '../codex';
-import { CHARACTERS, ORDINARY } from '../characters';
+import { MACHINES } from '../machines';
 import { BLOOD_WIN, SPIDER_BITE } from '../evil';
 import { ITEMS } from '../items';
 import { t } from '../lang';
@@ -39,25 +41,27 @@ const SHADE_ALPHA = 0.8;
 const PANEL_COLOR = 0x03161c; // тот же кинескоп, что у картинки символов
 const PANEL_LINE = 0x67e8f9;
 const INK = '#cffafe';
-const TAB_WIDTH = 232;
+const TAB_WIDTH = 218; // уже прежних 232: в шапке рядом с вкладками стоит ⚙ настроек
 const TAB_HEIGHT = 48;
+const GEAR_SIZE = 48; // ⚙ в шапке — кнопка того же размера, что ✕
 const PAD = 20;
 const SYMBOLS_WIDTH = WALL_PANEL.width - 2 * PAD; // картинка вкладки «Символы» — на всю ширину экрана
 const SYMBOLS_HEIGHT = 500;
 // Вкладки «Предметы» и «Кто есть кто»: строки в два столбца.
 const ROW_COLUMNS = 2;
 const ROW_WIDTH = 505;
-const ROW_HEIGHT = 66;
+const ROW_HEIGHT = 78; // ряд: название и до двух строк описания — выше прежних 66, иначе описание наезжало на следующий ряд
 const ROW_ICON = 48;
+const ROW_DESC_LINES = 2; // описание длиннее двух строк обрезается: ряд не растягиваем
 const DIM_INK = '#8fc3cc';
 // Не встреченное — плитки «???»: видно, что есть ещё, но не что именно.
 const HIDDEN_COLUMNS = 6;
 const HIDDEN_WIDTH = 160;
 const HIDDEN_HEIGHT = 44;
 const HIDDEN_GAP = 8;
-// Страницы: 8 рядов по 2 столбца — 16 строк. Больше не влезает в панель (низ 632): 12 предметов и 11 амулетов
+const HIDDEN_TOP_GAP = 18; // отступ перед сеткой «???» от последнего ряда карточек
+// Страницы: ряды по 2 столбца, сколько влезет в панель (низ 632). Больше не влезает: 12 предметов и 11 амулетов
 // дают 12 рядов строк плюс ряды «???». Листаются кликом по панели или по счётчику «‹ 1/2 ›».
-const PAGE_LINES = 8;
 
 /** Строка вкладки: значок (картинка или эмодзи), название и описание. */
 interface Row {
@@ -105,7 +109,8 @@ function symbolNote(symbol: SlotSymbol): string {
  * Экран на стене справа от автомата: маленький, как телевизор. В покое на стекле тусклый «?», а когда в автомат вошли новые
  * символы — зелёное «NEW» мигает, пока экран не откроют. Клик по нему (→ ловит сцена) открывает большой экран поверх игры с вкладками:
  * «Символы» (цены и что делает каждый; новые — в золотой рамке), «Предметы», «Кто есть кто», «Как играть» (цель, долг, клавиши).
- * Строк больше, чем влезает в панель, поэтому у «Предметов» и «Кто есть кто» страницы по 16 строк: клик по панели
+ * В шапке справа от вкладок — ⚙: настройки (громкость и язык) открываются отсюда.
+ * Строк больше, чем влезает в панель, поэтому у «Предметов» и «Кто есть кто» страницы: клик по панели
  * или по счётчику «‹ 1/2 ›» листает, «???» — на тех же страницах. Закрыть — клик мимо, ✕, Esc, Пробел или →.
  * Вид не поворачивается; что можно сейчас, решает сцена (пока открыт, крутить нельзя).
  */
@@ -125,8 +130,8 @@ export class WallScreen {
   private isHovered = false; // мышь над телевизором — курсор-рука его
   private news: News | null = null; // что мигает на телевизоре, пока экран не откроют
 
-  /** round — какой раунд идёт: в «Символах» те, что уже есть в автомате; toggle — кликнули по телевизору или закрыли большой экран. */
-  constructor(scene: Phaser.Scene, round: number, toggle: () => void) {
+  /** round — какой раунд идёт: в «Символах» те, что уже есть в автомате; toggle — кликнули по телевизору или закрыли большой экран; openSettings — нажали ⚙ в шапке вкладок. */
+  constructor(scene: Phaser.Scene, round: number, toggle: () => void, openSettings: () => void) {
     this.scene = scene;
     createWallTvTexture(scene, WALL_TV);
     createItemTextures(scene, ITEMS, ITEM_SIZE);
@@ -141,7 +146,7 @@ export class WallScreen {
     this.glass = addText(scene, WALL_TV.x, WALL_TV.y - 4, '?', { fontSize: `${TV_QUESTION_SIZE}px`, fontStyle: 'bold', color: INK })
       .setOrigin(0.5)
       .setAlpha(TV_DIM_ALPHA);
-    this.buildOverlay(toggle);
+    this.buildOverlay(toggle, openSettings);
     this.content = scene.add.container(0, 0);
     this.round = round;
     this.news = 'new'; // в начале забега (и после кассеты) экран ещё не видели
@@ -222,8 +227,8 @@ export class WallScreen {
 
   // ---------- Большой экран ----------
 
-  /** Затемнение, рамка, вкладки и ✕: клик по затемнению (мимо рамки) закрывает. */
-  private buildOverlay(close: () => void): void {
+  /** Затемнение, рамка, вкладки, ⚙ настроек и ✕: клик по затемнению (мимо рамки) закрывает. */
+  private buildOverlay(close: () => void, openSettings: () => void): void {
     const scene = this.scene;
     const shade = scene.add.rectangle(VIEW_CENTER_X, 320, VIEW_WIDTH, 640, 0x000000, SHADE_ALPHA);
     shade.setInteractive();
@@ -245,6 +250,14 @@ export class WallScreen {
       this.tabButtons.push({ box, text });
       this.overlay.push(box, text);
     });
+    // ⚙ — настройки (громкость, язык), как раньше в углу комнаты: теперь только здесь, на планшете.
+    createGearTexture(scene);
+    const gearX = left + PAD + TABS.length * (TAB_WIDTH + 8) + GEAR_SIZE / 2;
+    const gearBox = scene.add.rectangle(gearX, tabY, GEAR_SIZE, GEAR_SIZE, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.5);
+    gearBox.setInteractive({ useHandCursor: true });
+    gearBox.on('pointerdown', openSettings);
+    const gear = scene.add.image(gearX, tabY, GEAR_TEXTURE).setTint(PANEL_LINE).setAlpha(0.9);
+    this.overlay.push(gearBox, gear);
     const crossX = left + WALL_PANEL.width - PAD - TAB_HEIGHT / 2;
     const crossBox = scene.add.rectangle(crossX, tabY, TAB_HEIGHT, TAB_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.5);
     crossBox.setInteractive({ useHandCursor: true });
@@ -274,7 +287,7 @@ export class WallScreen {
     this.content.destroy();
     this.content = this.scene.add.container(0, 0).setDepth(OVERLAY_DEPTH).setScrollFactor(0).setVisible(this.isOpen);
     const left = WALL_PANEL.x - WALL_PANEL.width / 2 + PAD;
-    // −2: ряды начинаются чуть выше, чтобы двухстрочное описание восьмого ряда не задело нижнюю рамку панели.
+    // −2: ряды начинаются чуть выше, а сколько их влезет в панель, считает buildRows по её нижней рамке.
     const top = WALL_PANEL.y - WALL_PANEL.height / 2 + 2 * PAD + TAB_HEIGHT - 2;
     if (tab === 'symbols') this.buildSymbols(left, top);
     else if (tab === 'items') this.buildItems(left, top);
@@ -311,16 +324,17 @@ export class WallScreen {
     this.buildRows(left, top, rows, hidden);
   }
 
-  /** «Кто есть кто»: Коллектор, Дилер и автоматы, которые уже стояли на месте. */
+  /** «Кто есть кто»: Коллектор, Дилер и автоматы, которые уже стояли на месте (классический — всегда). */
   private buildWho(left: number, top: number): void {
-    const rows: Row[] = [{ sign: '🎰', name: t(ORDINARY.name), description: t(ORDINARY.description) }];
+    const [classic, ...others] = MACHINES;
+    const rows: Row[] = [{ sign: classic.sign || '🎰', name: t(classic.name), description: t(classic.description) }];
     let hidden = 0;
     if (isSeen(WHO_COLLECTOR)) rows.push({ sign: '💼', name: t('whoCollector'), description: t('whoCollectorWhat') });
     else hidden += 1;
     if (isSeen(WHO_DEALER)) rows.push({ sign: '🎲', name: t('whoDealer'), description: t('whoDealerWhat') });
     else hidden += 1;
-    for (const character of CHARACTERS) {
-      if (isSeen(machineKey(character.id))) rows.push({ sign: character.sign, name: t(character.name), description: t(character.description) });
+    for (const machine of others) {
+      if (isSeen(machineKey(machine.id))) rows.push({ sign: machine.sign, name: t(machine.name), description: t(machine.description) });
       else hidden += 1;
     }
     this.buildRows(left, top, rows, hidden);
@@ -330,7 +344,7 @@ export class WallScreen {
    * Строки в два столбца: значок слева, название и описание справа. Под ними — плитки «???» по числу ещё не встреченного
    * (что именно, не видно). Нечего показать совсем — «Пока ничего не встретил».
    * Ряд — две строки или ряд плиток «???». Рядов бывает больше страницы (12 предметов и 11 амулетов), поэтому
-   * на экране PAGE_LINES рядов, а остальные — по клику на панель или на счётчик «‹ 1/2 ›».
+   * в панель влезает столько рядов, сколько в ней помещается по высоте, а остальные — по клику на панель или на «‹ 1/2 ›».
    */
   private buildRows(left: number, top: number, rows: Row[], hidden: number): void {
     const scene = this.scene;
@@ -342,10 +356,12 @@ export class WallScreen {
     const rowLines: Row[][] = [];
     for (let index = 0; index < rows.length; index += ROW_COLUMNS) rowLines.push(rows.slice(index, index + ROW_COLUMNS));
     const hiddenLines = Math.ceil(hidden / HIDDEN_COLUMNS);
-    this.pages = Math.max(1, Math.ceil((rowLines.length + hiddenLines) / PAGE_LINES));
+    const bottom = WALL_PANEL.y + WALL_PANEL.height / 2 - PAD; // рамка панели: ниже неё ряды не ставим
+    const perPage = Math.max(1, Math.floor((bottom - top) / ROW_HEIGHT));
+    this.pages = Math.max(1, Math.ceil((rowLines.length + hiddenLines) / perPage));
     if (this.page >= this.pages) this.page = 0;
-    const first = this.page * PAGE_LINES; // номер первого ряда на странице
-    const last = first + PAGE_LINES;
+    const first = this.page * perPage; // номер первого ряда на странице
+    const last = first + perPage;
     rowLines.forEach((line, index) => {
       if (index < first || index >= last) return;
       const y = top + (index - first) * ROW_HEIGHT;
@@ -357,13 +373,15 @@ export class WallScreen {
         else this.content.add(addText(scene, iconX, iconY, row.sign ?? '', { fontSize: '36px' }).setOrigin(0.5));
         const textX = x + ROW_ICON + 20;
         this.content.add(addText(scene, textX, y, row.name, { fontSize: '21px', fontStyle: 'bold', color: INK }));
-        this.content.add(addText(scene, textX, y + 27, row.description, { fontSize: '16px', color: DIM_INK, wordWrap: { width: ROW_WIDTH - ROW_ICON - 36 } }));
+        const description = { fontSize: '16px', color: DIM_INK, wordWrap: { width: ROW_WIDTH - ROW_ICON - 36 }, maxLines: ROW_DESC_LINES };
+        this.content.add(addText(scene, textX, y + 27, row.description, description));
       });
     });
     for (let line = 0; line < hiddenLines; line++) {
       const index = rowLines.length + line;
       if (index < first || index >= last) continue;
-      const y = top + (index - first) * ROW_HEIGHT + (ROW_HEIGHT - HIDDEN_HEIGHT) / 2; // плитки — посреди своего ряда
+      // Плитки — посреди своего ряда, а от последней карточки их отделяет отступ.
+      const y = top + (index - first) * ROW_HEIGHT + HIDDEN_TOP_GAP + (ROW_HEIGHT - HIDDEN_HEIGHT) / 2;
       const from = line * HIDDEN_COLUMNS;
       for (let tile = from; tile < Math.min(hidden, from + HIDDEN_COLUMNS); tile++) {
         const x = left + 10 + (tile - from) * (HIDDEN_WIDTH + HIDDEN_GAP);

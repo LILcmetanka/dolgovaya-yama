@@ -81,6 +81,9 @@ const PHASE_SIGN_SMALL_STEP = 44; // …и стоят теснее
 const PHASE_SIGNS_HOME_Y = MULTIPLIER_WINDOW.y + MULTIPLIER_WINDOW.height / 2 + 13; // под окошком множителя
 const PHASE_SIGNS_HOLD = 2200; // столько мс знаки видны на стекле
 const PHASE_SIGNS_FLY_TIME = 700;
+// Знаки — поверх полосы новости «ФАЗА 2» (она на POPUP_DEPTH). Над панелью магазина их не видно: пока магазин
+// открыт, сцена их прячет (setPhaseSignsVisible), а после закрытия возвращает.
+const PHASE_SIGN_DEPTH = POPUP_DEPTH + 1;
 // Рычаг: низ штанги — точка вращения, на конце штанги — шарик.
 const LEVER_ROD_LENGTH = 142;
 const LEVER_PULL_SCALE = -0.4; // рычаг дёрнули: штанга переворачивается, шарик уходит вниз «на игрока»
@@ -279,8 +282,12 @@ export class MachinePanel {
     fitBoardNumber(this.ticketsText, tickets, BOARD_TICKETS_MAX_WIDTH);
   }
 
-  /** Билеты летят на табло из (fromX, fromY) — от руки Коллектора или из витрины; долетели — число подпрыгивает. */
-  flyTickets(count: number, fromX: number, fromY: number): void {
+  /** Билеты летят на табло из (fromX, fromY) — от руки Коллектора или из витрины; долетели — число подпрыгивает. onLanded — когда долетел последний. */
+  flyTickets(count: number, fromX: number, fromY: number, onLanded?: () => void): void {
+    if (count <= 0) {
+      onLanded?.(); // лететь нечему — число меняется сразу
+      return;
+    }
     for (let index = 0; index < count; index++) {
       const ticket = this.scene.add.image(fromX, fromY, TICKET_TEXTURE).setScale(1.4).setDepth(POPUP_DEPTH);
       this.scene.tweens.add({
@@ -294,6 +301,7 @@ export class MachinePanel {
         ease: 'Cubic.easeInOut',
         onComplete: () => {
           ticket.destroy();
+          if (index === count - 1) onLanded?.(); // последний долетел — можно менять число
           pulse(this.scene, this.ticketsText);
         },
       });
@@ -330,7 +338,7 @@ export class MachinePanel {
       const offset = index - (PHASE_SIGNS.length - 1) / 2; // знаки по бокам от середины
       const style = { ...sign.style, fontSize: PHASE_SIGN_FONT_SIZE };
       const text = addText(this.scene, GLASS.x + offset * PHASE_SIGN_STEP, PHASE_SIGNS_Y, sign.text, style);
-      text.setOrigin(0.5).setDepth(POPUP_DEPTH + 1); // поверх тёмной полосы новости на стекле
+      text.setOrigin(0.5).setDepth(PHASE_SIGN_DEPTH); // поверх тёмной полосы новости на стекле
       this.scene.tweens.add({
         targets: text,
         x: MULTIPLIER_WINDOW.x + offset * PHASE_SIGN_SMALL_STEP,
@@ -345,6 +353,11 @@ export class MachinePanel {
       });
       return text;
     });
+  }
+
+  /** Пока магазин открыт, знаков фазы 2 не видно: они не должны торчать поверх витрины. Закрыли — снова на месте. */
+  setPhaseSignsVisible(visible: boolean): void {
+    for (const sign of this.phaseSigns) sign.setVisible(visible);
   }
 
   /** Черепа оборвали серию: окошко множителя вспыхивает красным. */

@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { drawMachineBody, drawRoom } from './decor';
 import { lang, toggleLang, type Lang } from './lang';
 import { nextSpinMode, setSpinMode, spinMode, type SpinMode } from './levers';
-import { BODY, NOTE, ZOOM } from './layout';
+import { BODY, LEVER_GLOW, NOTE, ZOOM } from './layout';
 import { amuletKey, itemKey, see } from './codex';
 import { AmuletCase } from './parts/amuletCase';
 import { AmuletRack } from './parts/amuletRack';
@@ -16,7 +16,11 @@ import { DealerTable } from './parts/dealerTable';
 import { Drum } from './parts/drum';
 import { Effects } from './parts/effects';
 import { ItemShelf } from './parts/itemShelf';
+import { machineSpec } from './machines';
 import { MachineBadge } from './parts/machineBadge';
+import { LastChanceBar, type LastChanceAction } from './parts/lastChanceBar';
+import { MachinePicker } from './parts/machinePicker';
+import { MiniShop } from './parts/miniShop';
 import { MachinePanel } from './parts/panel';
 import { PauseScreen } from './parts/pauseScreen';
 import { PayoutWindow } from './parts/payoutWindow';
@@ -30,16 +34,18 @@ import { WallScreen } from './parts/wallScreen';
 import { Tooltip } from './parts/tooltip';
 import { CollectorScene } from './scene/CollectorScene';
 import { MAX_SLOTS } from './items';
-import { hasAmulets, hasCassette, hasDrum, isTutorialDone, markTutorialDone } from './progress';
+import { isTutorialDone, markTutorialDone } from './progress';
 import type { RunSave } from './save';
 import { getVolumes, isSilent, setVolume, toggleSound, volumeShare, type VolumeKind } from './settings';
 
-// Клавиши 1–9 и 0: в игре 1–8 — места на полках; в магазине 1–4 — ряды торгового автомата, 5–8 — места витрины амулетов,
-// 9 — кассета, 0 — барабан. Вне магазина 9 — вставить кассету в видеомагнитофон.
+// Клавиши 1–9 и 0: в игре 1–8 — места на полках; в магазине 1–3 — ряды торгового автомата, 4–5 — маленький автомат
+// (место на полке и гнездо), 6–8 — места витрины амулетов, 9 — кассета, 0 — барабан.
+// Вне магазина 9 — вставить кассету в видеомагнитофон.
 const NUMBER_KEYS = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE', 'ZERO'];
-const VENDING_KEYS = 4; // сколько клавиш у торгового автомата
-const CASE_KEYS = 4; // сколько клавиш у витрины амулетов; за ними — кассета (9) и барабан (0)
-const TAPE_KEY = VENDING_KEYS + CASE_KEYS; // номер клавиши кассеты в NUMBER_KEYS
+const VENDING_KEYS = 3; // сколько клавиш у торгового автомата
+const MINI_KEYS = 2; // сколько клавиш у маленького автомата: место на полке и гнездо
+const CASE_KEYS = 3; // сколько клавиш у витрины амулетов; за ними — кассета (9) и барабан (0)
+const TAPE_KEY = VENDING_KEYS + MINI_KEYS + CASE_KEYS; // номер клавиши кассеты в NUMBER_KEYS
 const MUSIC_TICK = 100; // как часто музыка планирует удары «сердца» вперёд, мс
 
 /**
@@ -48,7 +54,7 @@ const MUSIC_TICK = 100; // как часто музыка планирует у�
  * SaveScene → CollectorScene → GameScene. Здесь же — открытие монитора символов и обратно.
  */
 export class GameScene extends CollectorScene {
-  private corner!: CornerButtons; // значки в углу: настройки, «звук выключен», во весь экран
+  private corner!: CornerButtons; // значки в углу: «звук выключен», на телефоне ⚙ (пауза) и во весь экран
   private pauseScreen!: PauseScreen; // экран паузы
   private settingsPanel!: SettingsPanel; // настройки на экране паузы
   private languageAtPause!: Lang; // язык, какой был, когда встали на паузу: после «▶» записка переворачивается, только если он другой
@@ -64,24 +70,45 @@ export class GameScene extends CollectorScene {
     this.setupCamera();
     drawRoom(this);
     const machineBody = drawMachineBody(this); // тело корпуса — его красит MachineBadge в цвет автомата
-    this.monitor = new WallScreen(this, this.round, () => this.toggleMonitor()); // мебель комнаты: под рычагом и рукой Коллектора
+    this.monitor = new WallScreen(this, this.round, () => this.toggleMonitor(), () => this.openSettings()); // мебель комнаты: под рычагом и рукой Коллектора
     this.tooltip = new Tooltip(this);
     this.screen = new SlotScreen(this, this.sfx);
     this.brokenScreen = new BrokenScreen(this); // поверх сетки: дыра и трещины после взрыва (KABOOM)
-    this.machineBadge = new MachineBadge(this, machineBody, this.machine, this.tooltip);
+    this.machineBadge = new MachineBadge(this, machineBody, machineSpec(this.machineState), this.tooltip);
     this.panel = new MachinePanel(this, () => this.spin(), this.tooltip, (mode) => this.chooseSpinMode(mode));
     this.payout = new PayoutWindow(this, () => this.take());
-    this.itemShelf = new ItemShelf(this, this.slots, (slot) => this.useItem(slot), this.tooltip);
+    this.itemShelf = new ItemShelf(
+      this,
+      this.slots,
+      (slot) => this.useItem(slot),
+      (id) => this.discardEffect(id),
+      () => this.canAct(),
+      this.tooltip,
+    );
     // Окно перемешки и подмены — после полки: текстуры предметов уже созданы (createItemTextures в ItemShelf).
     this.rerollMenu = new RerollMenu(this, (id) => this.chooseReroll(id), () => this.skipReroll(), this.tooltip);
+    // Полоса последнего шанса — после полки: иконки перемешки и подмены уже нарисованы (createItemTextures).
+    this.lastChanceBar = new LastChanceBar(this, (action) => this.onLastChanceButton(action), this.tooltip);
     this.amuletRack = new AmuletRack(this, this.sockets, this.tooltip);
     // Полка с включёнными предметами и гнёзда амулетов — до Коллектора: его банкомат, GOOD LUCK и экран KABOOM ложатся поверх всего, что нарисовано раньше.
     this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
     this.chipCase = new ChipCase(this);
     this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip);
-    this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip, hasAmulets(), this.shop.layer);
-    this.cassette = new Cassette(this, hasCassette() && this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip, this.shop.layer);
-    this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx, hasDrum(), this.shop.layer);
+    // Что из магазина открыто — по закрытым долгам: после отката кассетой раунд уже загружен (loadTape), и части строятся сразу видимыми.
+    this.miniShop = new MiniShop(this, (row) => this.buyMini(row), this.tooltip, this.shop.layer);
+    this.machinePicker = new MachinePicker(
+      this,
+      (id) => this.pickMachine(id),
+      (id) => this.upgradeMachine(id),
+      (branch) => this.chooseMachineBranch(branch),
+      this.tooltip,
+      this.shop.layer,
+    );
+    this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip, this.amuletsUnlocked(), this.shop.layer);
+    // Кассета «продаётся» — это состояние забега (после отката её съел автомат, и она снова продаётся);
+    // видно её на панели только вместе с открытой механикой (первый аргумент).
+    this.cassette = new Cassette(this, this.cassetteUnlocked(), this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip, this.shop.layer);
+    this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx, this.drumUnlocked(), this.shop.layer);
     this.dealerTable = new DealerTable(this, (dir) => this.guess(dir), () => this.stopDealing(), this.sfx);
     this.effects = new Effects(this);
     this.atmosphere = new Atmosphere(this);
@@ -89,8 +116,10 @@ export class GameScene extends CollectorScene {
     this.pauseScreen = new PauseScreen(this, () => this.resumeGame());
     this.settingsPanel = new SettingsPanel(this, (kind, level) => this.changeVolume(kind, level), (language) => this.chooseLanguage(language));
     addRotateHint(this);
-    // Первый забег — в кромешной тьме: виден только автомат в пятне света (после обучения тьмы нет).
-    this.reveal = isTutorialDone() ? null : new Reveal(this, BODY, NOTE);
+    // Первый забег — в кромешной тьме: видны только автомат и рычаг в пятнах света (после обучения тьмы нет).
+    this.reveal = isTutorialDone() ? null : new Reveal(this, BODY, NOTE, LEVER_GLOW);
+    // Пока тьма не погасла, подсказок нет: они выдали бы то, что в ней спрятано.
+    this.tooltip.setBlockedCheck(() => this.reveal?.isActive ?? false);
     // Canvas не создался — тьмы нет: обучение считаем пройденным, иначе оно зациклится (каждый забег снова «первый»).
     if (this.reveal && !this.reveal.isActive) {
       markTutorialDone();
@@ -141,7 +170,7 @@ export class GameScene extends CollectorScene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.game.events.off(Phaser.Core.Events.HIDDEN, pauseWhenHidden));
   }
 
-  /** Esc, P или значок ⚙: пауза с настройками или продолжить. */
+  /** Esc или P: пауза с настройками или продолжить. */
   private togglePause(): void {
     if (this.isAtMonitor) this.lookBack(); // Esc сначала закрывает большой экран на стене
     else if (this.isPaused) this.resumeGame();
@@ -281,6 +310,12 @@ export class GameScene extends CollectorScene {
     });
   }
 
+  /** ⚙ в шапке планшета: экран закрывается, и открывается пауза с настройками (громкость и язык). */
+  private openSettings(): void {
+    this.lookBack();
+    this.pauseGame();
+  }
+
   // ---------- Ввод ----------
 
   private setupKeyboard(): void {
@@ -316,14 +351,13 @@ export class GameScene extends CollectorScene {
 
   /**
    * Пробел: на паузе — продолжить, в окне перемешки — пропустить его, у монитора — назад к автомату,
-   * в последнем шансе — забрать кон, в магазине — назад к автомату, в игре — дёрнуть рычаг,
-   * после проигрыша — «заново» (через 0,8 с).
+   * в магазине — назад к автомату, в игре — дёрнуть рычаг, после проигрыша — «заново» (через 0,8 с).
+   * В последнем шансе пробел ничего не делает: там действуют клавиши 1–4 и мышь (onLastChanceKey).
    */
   private onSpace(): void {
     if (this.isPaused) this.resumeGame();
     else if (this.isRerolling) this.skipReroll(); // окно открыто: ни прокрутки, ни «забрать» — только пропуск
     else if (this.isAtMonitor) this.lookBack();
-    else if (this.isLastChance) this.stopLastChance();
     else if (this.isShopping) this.leaveShop();
     else if (!this.isGameOver) this.spin();
     else if (this.canRestartWithSpace) this.restartGame();
@@ -331,7 +365,7 @@ export class GameScene extends CollectorScene {
 
   /**
    * Enter: на паузе — продолжить, в окне перемешки — пропустить его, банкомат выехал — отдать долг,
-   * у Дилера — остановиться, иначе — забрать кон (в последнем шансе это его банкует).
+   * у Дилера — остановиться, иначе — забрать кон. В последнем шансе кона нет: сцена его не берёт (canAct()).
    */
   private onEnter(): void {
     if (this.isPaused) this.resumeGame();
@@ -346,7 +380,8 @@ export class GameScene extends CollectorScene {
    * в игре 1–8 — включить предмет с полки.
    */
   private onNumber(index: number): void {
-    if (this.isShopping) this.onShopNumber(index);
+    if (this.isLastChance) this.onLastChanceKey(index); // в последнем шансе клавиши 1–4 — кнопки полосы
+    else if (this.isShopping) this.onShopNumber(index);
     else if (index === TAPE_KEY) this.useTape();
     else if (index < MAX_SLOTS) this.useItem(index);
   }
@@ -361,10 +396,21 @@ export class GameScene extends CollectorScene {
     this.guess('lower');
   }
 
-  /** Клавиша в магазине: 1–4 — ряды торгового автомата, 5–8 — витрина амулетов, 9 — кассета, 0 — барабан. */
+  /**
+   * Клавиша 1–4 в последнем шансе: 1 — заморозка, 2 — перекрут, 3 — джокер, 4 — сдаться.
+   * Столбец и клетку выбирают мышью: на сетке кликают, это не клавиатура.
+   */
+  private onLastChanceKey(index: number): void {
+    const actions: LastChanceAction[] = ['freeze', 'reroll', 'joker', 'surrender'];
+    const action = actions[index];
+    if (action) this.onLastChanceButton(action);
+  }
+
+  /** Клавиша в магазине: 1–3 — торговый автомат, 4–5 — маленький, 6–8 — витрина амулетов, 9 — кассета, 0 — барабан. */
   private onShopNumber(index: number): void {
     if (index < VENDING_KEYS) this.buy(index);
-    else if (index < TAPE_KEY) this.buyFromCase(index - VENDING_KEYS);
+    else if (index < VENDING_KEYS + MINI_KEYS) this.buyMini(index - VENDING_KEYS);
+    else if (index < TAPE_KEY) this.buyFromCase(index - VENDING_KEYS - MINI_KEYS);
     else if (index === TAPE_KEY) this.buyTape();
     else this.spinDrum();
   }

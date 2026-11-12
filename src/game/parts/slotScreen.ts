@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import type { MachineCharacter } from '../characters';
+import type { MachineSpec } from '../machines';
 import {
   characterTexture,
   createLamps,
@@ -38,6 +38,12 @@ const MACHINE_FONT_SIZE = '36px'; // новый автомат: его знач�
 const NEWS_ICON_SCALE = 1.5; // значок автомата в новости — крупнее, чем на корпусе
 const NEWS_ICON_GAP = 12; // между значком и названием
 const LOCK_SHADE = 0.5; // столбец с замком темнеет: прозрачность тени
+// Замороженный столбец (последний шанс): голубой лёд поверх клеток, действий не тратит.
+const FREEZE_FILL = 0x38bdf8;
+const FREEZE_ALPHA = 0.16;
+const FREEZE_EDGE = 0x7dd3fc;
+const FREEZE_EDGE_ALPHA = 0.85;
+const FREEZE_EDGE_WIDTH = 2;
 // Выбор клетки или столбца после прокрутки (перемешка и подмена, шаг 63б).
 const PICK_BORDER = 0xfde047; // обводка того, что выделили мышью
 const PICK_BORDER_WIDTH = 6; // толщина, как у рамок найденных паттернов
@@ -94,6 +100,7 @@ export class SlotScreen {
   private readonly cells: Phaser.GameObjects.Image[][]; // клетки сетки: cells[ряд][столбец]
   private readonly cellHighlights: Phaser.GameObjects.Graphics; // рамки вокруг клеток найденных паттернов
   private readonly pickHighlight: Phaser.GameObjects.Graphics; // обводка клетки или столбца под мышью, пока выбирают
+  private readonly freezeFrames: Phaser.GameObjects.Rectangle[]; // лёд на замороженных столбцах (последний шанс)
   private readonly zones: Phaser.GameObjects.Zone[][]; // невидимые клик-зоны клеток: ловят мышь, только пока выбирают
   private pickMode: 'column' | 'cell' | null = null; // что выбирают сейчас; null — выбора нет
   private pickCallback: ((row: number, col: number) => void) | null = null; // кому отдать выбранную клетку
@@ -120,6 +127,7 @@ export class SlotScreen {
     // Слои: рамки найденных паттернов (2) — выше обводки выбора (1), чтобы не перекрывать их; обе выше клеток (0).
     this.cellHighlights = scene.add.graphics().setDepth(2);
     this.pickHighlight = scene.add.graphics().setDepth(1);
+    this.freezeFrames = this.drawFreezeFrames();
     this.zones = this.drawPickZones();
   }
 
@@ -143,6 +151,25 @@ export class SlotScreen {
       label.setX(left + icon.width + PATTERN_TEXT_GAP);
       return frame;
     });
+  }
+
+  /** Пять ледяных рамок по столбцам: их показывает showFrozen, когда игрок замораживает столбец в последнем шансе. */
+  private drawFreezeFrames(): Phaser.GameObjects.Rectangle[] {
+    const top = cellY(0) - CELL_SIZE / 2;
+    const height = columnHeight();
+    return Array.from({ length: GRID_COLUMNS }, (_, col) =>
+      this.scene.add
+        .rectangle(cellX(col), top + height / 2, CELL_SIZE, height, FREEZE_FILL, FREEZE_ALPHA)
+        .setRounded(CELL_RADIUS)
+        .setStrokeStyle(FREEZE_EDGE_WIDTH, FREEZE_EDGE, FREEZE_EDGE_ALPHA)
+        .setDepth(3) // выше рамок выигрыша: лёд видно всегда
+        .setVisible(false),
+    );
+  }
+
+  /** Замороженные столбцы: голубой лёд поверх клеток. Пустой список — снять лёд со всех. */
+  showFrozen(columns: number[]): void {
+    this.freezeFrames.forEach((frame, col) => frame.setVisible(columns.includes(col)));
   }
 
   /** Сетка 5×3: в каждой клетке картинка с готовой текстурой символа. */
@@ -256,17 +283,6 @@ export class SlotScreen {
       this.clearRust();
       stopped();
     });
-  }
-
-  /**
-   * Смена автомата — событие на сетке (шаг 67): столбцы мелькают как при прокрутке и встают все 15 клеток
-   * на значок нового характера. Выигрыша нет; ржавчина и старые символы снимаются.
-   */
-  spinMachine(character: MachineCharacter, stopped: () => void): void {
-    this.clearRust();
-    const icon = characterTexture(character);
-    for (let col = 0; col < GRID_COLUMNS; col++) this.spinColumn(col, () => 1, () => icon);
-    this.scene.time.delayedCall(columnStopTime(GRID_COLUMNS - 1) + RESULT_PAUSE, stopped);
   }
 
   /** Заржавевший столбец: рычаг дёрнули — он скрипит и дёргается, но не крутится (его символы остаются). */
@@ -418,8 +434,10 @@ export class SlotScreen {
   }
 
   /** Пришёл новый автомат: на стекле его значок и название, например «💰 ЖАДНЫЙ». */
-  announceMachine(character: MachineCharacter): void {
-    this.newsOnGlass(t(character.name).toUpperCase(), GOLD_TEXT, MACHINE_FONT_SIZE, GLASS.y, characterTexture(character));
+  announceMachine(machine: MachineSpec): void {
+    // У классического автомата значка нет — новость без картинки.
+    const icon = machine.sign === '' ? undefined : characterTexture(machine);
+    this.newsOnGlass(t(machine.name).toUpperCase(), GOLD_TEXT, MACHINE_FONT_SIZE, GLASS.y, icon);
   }
 
   /**

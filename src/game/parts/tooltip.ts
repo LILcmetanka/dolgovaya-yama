@@ -18,6 +18,9 @@ export interface Hint {
   hide(): void;
 }
 
+/** Вещь с подсказкой: у неё есть видимость — невидимой подсказку не показываем (купили — вещи уже нет). */
+type HintTarget = Phaser.GameObjects.GameObject & { visible: boolean };
+
 /**
  * Подсказка при наведении мыши (на телефоне — при долгом нажатии): тёмная табличка с названием (золотом) и описанием.
  * Табличка справа снизу от курсора и ходит за мышью; у правого края она встаёт слева от курсора, у нижнего — над ним.
@@ -30,6 +33,7 @@ export class Tooltip implements Hint {
   private readonly title: Phaser.GameObjects.Text;
   private readonly text: Phaser.GameObjects.Text;
   private readonly container: Phaser.GameObjects.Container;
+  private blocked: (() => boolean) | null = null; // подсказки нет, пока это возвращает true (тьма обучения)
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -45,6 +49,7 @@ export class Tooltip implements Hint {
 
   /** Табличка у курсора: размер — по надписям, место — рядом с указателем. */
   show(title: string, text: string): void {
+    if (this.blocked?.()) return; // тьма обучения: подсказка выдала бы то, что в ней спрятано
     this.title.setText(title);
     this.text.setText(text);
     const width = Math.max(MIN_WIDTH, this.title.width, this.text.width) + 2 * PADDING;
@@ -81,6 +86,11 @@ export class Tooltip implements Hint {
   hide(): void {
     this.container.setVisible(false);
   }
+
+  /** Пока check() возвращает true, подсказок нет: тьма обучения не должна выдавать то, что в ней спрятано. */
+  setBlockedCheck(check: (() => boolean) | null): void {
+    this.blocked = check;
+  }
 }
 
 /**
@@ -90,12 +100,13 @@ export class Tooltip implements Hint {
  * getHint возвращает [название, что делает] или null — тогда подсказки нет (например, клетка пуста).
  */
 export function attachHint(
-  target: Phaser.GameObjects.GameObject,
+  target: HintTarget,
   hint: Hint,
   getHint: () => [string, string] | null,
   press?: () => void,
 ): void {
   const show = (): void => {
+    if (!target.visible) return; // вещи уже нет (купили, спрятали) — подсказке не о чем
     const texts = getHint();
     if (texts) hint.show(texts[0], texts[1]);
   };

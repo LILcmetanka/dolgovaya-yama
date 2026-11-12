@@ -1,6 +1,16 @@
 import Phaser from 'phaser';
 import { createItemTextures, createShelfTextures, DOOR_CODE_WIDTH, itemTexture, SHELF_CELL_TEXTURE, SHELF_DOOR_TEXTURE } from '../decor';
-import { ITEMS, isItemOn, MAX_SLOTS, type Item, type ItemEffects } from '../items';
+import {
+  activeSlotEffects,
+  EFFECT_SLOTS,
+  effectCount,
+  ITEMS,
+  MAX_SLOTS,
+  SLOT_EFFECT_IDS,
+  type Item,
+  type ItemEffects,
+  type SlotEffectId,
+} from '../items';
 import { t } from '../lang';
 import { EFFECTS_STEP, EFFECTS_TOP_Y, EFFECTS_X, ITEM_SIZE, SHELF_CELL, shelfX, shelfY } from '../layout';
 import { addText, LED_STYLE, POPUP_DEPTH, pulse } from '../theme';
@@ -11,6 +21,7 @@ const ITEM_ON_SHELF_SCALE = 0.9; // предмет в клетке чуть ме
 const EFFECT_SCALE = 0.68; // включённый предмет у экрана ещё меньше
 // Анимации, мс.
 const FLY_TIME = 450; // предмет летит из лотка на полку или с полки к экрану
+const FADE_TIME = 220; // снятый предмет гаснет у экрана
 // Кодовый замок купленного отсека: колёсики крутятся, по одному встают на цифры кода, дверца уезжает в сторону.
 const CODE_DIGITS = 3;
 const CODE_SPIN_STEP = 60; // мс: цифры на колёсиках сменяются так часто, пока крутятся
@@ -27,38 +38,17 @@ const NEW_ITEM_SCALE = 1.15; // купленный предмет «дышит»
 const NEW_ITEM_BREATH = 550; // один вдох, мс
 
 /**
- * Включённые предметы у экрана: только активные, одним «пакетом» сверху вниз, в этом порядке.
- * Двенадцать позиций: при EFFECTS_STEP = 54 от EFFECTS_TOP_Y = 206 десять иконок ещё влезают в вид (640), двенадцать нет —
- * поэтому при многих активных шаг поджимается, чтобы столбик не уехал за нижний край.
- * Чеснока в столбике нет: он красит огни вокруг экрана (BaseScene.calmLampColor).
+ * Включённые предметы у экрана: только активные, сверху вниз, на четырёх местах (EFFECT_SLOTS в items.ts).
+ * Места неподвижны: пятый предмет включается, только когда игрок кликом освободил одно из четырёх.
+ * Чеснока в столбике нет: он красит огни вокруг экрана (BaseScene.calmLampColor), сигарета срабатывает сразу.
  */
-type EffectId = 'shield' | 'triple' | 'candle' | 'risk' | 'hammer' | 'luckSpin' | 'shuffle' | 'swap' | 'cherries' | 'bells' | 'diamonds' | 'luck';
-const EFFECT_IDS: EffectId[] = ['shield', 'triple', 'candle', 'risk', 'hammer', 'luckSpin', 'shuffle', 'swap', 'cherries', 'bells', 'diamonds', 'luck'];
-const EFFECTS_BOTTOM = 610; // ниже этой линии центр нижней иконки не опускается: иконка ~33 px с пульсом (×1,25) у 640 уже обрезана
-
-/** Сколько раз ещё сработает включённый предмет (у бустов и флагов — 1, пока действуют). */
-function effectCount(effects: ItemEffects, id: EffectId): number {
-  if (id === 'shield') return effects.shields;
-  if (id === 'triple') return effects.tripleTakes;
-  return isItemOn(id, effects) ? 1 : 0;
-}
-
-/** Место в столбике у экрана: index — номер видимого предмета сверху, count — сколько всего активно. */
-function effectSpot(index: number, count: number): { x: number; y: number } {
-  const step = count > 1 ? Math.min(EFFECTS_STEP, (EFFECTS_BOTTOM - EFFECTS_TOP_Y) / (count - 1)) : EFFECTS_STEP;
-  return { x: EFFECTS_X, y: EFFECTS_TOP_Y + index * step };
-}
-
-/** Сколько предметов включено. */
-function activeEffects(effects: ItemEffects): EffectId[] {
-  return EFFECT_IDS.filter((id) => effectCount(effects, id) > 0);
+function effectSpot(index: number): { x: number; y: number } {
+  return { x: EFFECTS_X, y: EFFECTS_TOP_Y + index * EFFECTS_STEP };
 }
 
 /** Где у экрана встанет включённый предмет: место по активному списку (для летящего — то, что он займёт). */
-export function effectPosition(id: EffectId, effects: ItemEffects): { x: number; y: number } {
-  const active = activeEffects(effects);
-  const index = active.indexOf(id);
-  return effectSpot(index, active.length);
+export function effectPosition(id: SlotEffectId, effects: ItemEffects): { x: number; y: number } {
+  return effectSpot(Math.max(0, activeSlotEffects(effects).indexOf(id)));
 }
 
 /**
@@ -70,13 +60,26 @@ export class ItemShelf {
   private readonly items: Phaser.GameObjects.Image[] = []; // предмет в клетке; пустая клетка — картинка скрыта
   private readonly doors: Phaser.GameObjects.Container[] = []; // стальные дверцы с кодом на закрытых отсеках; открытый — скрыта
   private readonly digits: Phaser.GameObjects.Text[][] = []; // цифры кода на дверце каждого отсека
-  private readonly effectIcons = new Map<EffectId, Phaser.GameObjects.Image>(); // включённые предметы у экрана
-  private readonly effectCounts = new Map<EffectId, Phaser.GameObjects.Text>(); // «2», если включено больше одного
+  private readonly effectIcons = new Map<SlotEffectId, Phaser.GameObjects.Image>(); // включённые предметы у экрана
+  private readonly effectCounts = new Map<SlotEffectId, Phaser.GameObjects.Text>(); // «2», если включено больше одного
   private readonly shelfItems: (Item | null)[] = []; // какой предмет в какой клетке — для подсказки
+  private readonly canDiscard: () => boolean; // сейчас можно снимать предмет у экрана (не во время прокрутки и прочего)
 
-  /** slots — сколько клеток открыто; use — что делать, когда кликнули по предмету в клетке. */
-  constructor(scene: Phaser.Scene, slots: number, use: (slot: number) => void, hint: Hint) {
+  /**
+   * slots — сколько клеток открыто; use — что делать, когда кликнули по предмету в клетке;
+   * discard — когда кликнули по включённому предмету у экрана (игрок освобождает его место);
+   * canDiscard — можно ли снимать сейчас: во время прокрутки, Дилера или последнего шанса случайный клик ничего не портит.
+   */
+  constructor(
+    scene: Phaser.Scene,
+    slots: number,
+    use: (slot: number) => void,
+    discard: (id: SlotEffectId) => void,
+    canDiscard: () => boolean,
+    hint: Hint,
+  ) {
     this.scene = scene;
+    this.canDiscard = canDiscard;
     createItemTextures(scene, ITEMS, ITEM_SIZE);
     createShelfTextures(scene, SHELF_CELL);
 
@@ -95,17 +98,43 @@ export class ItemShelf {
       this.doors.push(door);
     }
 
-    // Иконки создаём на все двенадцать позиций сразу: showEffects расставит только активные и прижмёт их к верху.
-    for (const [index, id] of EFFECT_IDS.entries()) {
-      const { x, y } = effectSpot(index, EFFECT_IDS.length);
+    // Иконки — на каждый предмет столбика: showEffects расставит первые EFFECT_SLOTS активных, остальные спрятаны.
+    for (const [index, id] of SLOT_EFFECT_IDS.entries()) {
+      const { x, y } = effectSpot(Math.min(index, EFFECT_SLOTS - 1));
       const item = ITEMS.find((candidate) => candidate.id === id) ?? ITEMS[0];
       const icon = scene.add.image(x, y, itemTexture(item)).setScale(EFFECT_SCALE).setVisible(false);
-      icon.setInteractive();
-      attachHint(icon, hint, () => [t(item.name), t(item.description)]);
+      icon.setInteractive({ useHandCursor: true });
+      attachHint(icon, hint, () => [t(item.name), `${t(item.description)}\n${t('effectRemove')}`], () => this.tryFadeOut(id, discard));
       this.effectIcons.set(id, icon);
       const count = addText(scene, x + 14, y + 12, '', { fontSize: '13px', fontStyle: 'bold', stroke: '#000000', strokeThickness: 3 });
       this.effectCounts.set(id, count.setOrigin(0.5));
     }
+  }
+
+  /** Клик по значку: снимаем, только если сцена разрешает сейчас, — иначе значок не трогаем. */
+  private tryFadeOut(id: SlotEffectId, discard: (id: SlotEffectId) => void): void {
+    if (!this.canDiscard()) return; // прокрутка, Дилер, окно перемешки, последний шанс — клик ничего не портит
+    this.fadeOut(id, discard);
+  }
+
+  /** Игрок снял предмет у экрана: значок гаснет, потом сцена убирает сам эффект (discard). */
+  private fadeOut(id: SlotEffectId, discard: (id: SlotEffectId) => void): void {
+    const icon = this.effectIcons.get(id);
+    if (!icon || !icon.visible) return; // нечего снимать: предмета у экрана нет
+    const label = this.effectCounts.get(id);
+    this.scene.tweens.killTweensOf(icon);
+    this.scene.tweens.add({
+      targets: icon,
+      alpha: 0,
+      scale: EFFECT_SCALE * 0.6,
+      duration: FADE_TIME,
+      ease: 'Quad.easeIn',
+      onComplete: () => {
+        icon.setAlpha(1).setScale(EFFECT_SCALE).setVisible(false);
+        label?.setAlpha(1).setText('');
+        discard(id);
+      },
+    });
   }
 
   /** Дверца отсека slot: стальная плита, на ней три цифры кода (пока закрыто — нули). По ней наводят подсказку. */
@@ -247,15 +276,18 @@ export class ItemShelf {
     this.scene.tweens.add({ targets: target, x: homeX + 6, duration: SHAKE_TIME, yoyo: true, repeat: 2, onComplete: () => target.setX(homeX) });
   }
 
-  /** Столбик у экрана: только включённые предметы, подряд сверху вниз; если включено несколько одинаковых — рядом число. */
+  /**
+   * Столбик у экрана: первые EFFECT_SLOTS включённых предметов сверху вниз (страховка от старой записи кассеты,
+   * где эффектов могло быть больше); если включено несколько одинаковых — рядом число.
+   */
   showEffects(effects: ItemEffects): void {
-    const active = activeEffects(effects);
+    const active = activeSlotEffects(effects).slice(0, EFFECT_SLOTS);
     for (const [index, id] of active.entries()) {
       const count = effectCount(effects, id);
       const icon = this.effectIcons.get(id);
       const label = this.effectCounts.get(id);
       if (!icon || !label) continue;
-      const { x, y } = effectSpot(index, active.length);
+      const { x, y } = effectSpot(index);
       icon.setPosition(x, y);
       label.setPosition(x + 14, y + 12);
       if (!icon.visible) pulse(this.scene, icon.setVisible(true), 1.25, EFFECT_SCALE);
@@ -269,7 +301,7 @@ export class ItemShelf {
   }
 
   /** Включённый предмет сработал: его копия летит от столбика к (toX, toY), раздувается и тает. */
-  spend(id: EffectId, toX: number, toY: number): void {
+  spend(id: SlotEffectId, toX: number, toY: number): void {
     const icon = this.effectIcons.get(id);
     if (!icon) return;
     const flying = this.scene.add.image(icon.x, icon.y, icon.texture.key).setScale(EFFECT_SCALE).setDepth(POPUP_DEPTH);

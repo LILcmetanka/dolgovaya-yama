@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { CHARACTERS, type MachineCharacter } from '../characters';
+import { MACHINES, type MachineSpec } from '../machines';
 import { characterTexture, createCharacterTextures } from '../decor';
 import { t } from '../lang';
 import { MACHINE_BADGE, MACHINE_BADGE_SIZE } from '../layout';
@@ -18,47 +18,48 @@ function dim(color: number, share: number): number {
 }
 
 /**
- * Характер автомата на корпусе: цвет тела корпуса (decor.ts рисует его белым, а красит эта часть — setTint)
- * и значок слева от экрана; навёл на значок — подсказка: название и что автомат делает. У обычного автомата значка нет.
+ * Автомат на корпусе: цвет тела корпуса (decor.ts рисует его белым, а красит эта часть — setTint)
+ * и значок слева от экрана; навёл на значок — подсказка: название и что автомат делает.
+ * У классического автомата значка нет — как у обычного раньше.
  */
 export class MachineBadge {
   private readonly scene: Phaser.Scene;
   private readonly body: Phaser.GameObjects.Image; // тело корпуса
   private readonly badge: Phaser.GameObjects.Image; // значок характера
-  private character: MachineCharacter;
+  private machine: MachineSpec;
 
-  /** body — тело корпуса (его вернул drawMachineBody), character — какой автомат стоит. */
-  constructor(scene: Phaser.Scene, body: Phaser.GameObjects.Image, character: MachineCharacter, hint: Hint) {
+  /** body — тело корпуса (его вернул drawMachineBody), machine — какой автомат стоит. */
+  constructor(scene: Phaser.Scene, body: Phaser.GameObjects.Image, machine: MachineSpec, hint: Hint) {
     this.scene = scene;
     this.body = body;
-    this.character = character;
-    createCharacterTextures(scene, CHARACTERS, MACHINE_BADGE_SIZE);
-    this.badge = scene.add.image(MACHINE_BADGE.x, MACHINE_BADGE.y, characterTexture(CHARACTERS[0]));
+    this.machine = machine;
+    createCharacterTextures(scene, MACHINES, MACHINE_BADGE_SIZE);
+    this.badge = scene.add.image(MACHINE_BADGE.x, MACHINE_BADGE.y, characterTexture(MACHINES[0]));
     this.badge.setInteractive();
-    attachHint(this.badge, hint, () => [t(this.character.name), t(this.character.description)]);
-    this.show(character);
+    attachHint(this.badge, hint, () => [t(this.machine.name), t(this.machine.description)]);
+    this.show(machine);
   }
 
-  /** Автомат как есть, без анимации: корпус его цвета и значок (у обычного автомата знака нет — и значка нет). */
-  show(character: MachineCharacter): void {
-    this.character = character;
-    this.body.setTint(character.color);
-    const hasBadge = character.sign !== '';
+  /** Автомат как есть, без анимации: корпус его цвета и значок (у классического знака нет — и значка нет). */
+  show(machine: MachineSpec): void {
+    this.machine = machine;
+    this.body.setTint(machine.color);
+    const hasBadge = machine.sign !== '';
     this.badge.setVisible(hasBadge);
-    if (hasBadge) this.badge.setTexture(characterTexture(character));
+    if (hasBadge) this.badge.setTexture(characterTexture(machine));
   }
 
-  /** Пришёл новый автомат: корпус проступает из темноты своим цветом, значок выскакивает. */
-  arrive(character: MachineCharacter): void {
-    this.show(character);
+  /** Новый автомат (или новый уровень): корпус проступает из темноты своим цветом, значок выскакивает. */
+  arrive(machine: MachineSpec): void {
+    this.show(machine);
     const light = { share: ARRIVE_FROM };
-    this.body.setTint(dim(character.color, light.share));
+    this.body.setTint(dim(machine.color, light.share));
     this.scene.tweens.add({
       targets: light,
       share: 1,
       duration: ARRIVE_TIME,
       ease: 'Sine.easeOut',
-      onUpdate: () => this.body.setTint(dim(character.color, light.share)),
+      onUpdate: () => this.body.setTint(dim(machine.color, light.share)),
     });
     this.scene.tweens.killTweensOf(this.badge);
     this.badge.setScale(0);

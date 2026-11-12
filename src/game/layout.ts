@@ -54,6 +54,9 @@ export const BELLY: Box = { x: CENTER_X, y: 540, width: 500, height: 130 }; // �
 export const MULTIPLIER_WINDOW: Box = { x: 409, y: 552, width: 130, height: 58 }; // окошко множителя серии
 export const PAYOUT_WINDOW: Box = { x: 654, y: 552, width: 290, height: 70 }; // окошко выплаты — электронное табло с коном
 export const LEVER_MOUNT: Box = { x: 889, y: 338, width: 48, height: 76 }; // крепление рычага; из его середины растёт рычаг
+// Пятно света тьмы обучения (reveal.ts). Рычаг стоит в стороне от света автомата: штанга растёт из крепления вверх
+// на 142, на её конце шарик. Пятно с мягким краем накрывает рычаг целиком — в темноте его видно и можно дёрнуть.
+export const LEVER_GLOW: Box = { x: LEVER_MOUNT.x, y: 270, width: 170, height: 290 };
 // Переключатель режима прокрутки — на стене справа от рычага, вровень с его креплением:
 // правее шарика (он уходит вниз до y≈395), ниже отсвета экрана на стене (корпус кончается на 297, отсвет — на 327:
 // верх рамки 333 его не задевает), выше видеомагнитофона (начинается на 526). Три плашки столбиком.
@@ -125,25 +128,46 @@ export const SHOP_HUD_CHIP_HEIGHT = 24; // фишка в шапке — как �
 export const SHOP_HUD_TICKET_HEIGHT = 20; // билет на глаз того же размера, поэтому чуть ниже
 export const SHOP_HUD_CHIPS_MAX_WIDTH = 70; // шире число фишек не бывает: дальше шрифт уменьшается
 export const SHOP_HUD_TICKETS_MAX_WIDTH = 40; // два знака; длиннее — шрифт уменьшается
-// Чемодан с амулетами на стене: 2 амулета, билет и гнездо — в ряд. Над ним поднимается крышка.
-export const AMULET_CASE_PLACES = AMULET_OFFER_SIZE + 2;
-export const AMULET_CASE: Box = { x: 635, y: 116, width: 312, height: 128 }; // низ чемодана, где лежат вещи
+// Чемодан с амулетами на стене: три амулета в ряд, по центру торгового автомата. Над ним поднимается крышка.
+export const AMULET_CASE_PLACES = AMULET_OFFER_SIZE;
+export const AMULET_CASE: Box = { x: 625, y: 116, width: 268, height: 128 }; // низ чемодана, где лежат вещи
 export const AMULET_CASE_STEP = 76; // от места до места
 export const AMULET_CASE_ICON_Y = 82; // амулеты и билет: вместе с ценниками — посередине бархата
 export const AMULET_CASE_PRICE_Y = 136; // ценники под ними
 // Торговый автомат под витриной: предметы рядами, справа от предмета — ценник.
 export const VENDING: Box = { x: 625, y: 404, width: 280, height: 412 };
 // Витрина и панель со щелью стоят внутри окантовки лицевой части (она от 485 до 765, бок — левее), с равными полями.
-export const VENDING_GLASS: Box = { x: 609, y: 384, width: 178, height: 280 }; // витрина: 4 ряда
+export const VENDING_GLASS: Box = { x: 609, y: 384, width: 178, height: 280 }; // витрина: 3 ряда
 export const VENDING_GOOD_X = 557; // предмет в ряду: спираль под ним — на таком же поле от края витрины, как ценник
 export const VENDING_PRICE_X = 607; // ценник: фишка, правее — «× цена»
 export const VENDING_COIN_SLOT = { x: 731, y: 282 }; // щель для фишек на панели справа от витрины
 export const VENDING_BIN: Box = { x: 632, y: 566, width: 220, height: 36 }; // лоток внизу, посередине лицевой части: сюда падает покупка
+// Маленький автомат слева от торгового: место на полке за фишки и гнездо амулета за билеты.
+// Лотка у него нет: место открывается на полке, гнездо — на корпусе, за панелью магазина.
+export const MINI_SHOP: Box = { x: 356, y: 372, width: 184, height: 300 }; // 264…448 по x, 222…522 по y
+export const MINI_SHOP_GLASS: Box = { x: 342, y: 350, width: 136, height: 168 }; // витрина: два ряда
+// Ряды витрины: верхний — место на полке, нижний — гнездо. Предмет слева, ценник справа.
+export const MINI_SHOP_ROW_Y = [308, 392];
+export const MINI_SHOP_GOOD_X = 300;
+export const MINI_SHOP_PRICE_X = 360;
+export const MINI_SHOP_COIN_SLOT = { x: 429, y: 300 }; // щель для оплаты на правой панели корпуса
+// Выбор автомата и его прокачка — панель справа от торгового, под барабаном (все числа — мировые):
+// рамка 859…1119 × 390…620, строки 869…1109, кнопки веток 871…983 и 995…1107 (543…569).
+export const MACHINE_PICKER: Box = { x: 989, y: 505, width: 260, height: 230 };
+export const MACHINE_ROW_X = 989; // середина строки автомата
+export const MACHINE_ROW_W = 240;
+export const MACHINE_ROW_H = 36;
+export const MACHINE_ROW_Y = [434, 474, 514]; // центры трёх строк: 416…452, 456…492, 496…532
+export const MACHINE_BRANCH_LEFT: Box = { x: 927, y: 556, width: 112, height: 26 }; // «−10% черепа»
+export const MACHINE_BRANCH_RIGHT: Box = { x: 1051, y: 556, width: 112, height: 26 }; // «+1 прокрутка»
 // «Барабан» — колесо на стене справа от торгового автомата: под ним ценник.
 export const DRUM_WHEEL = { x: 853, y: 290 }; // середина колеса
 export const DRUM_RADIUS = 56;
-export const SAVE_TAPE = { x: 800, y: 462 }; // кассета — один откат за забег: на панели справа от торгового автомата, над кнопкой «назад»
-export const SHOP_LEAVE = { x: 800, y: 560 }; // кнопка «назад к автомату» — на панели под кассетой
+export const SAVE_TAPE = { x: 800, y: 462 }; // кассета — один откат за забег: на панели справа от торгового автомата
+// Два выхода из магазина: ручка-язычок жалюзи внизу панели и тонкий крестик в её правом верхнем углу.
+// Координаты мировые: ручка 628…760 × 611…637, крестик 1099…1129 × 12…42.
+export const SHOP_HANDLE: Box = { x: 694, y: 624, width: 132, height: 26 }; // середина ручки
+export const SHOP_CROSS: Box = { x: 1114, y: 27, width: 30, height: 30 }; // середина крестика
 
 /** Клетка полки номер slot (0 — верхняя клетка первой полки, SHELF_COLUMN — верхняя клетка второй): середина по горизонтали. */
 export function shelfX(slot: number): number {
@@ -155,7 +179,7 @@ export function shelfY(slot: number): number {
   return SHELF_TOP_Y + (slot % SHELF_COLUMN) * SHELF_STEP;
 }
 
-/** Ряд витрины номер row (0 — верхний): предметы, в последнем ряду — место на полке. */
+/** Ряд витрины номер row (0 — верхний): все ряды — предметы. */
 export function vendingRowY(row: number, rows: number): number {
   const step = VENDING_GLASS.height / rows;
   return VENDING_GLASS.y - VENDING_GLASS.height / 2 + step * (row + 0.5);
