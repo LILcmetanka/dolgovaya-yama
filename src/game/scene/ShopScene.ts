@@ -20,13 +20,13 @@ function prizeSound(prize: DrumPrize): SoundName {
 }
 
 /**
- * Слой магазина: после расплаты вид поворачивается влево. В торговом автомате — предметы и место на полке за фишки,
- * в витрине над ним — амулеты и гнездо за билеты и билет за фишки, справа на стене — «барабан» за фишки.
- * Ушёл из магазина — новый раунд.
+ * Слой магазина: после расплаты сверху съезжает панель магазина (как жалюзи) и закрывает комнату. В торговом автомате —
+ * предметы и место на полке за фишки, в витрине над ним — амулеты и гнездо за билеты и билет за фишки, справа на панели —
+ * «барабан» за фишки. Ушёл из магазина — панель уезжает наверх, и новый раунд.
  */
 export abstract class ShopScene extends DealerScene {
   /**
-   * Долг отдан (или пропущен): на записке следующий долг (записка переворачивается), вид поворачивается к магазину.
+   * Долг отдан (или пропущен): на записке следующий долг (записка переворачивается), сверху съезжает панель магазина.
    * Долг — как на этом автомате: на Счастливом он больше.
    */
   protected openShop(): void {
@@ -42,20 +42,24 @@ export abstract class ShopScene extends DealerScene {
     this.isTicketForSale = true;
     this.seeInShop(offer.map((item) => itemKey(item.id)), amuletOffer.map((amulet) => amuletKey(amulet.id)));
     this.drumSpins = 0; // в новом магазине барабан снова дешёвый
-    if (hasAmulets()) {
-      this.amuletCase.fill({
-        amulets: amuletOffer,
-        amuletPrices: amuletOffer.map(amuletPrice),
-        ticketPrice: ticketPrice(this.debt),
-        socketPrice: socketPrice(this.sockets),
-      });
-    }
     const prices = offer.map((item) => itemPrice(item, this.debt)); // цены — доля нового долга
+    // Панель поехала: чемодан прошлого захода сразу пуст, а цены на панели — уже от нового долга. Наполняется чемодан на вставшей панели.
+    if (hasAmulets()) this.amuletCase.clear();
     this.sfx.play('turn');
     this.shop.open(offer, prices, slotPrice(this.slots, this.debt), () => {
+      // Панель опустилась: только теперь можно покупать, а чемодан наполняется уже на ней.
       this.isShopping = true;
+      if (hasAmulets()) {
+        this.amuletCase.fill({
+          amulets: amuletOffer,
+          amuletPrices: amuletOffer.map(amuletPrice),
+          ticketPrice: ticketPrice(this.debt),
+          socketPrice: socketPrice(this.sockets),
+        });
+      }
       this.refreshShop();
     });
+    this.refreshShop(); // пока панель едет: цены барабана и рядов — новые, прошлый заход не мелькает
   }
 
   /** В магазине показали предметы и амулеты (и Коллектор уже приходил): всё это теперь на экране на стене; впервые — там мигает «NEW». */
@@ -157,6 +161,7 @@ export abstract class ShopScene extends DealerScene {
     addCopy(this.amuletCounts, amulet.id);
     const count = countOf(this.amuletCounts, amulet.id); // сколько копий станет после этой покупки
     this.amuletCase.sell(place, (x, y) => {
+      // Гнездо за панелью: амулет гаснет, пройдя первые ~200 px к нему, — будто уходит за жалюзи, а не летит через витрину.
       if (isNew) this.amuletRack.putAmulet(index, amulet, count, x, y); // анимация — только когда амулет долетел
       else this.amuletRack.putCopy(index, amulet, count, x, y);
       this.showBones();
@@ -164,7 +169,7 @@ export abstract class ShopScene extends DealerScene {
     this.afterPurchase();
   }
 
-  /** Купить билет за фишки (один за посещение): он летит из витрины на табло. */
+  /** Купить билет за фишки (один за посещение): он летит из витрины в шапку панели. */
   private buyTicket(): void {
     if (!this.isTicketForSale) return;
     const price = ticketPrice(this.debt);
@@ -176,7 +181,7 @@ export abstract class ShopScene extends DealerScene {
     this.balance -= price;
     this.tickets += 1;
     this.isTicketForSale = false;
-    this.amuletCase.sell(TICKET_PLACE, (x, y) => this.panel.flyTickets(1, x, y));
+    this.amuletCase.sell(TICKET_PLACE, (x, y) => this.shop.flyTicket(x, y));
     this.afterPurchase();
   }
 
@@ -226,7 +231,7 @@ export abstract class ShopScene extends DealerScene {
     return DRUM_SECTORS.map((prize) => canWin(prize, hasFreeSlot, canAddSlot));
   }
 
-  /** Колесо встало: приз вылетает из сектора (x, y) — предмет на свободное место полки, билет и фишки на табло, место — доски слетают. paid — цена этой прокрутки: «фишки» выплачивают её ×2. */
+  /** Колесо встало: приз вылетает из сектора (x, y) — предмет на свободное место полки, билет и фишки в шапку панели, место — доски слетают. paid — цена этой прокрутки: «фишки» выплачивают её ×2. */
   private winDrum(prize: DrumPrize, x: number, y: number, paid: number): void {
     const item = prizeItem(prize);
     if (item) {
@@ -235,14 +240,14 @@ export abstract class ShopScene extends DealerScene {
       this.itemShelf.putItem(slot, item, x, y);
     } else if (prize === 'ticket') {
       this.tickets += 1;
-      this.panel.flyTickets(1, x, y);
+      this.shop.flyTicket(x, y);
     } else if (prize === 'slot') {
       this.itemShelf.openSlot(this.addSlot());
     } else {
       const chips = drumChips(paid);
       this.balance += chips;
       this.effects.popupAt(x, y - PRIZE_POPUP_RISE, `+${chips}`, GOLD_TEXT);
-      this.drum.payOut(x, y, () => this.panel.pulseBoard());
+      this.drum.payOut(x, y, () => this.shop.pulseChips());
     }
     this.isShopping = true; // колесо встало — снова можно покупать
     this.afterPurchase(prizeSound(prize));
@@ -271,7 +276,7 @@ export abstract class ShopScene extends DealerScene {
     this.drum.showAvailable(this.drumSectors());
   }
 
-  /** Из магазина — назад к игровому автомату, и новый раунд. */
+  /** Из магазина — назад к игровому автомату: панель уезжает наверх, и начинается новый раунд. */
   protected leaveShop(): void {
     if (!this.isShopping) return;
     this.isShopping = false;

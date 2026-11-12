@@ -33,7 +33,7 @@ export const LUCKY_DEBT = 1.5; // …но долги во столько раз 
 export const RUST_CHANCE = 0.25; // Ржавый: после прокрутки столбец ржавеет с таким шансом
 
 /** «×1,5» по-русски и «×1.5» по-английски: числа в описаниях — из констант выше. */
-function times(factor: number): Words {
+export function times(factor: number): Words {
   return { ru: `×${String(factor).replace('.', ',')}`, en: `×${factor}` };
 }
 

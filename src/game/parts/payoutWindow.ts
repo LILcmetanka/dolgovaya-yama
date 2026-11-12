@@ -1,5 +1,13 @@
 import Phaser from 'phaser';
-import { CHIP_TEXTURE, createChipTextures, createTakeButtonTextures, TAKE_BEZEL_TEXTURE, TAKE_DOME_TEXTURE, TAKE_SHINE_TEXTURE } from '../decor';
+import {
+  CHIP_TEXTURE,
+  createChipTextures,
+  createTakeButtonTextures,
+  TAKE_BEZEL_SIZE,
+  TAKE_BEZEL_TEXTURE,
+  TAKE_DOME_TEXTURE,
+  TAKE_SHINE_TEXTURE,
+} from '../decor';
 import { BOARD_CHIP_X, DISPLAY } from '../layout';
 import {
   addText,
@@ -16,15 +24,17 @@ import {
 } from '../theme';
 
 // Что где в окошке.
-const CHIP_X = 452; // фишка слева от суммы
+const CHIP_X = 541; // фишка слева от суммы
 const CHIP_Y = 552; // фишка и «× 400» — посередине окошка
-const PAYOUT_TEXT_X = 474; // «× 400» — правее фишки
+const PAYOUT_TEXT_X = 563; // «× 400» — правее фишки
 const PAYOUT_TEXT_SIZE = 26; // обычная сумма в окошке
-// В последнем шансе строка длиннее («× 3400 / 662»), и при 26 px она залезала под купол кнопки «забрать» (x ≈ 652): мельче.
+// В последнем шансе строка длиннее («× 3400 / 662»), и при 26 px она залезала под купол кнопки «забрать» (x ≈ 741): мельче.
 const GOAL_TEXT_SIZE = 22;
 // Кнопка «забрать» на самом табло — небольшая кнопка в металлической оправе без слов: купол светится золотым (черепа — красным).
-const BUTTON_X = 664;
+const BUTTON_X = 753;
 const BUTTON_Y = 552;
+// Левый край оправы кнопки с зазором 4 px: докуда можно доводить полосу перемешки, чтобы не накрыть саму кнопку (её берёт rerollMenu).
+export const TAKE_BEZEL_LEFT = BUTTON_X - (TAKE_BEZEL_SIZE / 2 + 4); // 731
 const BUTTON_GLOW_RADIUS = 24; // мягкое свечение вокруг кнопки
 const BUTTON_GLOW_ALPHA = 0.25;
 const BUTTON_HIT_SIZE = 46; // нажимать можно чуть шире самой кнопки

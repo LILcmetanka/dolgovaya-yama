@@ -17,9 +17,12 @@ const POPUP_ABOVE_CELL = 30; // «👑 +5» и «🍀» всплывают на�
  * Между PhaseScene и RoundScene: RoundScene и так вырос за 400 строк, удача — своим слоем.
  */
 export abstract class BonusScene extends PhaseScene {
-  /** Сетка прокрутки: после клевера — с паттерном наверняка (удача тратится), иначе обычная. */
-  protected rollGrid(weightOf: WeightOf): Grid {
-    if (!this.isLuckyNext) return spinGrid(weightOf);
+  /**
+   * Сетка прокрутки: после клевера — с паттерном наверняка (удача тратится), иначе обычная.
+   * canUseLuck = false — спокойная прокрутка: выплат в ней нет, поэтому клевер ждёт обычной и не тратится.
+   */
+  protected rollGrid(weightOf: WeightOf, canUseLuck = true): Grid {
+    if (!canUseLuck || !this.isLuckyNext) return spinGrid(weightOf);
     this.isLuckyNext = false;
     return luckyGrid(weightOf);
   }

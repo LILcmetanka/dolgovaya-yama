@@ -10,12 +10,11 @@ import {
   DISPLAY,
   GLASS,
   ITEM_SIZE,
-  LEFT_ROOM,
   LEVER_MOUNT,
   MULTIPLIER_WINDOW,
   PAYOUT_WINDOW,
-  ROOM_SIDE,
   SCREEN,
+  SHOP_PANEL,
   SOCKET_RADIUS,
   SOCKET_XS,
   SOCKET_Y,
@@ -94,9 +93,10 @@ export const RUST_TEXTURE = 'rust-column'; // ржавчина на заевше
 const ROOM_TEXTURE = 'room';
 const MACHINE_TEXTURE = 'machine'; // детали корпуса: окантовка, табло, стекло, окна, гнёзда
 const MACHINE_SHELL_TEXTURE = 'machine-shell'; // тело корпуса — его красят в цвет автомата
-const SHOP_ROOM_TEXTURE = 'shop-room'; // комната слева с торговым автоматом
-/** Комната: тёмная стена в полоску и пол. Она шире экрана 960 на ROOM_SIDE с каждой стороны (экран 16:9). */
-const ROOM_WIDTH = 960 + 2 * ROOM_SIDE;
+const SHOP_PANEL_TEXTURE = 'shop-panel'; // фон панели магазина — она выезжает сверху поверх комнаты
+const SHOP_MACHINE_TEXTURE = 'shop-machine'; // торговый автомат на панели магазина
+/** Комната: тёмная стена в полоску и пол. Она на весь вид по ширине (VIEW_WIDTH): камера стоит на месте. */
+const ROOM_WIDTH = Math.ceil(VIEW_WIDTH);
 const WALL_COLOR = 0x15100d;
 const FLOOR_COLOR = 0x090706;
 const FLOOR_Y = 560; // где стена переходит в пол
@@ -111,6 +111,12 @@ const BODY_CORNER = 30; // скругление углов
 const BODY_SHADOW = { x: 12, y: 10 }; // тень корпуса на стене сдвинута на столько
 const BELLY_SHADE = 0.53; // панель под экраном — тело корпуса, затемнённое на столько: она того же цвета, что автомат
 const TRIM_COLOR = 0xb45309; // бронзовая окантовка
+const PANEL_EDGE = 6; // бронзовая кромка панели магазина по левому краю, px
+// Панель магазина — рольставня: 8 горизонтальных ламелей. Шов и мягкая тень под ним, но бледно — панель остаётся фоном.
+const SHOP_SLATS = 8;
+const SLAT_SHADE_STEPS = 5; // тень под швом рисуется столькими полосками…
+const SLAT_SHADE_STEP = 10; // …по столько px каждая…
+const SLAT_SHADE_ALPHA = 0.05; // …и в начале такой плотности: к середине ламели сходит на нет
 const TRIM_INSET = 8; // окантовка — на столько внутри края лицевой части, со всех сторон одинаково
 const CHROME = 0x94a3b8;
 const CHROME_LIGHT = 0xe2e8f0;
@@ -180,7 +186,7 @@ const MINI_OFF = 0x334155;
 /** Тёмная комната: стена в полоску, плинтус, пол, тёплый отсвет от автомата и тёмные углы. */
 export function drawRoom(scene: Phaser.Scene): void {
   if (!scene.textures.exists(ROOM_TEXTURE)) bakeRoom(scene);
-  scene.add.image(-ROOM_SIDE, 0, ROOM_TEXTURE).setOrigin(0);
+  scene.add.image(0, 0, ROOM_TEXTURE).setOrigin(0);
 }
 
 /**
@@ -188,7 +194,7 @@ export function drawRoom(scene: Phaser.Scene): void {
  * поэтому запекается в обычном размере, без TEXTURE_SCALE: картинка на всю комнату, так меньше памяти.
  */
 function bakeRoom(scene: Phaser.Scene): void {
-  const machineX = CENTER_X + ROOM_SIDE; // где автомат на картинке комнаты
+  const machineX = CENTER_X; // где автомат на картинке комнаты
   const g = scene.add.graphics();
   g.fillStyle(WALL_COLOR);
   g.fillRect(0, 0, ROOM_WIDTH, FLOOR_Y);
@@ -1033,46 +1039,79 @@ function drawSignTriangles(g: Phaser.GameObjects.Graphics, bases: number[], dire
 }
 
 /**
- * Комната слева от автомата: стена и торговый автомат — одна картинка (неподвижное). Чемодан с амулетами на стене рисует AmuletCase.
- * Предметы и ценники кладут поверх части Shop.
+ * Панель магазина: фон и торговый автомат — две неподвижные картинки (запекаются один раз). Фон идёт первым:
+ * Shop вешает на него клики, чтобы они не проходили сквозь панель на рычаг, телевизор и полку.
+ * Чемодан с амулетами, барабан и кассету кладут поверх части AmuletCase, Drum и Cassette.
  */
-export function drawShopRoom(scene: Phaser.Scene, rows: number): void {
-  if (!scene.textures.exists(SHOP_ROOM_TEXTURE)) bakeShopRoom(scene, rows);
-  const { left, top } = topLeft(LEFT_ROOM);
-  scene.add.image(left, top, SHOP_ROOM_TEXTURE).setOrigin(0);
+export function drawShopPanel(scene: Phaser.Scene, rows: number): Phaser.GameObjects.Image[] {
+  if (!scene.textures.exists(SHOP_PANEL_TEXTURE)) bakeShopPanel(scene, rows);
+  const { left, top } = topLeft(SHOP_PANEL);
+  return [
+    scene.add.image(left, top, SHOP_PANEL_TEXTURE).setOrigin(0), // фон панели
+    scene.add.image(left, top, SHOP_MACHINE_TEXTURE).setOrigin(0), // торговый автомат на ней
+  ];
 }
 
-/** Комната слева — в текстуру SHOP_ROOM_TEXTURE. Координаты частей — мировые (из layout.ts), их сдвигаем к началу картинки. */
-function bakeShopRoom(scene: Phaser.Scene, rows: number): void {
-  const { left: roomLeft, top: roomTop } = topLeft(LEFT_ROOM);
-  const local = (box: Box): Box => ({ ...box, x: box.x - roomLeft, y: box.y - roomTop });
-  const g = scene.add.graphics();
-  const width = LEFT_ROOM.width;
-  g.fillStyle(WALL_COLOR);
-  g.fillRect(0, 0, width, FLOOR_Y);
-  g.fillStyle(0xffffff, 0.02); // обои в полоску, как в комнате
-  for (let x = 0; x < width; x += 48) g.fillRect(x, 0, 20, FLOOR_Y);
-  g.fillStyle(0x241a14);
-  g.fillRect(0, FLOOR_Y - 10, width, 10); // плинтус
-  g.fillStyle(FLOOR_COLOR);
-  g.fillRect(0, FLOOR_Y, width, 640 - FLOOR_Y);
+/**
+ * Панель магазина — в текстуры SHOP_PANEL_TEXTURE (фон) и SHOP_MACHINE_TEXTURE (торговый автомат).
+ * Координаты частей — мировые (из layout.ts), их сдвигаем к началу панели.
+ */
+function bakeShopPanel(scene: Phaser.Scene, rows: number): void {
+  const { left, top } = topLeft(SHOP_PANEL);
+  const width = SHOP_PANEL.width;
+  const height = SHOP_PANEL.height;
+  const local = (box: Box): Box => ({ ...box, x: box.x - left, y: box.y - top });
 
+  // Фон: стена и пол, как в комнате, только светлее от холодного отсвета торгового автомата.
+  // Он из мягких пятен — запекается в обычном размере, без TEXTURE_SCALE, как комната.
   const vending = local(VENDING);
+  const panel = scene.add.graphics();
+  panel.fillStyle(WALL_COLOR);
+  panel.fillRect(0, 0, width, FLOOR_Y);
+  panel.fillStyle(0xffffff, 0.02); // обои в полоску, как в комнате
+  for (let x = 0; x < width; x += 48) panel.fillRect(x, 0, 20, FLOOR_Y);
+  panel.fillStyle(0x241a14);
+  panel.fillRect(0, FLOOR_Y - 10, width, 10); // плинтус
+  panel.fillStyle(FLOOR_COLOR);
+  panel.fillRect(0, FLOOR_Y, width, height - FLOOR_Y);
   for (let i = 0; i < 6; i++) {
-    g.fillStyle(0x22d3ee, 0.022); // холодный отсвет от торгового автомата
-    g.fillEllipse(vending.x, vending.y, 620 - i * 80, 640 - i * 80);
+    panel.fillStyle(0x22d3ee, 0.022); // холодный отсвет от торгового автомата
+    panel.fillEllipse(vending.x, vending.y, 620 - i * 80, 640 - i * 80);
   }
   for (let i = 0; i < 5; i++) {
     const inset = i * 26; // тёмные края, как в комнате
-    g.lineStyle(52, 0x000000, 0.14);
-    g.strokeRect(inset, inset, width - 2 * inset, 640 - 2 * inset);
+    panel.lineStyle(52, 0x000000, 0.14);
+    panel.strokeRect(inset, inset, width - 2 * inset, height - 2 * inset);
   }
-  const coinSlot = { x: VENDING_COIN_SLOT.x - roomLeft, y: VENDING_COIN_SLOT.y - roomTop };
-  drawVendingMachine(g, vending, local(VENDING_GLASS), local(VENDING_BIN), coinSlot, rows, {
-    goodX: VENDING_GOOD_X - roomLeft,
-    priceX: VENDING_PRICE_X - roomLeft,
+  // Жалюзи: 8 горизонтальных ламелей поперёк панели. Шов тонкий, тень под ним сходит на нет — ламель читается выпуклой,
+  // а панель остаётся фоном: товары и ценники на ней видны.
+  for (let index = 1; index <= SHOP_SLATS; index++) {
+    const seamY = (height / SHOP_SLATS) * index;
+    panel.fillStyle(0x000000, 0.22);
+    panel.fillRect(0, seamY - 2, width, 2); // шов между ламелями
+    panel.fillStyle(0xffffff, 0.03);
+    panel.fillRect(0, seamY, width, 2); // светлая кромка под швом
+    for (let step = 0; step < SLAT_SHADE_STEPS; step++) {
+      panel.fillStyle(0x000000, SLAT_SHADE_ALPHA * (1 - step / SLAT_SHADE_STEPS)); // тень вниз, к середине ламели
+      panel.fillRect(0, seamY + 2 + step * SLAT_SHADE_STEP, width, SLAT_SHADE_STEP);
+    }
+  }
+  // Бронзовая кромка по левому краю: панель выезжает сверху, и стык с комнатой должен читаться.
+  panel.fillStyle(TRIM_COLOR);
+  panel.fillRect(0, 0, PANEL_EDGE, height);
+  panel.fillStyle(0x000000, 0.35);
+  panel.fillRect(PANEL_EDGE, 0, 2, height); // тень кромки на панели
+  panel.generateTexture(SHOP_PANEL_TEXTURE, width, height);
+  panel.destroy();
+
+  // Торговый автомат — поверх фона; он с резкими линиями, поэтому запекается крупно (TEXTURE_SCALE).
+  const machine = scene.add.graphics();
+  const coinSlot = { x: VENDING_COIN_SLOT.x - left, y: VENDING_COIN_SLOT.y - top };
+  drawVendingMachine(machine, vending, local(VENDING_GLASS), local(VENDING_BIN), coinSlot, rows, {
+    goodX: VENDING_GOOD_X - left,
+    priceX: VENDING_PRICE_X - left,
   });
-  bake(g, SHOP_ROOM_TEXTURE, width, 640);
+  bake(machine, SHOP_MACHINE_TEXTURE, width, height);
 }
 
 /** Где в ряду торгового автомата предмет и ценник (мировые x, сдвинутые к началу картинки). */

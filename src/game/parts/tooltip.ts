@@ -6,6 +6,7 @@ import { addText, GOLD_TEXT, TOOLTIP_DEPTH } from '../theme';
 const PADDING = 10; // поля внутри таблички
 const LINE_GAP = 2; // между названием и описанием
 const MIN_WIDTH = 120;
+const TEXT_WIDTH = 560; // длинное описание переносится по словам: иначе табличка выходит за край вида
 const POINTER_OFFSET = 14; // табличка отстоит от курсора вправо и вниз на столько
 const FINGER_OFFSET = 36; // палец закрывает вещь под собой — табличка выше него
 const EDGE_MARGIN = 8; // от края экрана до таблички
@@ -34,9 +35,9 @@ export class Tooltip implements Hint {
     this.scene = scene;
     this.box = scene.add.rectangle(0, 0, MIN_WIDTH, 40, 0x0b0f19, 0.95).setStrokeStyle(2, 0xb45309).setOrigin(0, 0);
     this.title = addText(scene, 0, 0, '', { fontSize: '15px', fontStyle: 'bold', color: GOLD_TEXT }).setOrigin(0.5, 0);
-    this.text = addText(scene, 0, 0, '', { fontSize: '14px', color: '#e2e8f0' }).setOrigin(0.5, 0);
+    this.text = addText(scene, 0, 0, '', { fontSize: '14px', color: '#e2e8f0', wordWrap: { width: TEXT_WIDTH } }).setOrigin(0.5, 0);
     this.container = scene.add.container(0, 0, [this.box, this.title, this.text]);
-    this.container.setScrollFactor(0, 0, true).setDepth(TOOLTIP_DEPTH).setVisible(false); // приклеена к экрану: вид поворачивается — она на месте
+    this.container.setScrollFactor(0, 0, true).setDepth(TOOLTIP_DEPTH).setVisible(false); // приклеена к экрану, а не к комнате: стоит на месте при любом виде
     scene.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
       if (this.container.visible) this.place(pointer);
     });

@@ -4,26 +4,26 @@ import { ITEMS, type RerollId } from '../items';
 import { t } from '../lang';
 import { PAYOUT_WINDOW } from '../layout';
 import { addText, GOLD_TEXT, POPUP_DEPTH } from '../theme';
+import { TAKE_BEZEL_LEFT } from './payoutWindow';
 import { attachHint, type Hint } from './tooltip';
 
 // Полоса встаёт на место окошка выплаты (layout.ts) — там, где глаз ищет итог прокрутки. Все числа — от PAYOUT_WINDOW.
 const BAND_ALPHA = 0.96; // корпус под полосой должен читаться еле-еле
 const BAND_STROKE = 2;
 const PADDING = 6; // от штриха полосы до заголовка, кнопок и ✕
-// Правее оправы кнопки «забрать» полосе делать нечего: оправа 36 px при x = 664 (646…682), мягкое свечение — с 640
-// (payoutWindow.ts). Полоса кончается на 642: 4 px до оправы и не заходит на кнопку.
-const BEZEL_LEFT = 642;
 const TITLE_ROOM = 12; // на столько полоса выше окошка выплаты: там заголовок, а ещё выше — ряд лампочек прокруток (кончается на ~501)
-const BAND_LEFT = PAYOUT_WINDOW.x - PAYOUT_WINDOW.width / 2; // 420 — левый край окошка выплаты
-const BAND_RIGHT = BEZEL_LEFT; // 642
+// Правее оправы кнопки «забрать» полосе делать нечего: полоса кончается за 4 px до неё (TAKE_BEZEL_LEFT, payoutWindow.ts),
+// чтобы кнопка оставалась видна и нажималась.
+const BAND_LEFT = PAYOUT_WINDOW.x - PAYOUT_WINDOW.width / 2; // 509 — левый край окошка выплаты
+const BAND_RIGHT = TAKE_BEZEL_LEFT; // 731 — левый край оправы кнопки «забрать» с зазором
 const BAND_TOP = PAYOUT_WINDOW.y - PAYOUT_WINDOW.height / 2 - TITLE_ROOM; // 505
 const BAND_BOTTOM = PAYOUT_WINDOW.y + PAYOUT_WINDOW.height / 2; // 587 — низ окошка выплаты
-const BAND_X = (BAND_LEFT + BAND_RIGHT) / 2; // 531
+const BAND_X = (BAND_LEFT + BAND_RIGHT) / 2; // 620
 const BAND_Y = (BAND_TOP + BAND_BOTTOM) / 2; // 546
 const BAND_WIDTH = BAND_RIGHT - BAND_LEFT; // 222
 const BAND_HEIGHT = BAND_BOTTOM - BAND_TOP; // 82
 const TITLE_STYLE = { fontSize: '15px', fontStyle: 'bold', color: GOLD_TEXT };
-const TITLE_X = BAND_X;
+const TITLE_X = BAND_X; // 620
 const TITLE_Y = BAND_TOP + PADDING; // 511: заголовок внутри полосы, от верхнего штриха ровно на отступ
 // ✕ — пропустить, предмет остаётся заряженным до следующей платной прокрутки.
 const SKIP_SIZE = 30;
@@ -33,9 +33,9 @@ const SKIP_STROKE = 0x64748b;
 // Кнопки-иконки заряженных предметов — под заголовком; ряд по центру свободного места справа от ✕.
 const BUTTON_SIZE = 44;
 const BUTTON_STEP = 54; // между центрами соседних кнопок
-const BUTTONS_X = (BAND_LEFT + PADDING + SKIP_SIZE + PADDING + (BAND_RIGHT - PADDING)) / 2; // 549
+const BUTTONS_X = (BAND_LEFT + PADDING + SKIP_SIZE + PADDING + (BAND_RIGHT - PADDING)) / 2; // 638
 const BUTTONS_Y = BAND_BOTTOM - PADDING - BUTTON_SIZE / 2; // 559: от нижнего штриха — PADDING
-const SKIP_X = BAND_LEFT + PADDING + SKIP_SIZE / 2; // 441
+const SKIP_X = BAND_LEFT + PADDING + SKIP_SIZE / 2; // 530
 const SKIP_Y = BUTTONS_Y;
 const BUTTON_IDS: RerollId[] = ['shuffle', 'swap']; // порядок кнопок в полосе
 const OPEN_TIME = 160; // полоса проявляется, мс

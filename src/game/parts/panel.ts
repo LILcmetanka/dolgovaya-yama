@@ -23,14 +23,20 @@ import {
   DISPLAY,
   GLASS,
   LEVER_MOUNT,
+  MODE_SWITCH,
   MULTIPLIER_WINDOW,
   PHASE_SIGNS_Y,
   SPIN_LAMPS_Y,
 } from '../layout';
+import { times } from '../characters';
+import { GAME_CONFIG } from '../gameConfig';
+import { t, type TextKey } from '../lang';
+import { spinMode, SPIN_MODES, type SpinMode } from '../levers';
 import { SPINS_PER_ROUND } from '../rules';
 import {
   addText,
   LAMP_GOLD,
+  LAMP_GREEN,
   LAMP_OFF,
   LAMP_RED,
   LED_COLOR,
@@ -40,6 +46,7 @@ import {
   pulse,
   RED_TEXT,
 } from '../theme';
+import { attachHint, type Hint } from './tooltip';
 
 // Лампочки прокруток под экраном: по одной на прокрутку. Сигарета добавляет лампочки — тогда они стоят теснее.
 const SPIN_LAMP_STEP = 26;
@@ -83,9 +90,22 @@ const LEVER_CALL_RADIUS = 34; // кольцо вокруг шарика, пок�
 const LEVER_CALL_GROW = 1.25; // кольцо расходится до такого размера и гаснет
 const LEVER_CALL_TIME = 900; // один «вздох» кольца, мс
 const LEVER_BALL_GROW = 0.15; // внизу шарик ближе к игроку — на столько крупнее (на каждую единицу укорочения штанги)
+// Переключатель режима прокрутки (шаг 70) у рычага: три плашки столбиком в рамке MODE_SWITCH.
+const MODE_PLATE = { width: 96, height: 30 }; // плашка режима
+const MODE_PLATE_GAP = 4; // просвет между плашками
+const MODE_PLATE_STEP = MODE_PLATE.height + MODE_PLATE_GAP; // от середины плашки до середины соседней
+const MODE_FONT_SIZE = '13px';
+const MODE_FILL = 0x1c1917; // тёмная заливка рамки и плашек — как у кнопок в настройках
+const MODE_BRONZE = 0xb45309; // бронзовая окантовка автомата
+const MODE_GRAY = 0x6b7280; // рамка невыбранной плашки — как у языка в настройках
+const MODE_ALPHA_OFF = 0.6; // невыбранная плашка бледная
+const MODE_LABEL_ALPHA_OFF = 0.7;
+const MODE_COLORS: Record<SpinMode, number> = { normal: LAMP_GOLD, risk: LAMP_RED, calm: LAMP_GREEN };
+const MODE_NAMES: Record<SpinMode, TextKey> = { normal: 'spinModeNormal', risk: 'spinModeRisk', calm: 'spinModeCalm' };
+const MODE_HINTS: Record<SpinMode, TextKey> = { normal: 'spinModeNormalWhat', risk: 'spinModeRiskWhat', calm: 'spinModeCalmWhat' };
 
-/** Число на табло: шрифт BOARD_FONT_SIZE, а длинное число — мельче, чтобы не вылезло шире maxWidth. */
-function fitBoardNumber(text: Phaser.GameObjects.Text, value: number, maxWidth: number): void {
+/** Число на табло: шрифт BOARD_FONT_SIZE, а длинное число — мельче, чтобы не вылезло шире maxWidth. Тем же набирают шапку панели магазина. */
+export function fitBoardNumber(text: Phaser.GameObjects.Text, value: number, maxWidth: number): void {
   text.setText(String(value));
   let size = BOARD_FONT_SIZE;
   text.setFontSize(size);
@@ -113,9 +133,12 @@ export class MachinePanel {
   private readonly leverBall: Phaser.GameObjects.Image; // шарик на конце штанги
   private leverCall: Phaser.GameObjects.Arc | null = null; // кольцо вокруг шарика: рычаг зовёт, пока не крутили
   private phaseSigns: Phaser.GameObjects.Text[] = []; // знаки фазы 2 под окошком множителя; в фазе 1 их нет
+  private modeFrame!: Phaser.GameObjects.Rectangle; // рамка переключателя режима прокрутки у рычага
+  private readonly modePlates = new Map<SpinMode, Phaser.GameObjects.Rectangle>(); // плашки режима прокрутки у рычага
+  private readonly modeLabels = new Map<SpinMode, Phaser.GameObjects.Text>(); // их подписи (для смены языка)
 
-  /** pullLever — что делать, когда рычаг дёрнули кликом (Пробел сцена ловит сама). */
-  constructor(scene: Phaser.Scene, pullLever: () => void) {
+  /** pullLever — что делать, когда рычаг дёрнули кликом (Пробел сцена ловит сама); chooseMode — выбрали режим прокрутки. */
+  constructor(scene: Phaser.Scene, pullLever: () => void, hint: Hint, chooseMode: (mode: SpinMode) => void) {
     this.scene = scene;
     createChipTextures(scene);
     createTicketTexture(scene);
@@ -144,6 +167,70 @@ export class MachinePanel {
       part.setInteractive({ useHandCursor: true });
       part.on('pointerdown', pullLever);
     }
+
+    // Переключатель режима прокрутки — рядом с рычагом.
+    this.addModeSwitch(hint, chooseMode);
+  }
+
+  /**
+   * Переключатель режима платной прокрутки (шаг 70): рамка на стене справа от рычага и три плашки столбиком —
+   * обычно / риск / спокойно. Выбранный режим запоминается (levers.ts) и виден сразу — showMode.
+   */
+  private addModeSwitch(hint: Hint, chooseMode: (mode: SpinMode) => void): void {
+    this.modeFrame = this.scene.add
+      .rectangle(MODE_SWITCH.x, MODE_SWITCH.y, MODE_SWITCH.width, MODE_SWITCH.height, MODE_FILL, 0.9)
+      .setStrokeStyle(2, MODE_BRONZE)
+      .setRounded(8);
+    SPIN_MODES.forEach((mode, index) => {
+      const y = MODE_SWITCH.y + (index - 1) * MODE_PLATE_STEP;
+      const plate = this.scene.add
+        .rectangle(MODE_SWITCH.x, y, MODE_PLATE.width, MODE_PLATE.height, MODE_FILL)
+        .setStrokeStyle(2, MODE_GRAY)
+        .setRounded(6);
+      plate.setInteractive({ useHandCursor: true });
+      const label = addText(this.scene, MODE_SWITCH.x, y, t(MODE_NAMES[mode]), { fontSize: MODE_FONT_SIZE, fontStyle: 'bold' }).setOrigin(0.5);
+      attachHint(
+        plate,
+        hint,
+        () => [
+          t('spinModeTitle'),
+          // Множители — готовой строкой «×1,5»: точка вместо запятой в русском тексте выглядела бы опечаткой.
+          t(MODE_HINTS[mode], t(times(GAME_CONFIG.modeSkullFactor)), t(times(GAME_CONFIG.modeWinFactor))),
+        ],
+        () => chooseMode(mode),
+      );
+      this.modePlates.set(mode, plate);
+      this.modeLabels.set(mode, label);
+    });
+    this.showMode(spinMode()); // в игру заходим с тем режимом, что выбран в прошлый раз
+  }
+
+  /**
+   * Показать или спрятать переключатель режима: банкомат Коллектора выезжает как раз на его место,
+   * и спрятанный переключатель не должен ловить клики. Выбранный режим showMode не трогает — он сохранится.
+   */
+  setModeVisible(visible: boolean): void {
+    this.modeFrame.setVisible(visible);
+    this.modeLabels.forEach((label) => label.setVisible(visible));
+    this.modePlates.forEach((plate) => {
+      plate.setVisible(visible);
+      if (visible) plate.setInteractive({ useHandCursor: true });
+      else plate.disableInteractive();
+    });
+  }
+
+  /** Выбранная плашка — в цвете режима и рамкой потолще, остальные серые и бледные. */
+  showMode(mode: SpinMode): void {
+    this.modePlates.forEach((plate, key) => {
+      const isChosen = key === mode;
+      plate.setStrokeStyle(isChosen ? 3 : 2, isChosen ? MODE_COLORS[key] : MODE_GRAY).setAlpha(isChosen ? 1 : MODE_ALPHA_OFF);
+      this.modeLabels.get(key)?.setAlpha(isChosen ? 1 : MODE_LABEL_ALPHA_OFF);
+    });
+  }
+
+  /** Сменили язык: подписи плашек режима — заново. */
+  relabel(): void {
+    this.modeLabels.forEach((label, mode) => label.setText(t(MODE_NAMES[mode])));
   }
 
   /** Ещё count лампочек прокруток в конец ряда; весь ряд снова по центру. pop — новые появляются с подскоком. */

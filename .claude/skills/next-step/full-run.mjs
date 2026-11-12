@@ -16,6 +16,7 @@ const C = await import(SRC + 'characters.ts');
 const D = await import(SRC + 'dealerGame.ts');
 const DR = await import(SRC + 'drum.ts');
 const LC = await import(SRC + 'lastChance.ts');
+const L = await import(SRC + 'levers.ts');
 
 // Сила амулетов (шаг 7: забег с этим амулетом с первого раунда) — по ней игрок покупает.
 const AMULET_POWER = { bones: 5.39, boost: 5.11, interest: 5.09, insurance: 5.02, cut: 4.88, cherryPit: 4.69, vest: 4.66, greed: 4.61, piggy: 4.43, skullPocket: 4.41, bell: 4.08 };
@@ -33,6 +34,10 @@ export const BASE_STRATEGY = {
   recSpins: 4, // 'danger' — записать, когда осталось столько прокруток или меньше, а на долг не хватает
   play: 'burn', // 'burn' — откат между прокрутками, когда черепа сожгли кон ≥ burnShare; 'none' — кассету только записывать
   burnShare: 0.5,
+  // Режим прокрутки (шаг 70): 'off' — выключено (обычные правила, прежние числа), 'risk', 'calm' | 'normal',
+  // 'calm-risk' — пока серия меньше calmTo, крутить спокойно, потом рисковать (и только пока на долг не хватает).
+  mode: 'off',
+  calmTo: 5,
 };
 
 /** Цена кассеты. old — шаг 31 (1 + закрытые долги, одна за забег). */
@@ -50,8 +55,24 @@ function newRun() {
     slots: I.START_SLOTS, shelf: new Array(I.START_SLOTS).fill(null), effects: I.noEffects(), sockets: A.START_SOCKETS,
     amulets: [], amuletCounts: {}, bones: 0, roundShields: 0, machine: C.ORDINARY, diceDrought: 0,
     isBloodNext: false, isLuckyNext: false, freeSpins: 0, phase: PH.PHASES[0], rustyColumn: null, lastGrid: null,
+    mode: 'normal', // режим следующей платной прокрутки (шаг 70): переключается в playRound — modeFor
     lastChanceUsed: false, // последний шанс один за забег (шаг 68); в снимок кассеты попадает clone-ом — откат вернёт флаг как на записи
   };
+}
+
+/**
+ * Режим следующей платной прокрутки (шаг 70). 'off' — выключено (обычные правила), 'risk' и 'calm' — прямо;
+ * 'calm-risk' — пока серия меньше calmTo, крутить спокойно (серия +1 без черепов), потом рисковать;
+ * на долг уже хватает — обычные прокрутки, рисковать незачем. 'risk-behind' — риск, только пока на долг не хватает.
+ */
+function modeFor(s, st) {
+  if (st.mode === 'calm-risk') {
+    if (s.balance >= s.debt) return 'normal';
+    return s.streak < st.calmTo ? 'calm' : 'risk';
+  }
+  if (st.mode === 'risk-behind') return s.balance >= s.debt ? 'normal' : 'risk';
+  if (st.mode === 'off') return 'normal';
+  return st.mode; // 'normal' | 'risk' | 'calm'
 }
 
 function weightOf(s, isFree) {
@@ -62,6 +83,7 @@ function weightOf(s, isFree) {
     let weight = I.boostWeight(symbol, machined, s.effects); // чеснок и бусты символов (шаг 63а)
     if (s.effects.risk && R.isSkull(symbol)) weight *= I.RISK_SKULL_FACTOR;
     if (s.effects.luckSpin && R.isSkull(symbol)) weight = 0;
+    weight = L.modeWeight(symbol, weight, isFree ? 'normal' : s.mode); // режим прокрутки (шаг 70)
     const phased = PH.phaseWeight(symbol, weight, s.phase);
     return isFree ? B.freeSpinWeight(symbol, phased) : phased;
   };
@@ -151,19 +173,30 @@ function rerollGrid(grid, s, w, g) {
 /** Одна прокрутка (обычная или бесплатная) с итогом — как RoundScene.roll + finishSpin. Вернёт, сколько сгорело. */
 function roll(s, st, g, isFree) {
   g.time += SECONDS.spin;
+  const mode = isFree ? 'normal' : s.mode; // бесплатные прокрутки идут обычными правилами (шаг 70)
+  const calm = mode === 'calm'; // спокойная прокрутка — по названию режима, а не по нулевому выигрышу
+  if (!isFree) {
+    if (mode === 'calm') g.calmSpins += 1;
+    else if (mode === 'risk') g.riskSpins += 1;
+    else g.normalSpins += 1;
+  }
   const mult = multiplier(s);
   const w = weightOf(s, isFree);
-  let grid = s.isLuckyNext ? B.luckyGrid(w) : R.spinGrid(w);
-  s.isLuckyNext = false;
-  if (s.rustyColumn !== null && s.lastGrid) { grid = C.jamGrid(grid, s.lastGrid, s.rustyColumn); s.rustyColumn = null; }
-  if (!isFree) grid = rerollGrid(grid, s, w, g); // окно перемешки и подмены: только на платной прокрутке
+  // В спокойной прокрутке клевер не тратится (выплат нет) и заевший столбец не переносится: в нём могли быть черепа и кубик.
+  let grid;
+  if (!calm && s.isLuckyNext) { grid = B.luckyGrid(w); s.isLuckyNext = false; }
+  else grid = R.spinGrid(w);
+  if (calm) s.rustyColumn = null;
+  else if (s.rustyColumn !== null && s.lastGrid) { grid = C.jamGrid(grid, s.lastGrid, s.rustyColumn); s.rustyColumn = null; }
+  // Окно перемешки и подмены: только на платной прокрутке; в спокойной выплат нет — переделывать сетку незачем.
+  if (!isFree && !calm) grid = rerollGrid(grid, s, w, g);
   const result = P.evaluateGrid(grid, { ignoreLocks: s.effects.hammer }); // молот: замки не блокируют
   const isBloody = s.isBloodNext;
-  s.isBloodNext = E.cellsOf(grid, 'blood').length > 0;
-  if (result.tickets >= R.TICKET_SCATTER) s.tickets += 1;
+  if (!calm) s.isBloodNext = E.cellsOf(grid, 'blood').length > 0; // в calm кровь следующей прокрутки не ставит
+  if (!calm && result.tickets >= R.TICKET_SCATTER) s.tickets += 1;
   let burned = 0;
   const owned = ids(s);
-  if (result.kind === 'skull') {
+  if (!calm && result.kind === 'skull') { // в calm черепов по весам нет — ветка не запускается
     s.bones += 1;
     if (s.roundShields > 0) { s.roundShields -= 1; s.streak += 1; }
     else if (s.effects.shields > 0) { s.effects.shields -= 1; s.streak += 1; }
@@ -174,36 +207,43 @@ function roll(s, st, g, isFree) {
       if (isBloody) s.balance -= E.bloodBurn(s.balance);
     }
   } else {
-    s.streak += 1;
-    if (result.kind === 'win') {
-      const win = A.amuletPatternWin(result.hits, owned);
-      const factor = A.winFactor(owned, s.bones) * (isBloody ? E.BLOOD_WIN : 1) * s.machine.winFactor * (s.effects.risk ? I.RISK_WIN_FACTOR : 1);
-      s.pot += Math.round(win * mult * factor);
-      s.spinsLeft = R.spinsAfterBonus(s.spinsLeft, A.bellSpins(result.hits, owned)); // потолок прокруток за раунд
-    } else s.pot += A.piggyCoins(mult, owned);
-    s.pot -= E.spiderBite(s.pot, E.cellsOf(grid, 'spider').length);
+    s.streak += 1; // серия растёт всегда — и в спокойной прокрутке
+    if (!calm) {
+      if (result.kind === 'win') {
+        const win = A.amuletPatternWin(result.hits, owned);
+        const factor = A.winFactor(owned, s.bones) * (isBloody ? E.BLOOD_WIN : 1) * s.machine.winFactor * (s.effects.risk ? I.RISK_WIN_FACTOR : 1) * L.winModeFactor(mode);
+        s.pot += Math.round(win * mult * factor);
+        s.spinsLeft = R.spinsAfterBonus(s.spinsLeft, A.bellSpins(result.hits, owned)); // потолок прокруток за раунд
+      } else s.pot += A.piggyCoins(mult, owned);
+      s.pot -= E.spiderBite(s.pot, E.cellsOf(grid, 'spider').length);
+    }
   }
-  const want = B.freeSpinsFor(B.countCrowns(grid)); // сколько корон дали бы без потолка
-  const free = Math.min(want, B.MAX_FREE_SPINS_PER_ROUND - g.freeSpinsGiven); // потолок за раунд
-  if (want > 0) g.crownEvents += 1;
-  if (want > free) {
-    // Потолок срезал цепочку: отдельно считаем, сколько раз это случилось без «удачи» (честная цепочка).
-    g.freeCapped += 1;
-    if (s.effects.symbolBoost.crown) g.capWithLuck += 1;
-    else g.capNoLuck += 1;
+  if (!calm) {
+    const want = B.freeSpinsFor(B.countCrowns(grid)); // сколько корон дали бы без потолка
+    const free = Math.min(want, B.MAX_FREE_SPINS_PER_ROUND - g.freeSpinsGiven); // потолок за раунд
+    if (want > 0) g.crownEvents += 1;
+    if (want > free) {
+      // Потолок срезал цепочку: отдельно считаем, сколько раз это случилось без «удачи» (честная цепочка).
+      g.freeCapped += 1;
+      if (s.effects.symbolBoost.crown) g.capWithLuck += 1;
+      else g.capNoLuck += 1;
+    }
+    if (free > 0) {
+      s.freeSpins += free; g.freeSpinsGiven += free; g.freeInRound += free;
+      g.freeMax = Math.max(g.freeMax, g.freeInRound);
+    }
+    if (B.hasClover(grid)) s.isLuckyNext = true;
+    if (B.isJackpot(result)) { s.tickets += B.JACKPOT_TICKETS; s.spinsLeft = R.spinsAfterBonus(s.spinsLeft, B.JACKPOT_SPINS); }
   }
-  if (free > 0) {
-    s.freeSpins += free; g.freeSpinsGiven += free; g.freeInRound += free;
-    g.freeMax = Math.max(g.freeMax, g.freeInRound);
-  }
-  if (B.hasClover(grid)) s.isLuckyNext = true;
-  if (B.isJackpot(result)) { s.tickets += B.JACKPOT_TICKETS; s.spinsLeft = R.spinsAfterBonus(s.spinsLeft, B.JACKPOT_SPINS); }
   s.lastGrid = grid;
   if (!(s.freeSpins > 0 || s.isLuckyNext || s.spinsLeft === 0)) s.rustyColumn = C.rustColumn(s.machine);
-  s.effects.risk = false; // риск, молот и фарт — на одну прокрутку
-  s.effects.hammer = false;
-  s.effects.luckSpin = false;
-  if (E.cellsOf(grid, 'dice').length > 0) { s.diceDrought = 0; dealer(s, st, g); } else s.diceDrought += 1;
+  // Риск, молот и фарт — на одну прокрутку; в спокойной заряды ждут обычной.
+  if (!calm) {
+    s.effects.risk = false;
+    s.effects.hammer = false;
+    s.effects.luckSpin = false;
+  }
+  if (!calm && E.cellsOf(grid, 'dice').length > 0) { s.diceDrought = 0; dealer(s, st, g); } else s.diceDrought += 1;
   return burned;
 }
 
@@ -281,6 +321,7 @@ function playRound(s, st, g, econ) {
     if (g.tape === 'blank' && shouldRecord(s, st)) record(s, g);
     beforeSpin(s, st, g);
     s.spinsLeft -= 1;
+    s.mode = modeFor(s, st); // режим платной прокрутки — после предметов и «забрать»: на табло и серии он и держится
     // Событие смены автомата (шаг 67): прокрутка уходит на сетку, выигрыша нет. Не после клевера и не на последней
     // прокрутке (spinsLeft уже уменьшен выше — 0 значит, что эта прокрутка последняя).
     if (s.freeSpins === 0 && !s.isLuckyNext && s.spinsLeft > 0 && C.machineChangeDue(s.round)) { machineChange(s, g); continue; }
@@ -305,9 +346,12 @@ function machineChange(s, g) {
   s.rustyColumn = null;
   s.streak += 1;
   // Прокрутка ушла на событие: флаги «следующей прокрутки» сгорают, как и в обычной прокрутке.
-  s.effects.risk = false;
-  s.effects.hammer = false;
-  s.effects.luckSpin = false;
+  // В спокойном режиме заряды ждут сеточной прокрутки — смена автомата их не гасит.
+  if (s.mode !== 'calm') {
+    s.effects.risk = false;
+    s.effects.hammer = false;
+    s.effects.luckSpin = false;
+  }
   g.machineChanges += 1;
 }
 
@@ -418,6 +462,7 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon(), share = LC.LAS
     lastChances: 0, survived: 0, machineChanges: 0, maxClosed: 0, collectorSamples: [],
     freeSpinsGiven: 0, freeInRound: 0, freeMax: 0, crownEvents: 0, freeCapped: 0, capWithLuck: 0, capNoLuck: 0, // потолок бесплатных прокруток за раунд
     shuffleUsed: 0, swapUsed: 0, // перемешка и подмена (шаг 63б): сколько раз применили
+    normalSpins: 0, riskSpins: 0, calmSpins: 0, // режимы прокрутки (шаг 70): сколько платных прокруток в каждом
   };
   let s = newRun();
   startRound(s, g);
@@ -469,6 +514,12 @@ export function summarizeRuns(runs) {
     crownEvents: mean((r) => r.crownEvents), freeCapped: mean((r) => r.freeCapped), freeMax: mean((r) => r.freeMax),
     capWithLuck: mean((r) => r.capWithLuck), capNoLuck: mean((r) => r.capNoLuck),
     runsCapped: runs.filter((r) => r.freeCapped > 0).length / runs.length,
+    // Режимы прокрутки (шаг 70): средние счётчики и доля спокойных среди платных.
+    normalSpins: mean((r) => r.normalSpins), riskSpins: mean((r) => r.riskSpins), calmSpins: mean((r) => r.calmSpins),
+    calmShare: mean((r) => {
+      const paid = r.normalSpins + r.riskSpins + r.calmSpins;
+      return paid > 0 ? r.calmSpins / paid : 0;
+    }),
   };
 }
 
@@ -503,11 +554,19 @@ export function study(games = 2000, share = LC.LAST_CHANCE_SHARE) {
 export function report(name, x) {
   const f = (n, d = 2) => n.toFixed(d).replace('.', ',');
   const pct = (n) => Math.round(n * 100) + '%';
-  console.log(`${name.padEnd(44)} в конце ${f(x.closed)} (мед ${x.median}), лучшее ${f(x.max)}, 1-й ${pct(x.first)}, 10+ ${pct(x.ten)}, рекорд ${x.best} | ${f(x.minutes, 1)} мин (мед ${f(x.minutesMedian, 1)}, >10 ${pct(x.over10)}) | кассет ${f(x.tapesBought)} (берут ${pct(x.bought)}), откатов ${f(x.rewinds)}, назад ${f(x.back, 1)} р., с откатом ${f(x.rewindMinutes, 1)} мин | последних шансов ${f(x.lastChances)}, выжил ${f(x.survived)}, смен ${f(x.machineChanges)} | короны ${f(x.crownEvents)}, фриспинов до ${f(x.freeMax, 1)} за раунд, потолок срезал ${f(x.freeCapped)} раз (с удачей ${f(x.capWithLuck)}, без ${f(x.capNoLuck)}; у ${pct(x.runsCapped)} забегов)`);
+  console.log(`${name.padEnd(44)} в конце ${f(x.closed)} (мед ${x.median}), лучшее ${f(x.max)}, 1-й ${pct(x.first)}, 10+ ${pct(x.ten)}, рекорд ${x.best} | ${f(x.minutes, 1)} мин (мед ${f(x.minutesMedian, 1)}, >10 ${pct(x.over10)}) | кассет ${f(x.tapesBought)} (берут ${pct(x.bought)}), откатов ${f(x.rewinds)}, назад ${f(x.back, 1)} р., с откатом ${f(x.rewindMinutes, 1)} мин | последних шансов ${f(x.lastChances)}, выжил ${f(x.survived)}, смен ${f(x.machineChanges)} | короны ${f(x.crownEvents)}, фриспинов до ${f(x.freeMax, 1)} за раунд, потолок срезал ${f(x.freeCapped)} раз (с удачей ${f(x.capWithLuck)}, без ${f(x.capNoLuck)}; у ${pct(x.runsCapped)} забегов) | режимы: обычно ${f(x.normalSpins, 0)}, риск ${f(x.riskSpins, 0)}, спокойно ${f(x.calmSpins, 0)} (${pct(x.calmShare)})`);
 }
 
 if (import.meta.filename === process.argv[1]) {
   const games = Number(process.argv[2] ?? 5000);
   report('игра как есть (кассета шага 31)', summarize(BASE_STRATEGY, games, defaultEcon()));
   report('без кассеты', summarize({ ...BASE_STRATEGY, tape: 'none' }, games, defaultEcon()));
+  // Режимы прокрутки (шаг 70): база — mode: 'off' (обычные правила, прежние числа). Дальше — спокойно до серии
+  // calmTo, потом риск; и каждая ручка по отдельности.
+  for (const calmTo of [3, 5, 7, 9]) {
+    report(`спокойно до серии ${calmTo}, потом риск`, summarize({ ...BASE_STRATEGY, mode: 'calm-risk', calmTo }, games, defaultEcon()));
+  }
+  report('только риск', summarize({ ...BASE_STRATEGY, mode: 'risk' }, games, defaultEcon()));
+  report('риск, пока не хватает на долг', summarize({ ...BASE_STRATEGY, mode: 'risk-behind' }, games, defaultEcon()));
+  report('только спокойно', summarize({ ...BASE_STRATEGY, mode: 'calm' }, games, defaultEcon()));
 }

@@ -305,7 +305,7 @@ const SOUNDS: Record<SoundName, (s: Sound, at: number) => void> = {
     s.tone(at + 0.35, 120, 0.2, 'square', 0.2, 70); // что-то упало в лоток
   },
   deny: (s, at) => s.tone(at, 140, 0.18, 'square', 0.25, 110), // «нельзя»
-  turn: (s, at) => s.noise(at, 0.5, 400, 0.15, 0.6), // поворот — шорох одежды
+  turn: (s, at) => s.noise(at, 0.5, 400, 0.15, 0.6), // жалюзи магазина едут: шорох полотна
   hand: (s, at) => {
     s.noise(at, 0.4, 250, 0.3, 0.7); // банкомат выезжает из темноты
     s.tone(at, 50, 0.6, 'sine', 0.3, 40);

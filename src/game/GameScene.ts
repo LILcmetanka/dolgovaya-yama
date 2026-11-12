@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { drawMachineBody, drawRoom } from './decor';
 import { lang, toggleLang, type Lang } from './lang';
-import { BODY, HOME_SCROLL, NOTE, ZOOM } from './layout';
+import { nextSpinMode, setSpinMode, spinMode, type SpinMode } from './levers';
+import { BODY, NOTE, ZOOM } from './layout';
 import { amuletKey, itemKey, see } from './codex';
 import { AmuletCase } from './parts/amuletCase';
 import { AmuletRack } from './parts/amuletRack';
@@ -44,7 +45,7 @@ const MUSIC_TICK = 100; // как часто музыка планирует у�
 /**
  * Единственная сцена игры «Долговая яма» — верхний слой: создаёт части автомата и разбирает клавиши.
  * Сама игра — в слоях ниже (папка scene/): BaseScene → PhaseScene → BonusScene → MachineScene → RoundScene → DealerScene → ShopScene →
- * SaveScene → CollectorScene → GameScene. Здесь же — поворот к монитору символов и обратно.
+ * SaveScene → CollectorScene → GameScene. Здесь же — открытие монитора символов и обратно.
  */
 export class GameScene extends CollectorScene {
   private corner!: CornerButtons; // значки в углу: настройки, «звук выключен», во весь экран
@@ -68,7 +69,7 @@ export class GameScene extends CollectorScene {
     this.screen = new SlotScreen(this, this.sfx);
     this.brokenScreen = new BrokenScreen(this); // поверх сетки: дыра и трещины после взрыва (KABOOM)
     this.machineBadge = new MachineBadge(this, machineBody, this.machine, this.tooltip);
-    this.panel = new MachinePanel(this, () => this.spin());
+    this.panel = new MachinePanel(this, () => this.spin(), this.tooltip, (mode) => this.chooseSpinMode(mode));
     this.payout = new PayoutWindow(this, () => this.take());
     this.itemShelf = new ItemShelf(this, this.slots, (slot) => this.useItem(slot), this.tooltip);
     // Окно перемешки и подмены — после полки: текстуры предметов уже созданы (createItemTextures в ItemShelf).
@@ -78,9 +79,9 @@ export class GameScene extends CollectorScene {
     this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
     this.chipCase = new ChipCase(this);
     this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip);
-    this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip, hasAmulets());
-    this.cassette = new Cassette(this, hasCassette() && this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip);
-    this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx, hasDrum());
+    this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip, hasAmulets(), this.shop.layer);
+    this.cassette = new Cassette(this, hasCassette() && this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip, this.shop.layer);
+    this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx, hasDrum(), this.shop.layer);
     this.dealerTable = new DealerTable(this, (dir) => this.guess(dir), () => this.stopDealing(), this.sfx);
     this.effects = new Effects(this);
     this.atmosphere = new Atmosphere(this);
@@ -89,12 +90,15 @@ export class GameScene extends CollectorScene {
     this.settingsPanel = new SettingsPanel(this, (kind, level) => this.changeVolume(kind, level), (language) => this.chooseLanguage(language));
     addRotateHint(this);
     // Первый забег — в кромешной тьме: виден только автомат в пятне света (после обучения тьмы нет).
-    this.reveal = isTutorialDone() ? null : new Reveal(this, HOME_SCROLL, BODY, NOTE);
+    this.reveal = isTutorialDone() ? null : new Reveal(this, BODY, NOTE);
     // Canvas не создался — тьмы нет: обучение считаем пройденным, иначе оно зациклится (каждый забег снова «первый»).
     if (this.reveal && !this.reveal.isActive) {
       markTutorialDone();
       this.reveal = null;
     }
+    // Тьма первого забега: переключатель режима стоит вне пятна света — его не видно, значит и не нажимать,
+    // и подсказку над тьмой не показывать. Покажется, когда тьма погаснет (BaseScene.finishTutorial).
+    if (this.reveal) this.panel.setModeVisible(false);
     this.setupKeyboard();
     this.setupSound();
     this.setupPause();
@@ -104,12 +108,12 @@ export class GameScene extends CollectorScene {
   }
 
   /**
-   * Камера: игра рисуется в Full HD, раскладка (layout.ts) увеличена в ZOOM раз, вид — прямо на автомат.
-   * Увеличение — от левого верхнего угла: тогда scrollX — левый край вида, а вещи, приклеенные к экрану
-   * (setScrollFactor(0)), стоят в координатах вида, от 0 до VIEW_WIDTH.
+   * Камера: игра рисуется в Full HD, раскладка (layout.ts) увеличена в ZOOM раз, вид — прямо на автомат и комнату.
+   * Увеличение — от левого верхнего угла: тогда весь вид — это комната от (0, 0) до (VIEW_WIDTH, VIEW_HEIGHT),
+   * а вещи, приклеенные к экрану (setScrollFactor(0)), стоят в координатах вида.
    */
   private setupCamera(): void {
-    this.cameras.main.setOrigin(0, 0).setZoom(ZOOM).setScroll(HOME_SCROLL, 0);
+    this.cameras.main.setOrigin(0, 0).setZoom(ZOOM).setScroll(0, 0);
   }
 
   /**
@@ -200,6 +204,30 @@ export class GameScene extends CollectorScene {
     if (language !== lang()) this.toggleLanguage();
   }
 
+  // ---------- Режим прокрутки (шаг 70) ----------
+
+  /** Плашка у рычага или T: режим следующей платной прокрутки. Только между прокрутками и не во тьме первого забега. */
+  private chooseSpinMode(mode: SpinMode): void {
+    if (!this.canAct()) {
+      this.sfx.play('deny');
+      return;
+    }
+    // Тьма обучения: плашки стоят вне пятна света, их не видно — режим под ней не меняем (иначе менялся бы вслепую).
+    if (this.reveal?.isActive) {
+      this.sfx.play('deny');
+      return;
+    }
+    if (mode === spinMode()) return;
+    setSpinMode(mode);
+    this.panel.showMode(mode);
+    this.sfx.play('item');
+  }
+
+  /** T: следующий режим по кругу — обычно → риск → спокойно → обычно. */
+  private cycleSpinMode(): void {
+    this.chooseSpinMode(nextSpinMode());
+  }
+
   /**
    * L или RU/EN на панели: сменить язык. Подсказки, новости и экран DEATH берут язык, когда появляются,
    * а постоянные надписи меняем сразу: «ПАУЗА», экран монитора, «ДОЛГ» на записке (она переворачивается).
@@ -213,6 +241,7 @@ export class GameScene extends CollectorScene {
     this.pauseScreen.relabel();
     this.monitor.relabel();
     this.rerollMenu.relabel(); // окно перемешки: заголовок по текущему режиму
+    this.panel.relabel(); // плашки режима прокрутки у рычага
     if (!this.isPaused) this.collector.flipNote(this.debt, this.hasEnoughForDebt());
   }
 
@@ -261,6 +290,7 @@ export class GameScene extends CollectorScene {
     this.onKey('P', () => this.togglePause(), true);
     this.onKey('M', () => this.toggleMute(), true);
     this.onKey('L', () => this.toggleLanguage(), true);
+    this.onKey('T', () => this.cycleSpinMode()); // режим следующей платной прокрутки
     this.onKey('R', () => {
       if (this.isGameOver) this.restartGame();
     });

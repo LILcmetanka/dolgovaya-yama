@@ -20,14 +20,14 @@ import {
   VCR_WINDOW,
 } from '../decor';
 import { t } from '../lang';
-import { BOARD_TICKET_X, DISPLAY, SAVE_TAPE, VCR, VCR_CRATE, VIEW_HEIGHT, VIEW_WIDTH } from '../layout';
-import { addText, CHIP_DEPTH, LAMP_GOLD, LED_COLOR, LED_STYLE, RED_TEXT, TOOLTIP_DEPTH } from '../theme';
+import { SAVE_TAPE, SHOP_HUD, SHOP_PANEL_RIGHT, VCR, VCR_CRATE, VIEW_HEIGHT, VIEW_WIDTH } from '../layout';
+import { addText, LAMP_GOLD, LED_COLOR, LED_STYLE, RED_TEXT, SHOP_FLY_DEPTH, TOOLTIP_DEPTH } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
-// Кассета на стене магазина.
+// Кассета на панели магазина.
 const PRICE_Y = SAVE_TAPE.y + 38; // ценник «билет × 2» — под кассетой
 const PRICE_ICON_SCALE = 0.6;
-const TICKETS_FLYING = 3; // купили: столько билетов летит с табло в кассету (для красоты: цена может быть любой)
+const TICKETS_FLYING = 3; // купили: столько билетов летит из шапки панели в кассету (для красоты: цена может быть любой)
 // Видеомагнитофон: купленная кассета стоит на нём над щелью.
 const TAPE_Y = VCR.y - VCR.height / 2 - TAPE_SIZE.height / 2 + 1;
 const REC_X = VCR.x + VCR_SLOT_DX; // чистая кассета стоит над щелью REC…
@@ -51,7 +51,7 @@ const NOISE_MAX_HEIGHT = 26;
 const NOISE_ALPHA = 0.18;
 const REWIND_SHAKE = 0.004; // вид мелко трясётся, пока плёнка перематывается
 // Анимации, мс.
-const PAY_FLY_TIME = 450; // билеты летят с табло в кассету
+const PAY_FLY_TIME = 450; // билеты летят из шапки панели в кассету
 const PAY_STAGGER = 90;
 const LEAVE_TIME = 500; // купленная кассета уезжает к видеомагнитофону
 const REC_BLINK_TIME = 250; // запись: лампочка мигает
@@ -75,7 +75,7 @@ const NOISE_PASS_TIME = 500; // полоса помех проходит вид 
 const PLAY_TIME = 1600; // после отката «▶» горит столько, потом тает
 
 /**
- * Кассета (шаг 45). В магазине она висит на стене над кнопкой «назад», под ней цена в билетах:
+ * Кассета (шаг 45). В магазине она висит на панели над кнопкой «назад», под ней цена в билетах:
  * клик (или 9 — её ловит сцена) — купить, при наведении — подсказка. Купили — кассета уезжает к видеомагнитофону
  * (он стоит на ящике у монитора) и ложится в отделение REC (слева). Клик (или 9) — она записывает забег: мигает лампочка записи,
  * катушки крутятся, кассета переезжает в отделение PLAY (справа). Записанная светится, когда её можно вставить: клик (или 9) —
@@ -84,7 +84,7 @@ const PLAY_TIME = 1600; // после отката «▶» горит столь
  */
 export class Cassette {
   private readonly scene: Phaser.Scene;
-  private readonly shopTape: Phaser.GameObjects.Image[]; // кассета на стене магазина и её катушки
+  private readonly shopTape: Phaser.GameObjects.Image[]; // кассета на панели магазина и её катушки
   private readonly priceIcon: Phaser.GameObjects.Image; // ценник: билет…
   private readonly priceText: Phaser.GameObjects.Text; // …и «× 2»
   private readonly glow: Phaser.GameObjects.Rectangle; // свечение кассеты на видеомагнитофоне: её можно вставить
@@ -99,8 +99,8 @@ export class Cassette {
   private isUsable = false; // кассетой можно воспользоваться (записать или вставить) — она светится
   private wantsUsable = false; // что просила сцена, пока кассета переезжала
 
-  /** isForSale — кассету сейчас продают (после отката её съел автомат — снова продают); buy — кликнули по ней в магазине, use — по видеомагнитофону с ней. */
-  constructor(scene: Phaser.Scene, isForSale: boolean, buy: () => void, use: () => void, hint: Hint) {
+  /** isForSale — кассету сейчас продают (после отката её съел автомат — снова продают); buy — кликнули по ней в магазине, use — по видеомагнитофону с ней; layer — слой магазина: кассета с ценником на панели. */
+  constructor(scene: Phaser.Scene, isForSale: boolean, buy: () => void, use: () => void, hint: Hint, layer: Phaser.GameObjects.Container) {
     this.scene = scene;
     createTapeTextures(scene);
     createTicketTexture(scene);
@@ -108,13 +108,14 @@ export class Cassette {
     createCrateTexture(scene, VCR_CRATE.width, VCR_CRATE.height);
     createRewindTextures(scene);
 
-    // Кассета на стене магазина, под ней ценник.
+    // Кассета на панели магазина, под ней ценник.
     const tape = scene.add.image(SAVE_TAPE.x, SAVE_TAPE.y, TAPE_TEXTURE);
     tape.setInteractive({ useHandCursor: true });
     attachHint(tape, hint, () => [t('tape'), t('tapeWhat')], buy);
     this.shopTape = [tape, ...this.addReels(SAVE_TAPE.x, SAVE_TAPE.y)];
     this.priceIcon = scene.add.image(SAVE_TAPE.x - 18, PRICE_Y, TICKET_TEXTURE).setScale(PRICE_ICON_SCALE);
     this.priceText = addText(scene, SAVE_TAPE.x - 6, PRICE_Y, '', { ...LED_STYLE, fontSize: '16px' }).setOrigin(0, 0.5);
+    layer.add([...this.shopTape, this.priceIcon, this.priceText]); // кассета магазина — на панели
     if (!isForSale) this.hideShopTape();
 
     // Ящик и видеомагнитофон на нём. Кассета создаётся раньше корпуса: вставленная, она уходит за его лицевую панель.
@@ -175,11 +176,11 @@ export class Cassette {
     this.shake([this.priceText], [SAVE_TAPE.x - 6]);
   }
 
-  /** Кассету купили: билеты летят с табло в неё, она уезжает вправо — к видеомагнитофону у монитора — и ложится на него. */
+  /** Кассету купили: из шапки панели в неё летят билеты, она уезжает вправо — за кромку панели, к видеомагнитофону у монитора — и ложится на него. */
   sell(): void {
     const [tape] = this.shopTape;
     for (let index = 0; index < TICKETS_FLYING; index++) {
-      const ticket = this.scene.add.image(BOARD_TICKET_X, DISPLAY.y, TICKET_TEXTURE).setDepth(CHIP_DEPTH);
+      const ticket = this.scene.add.image(SHOP_HUD.ticketX, SHOP_HUD.y, TICKET_TEXTURE).setDepth(SHOP_FLY_DEPTH);
       this.scene.tweens.add({
         targets: ticket,
         x: tape.x,
@@ -195,7 +196,7 @@ export class Cassette {
     for (const part of [this.priceIcon, this.priceText]) part.setVisible(false);
     this.scene.tweens.add({
       targets: this.shopTape,
-      x: `+=${VIEW_WIDTH}`, // за край вида — туда, где стоит видеомагнитофон
+      x: `+=${SHOP_PANEL_RIGHT + TAPE_SIZE.width / 2 - tape.x}`, // за правую кромку панели: кассета уходит вместе с жалюзи, а не сквозь товары
       alpha: 0,
       delay: TICKETS_FLYING * PAY_STAGGER + PAY_FLY_TIME,
       duration: LEAVE_TIME,

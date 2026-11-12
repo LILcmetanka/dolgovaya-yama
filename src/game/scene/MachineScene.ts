@@ -20,11 +20,19 @@ export abstract class MachineScene extends BonusScene {
     this.lastGrid = null;
   }
 
-  /** Сетка прокрутки: заржавевший столбец не крутится — в нём остаются символы прошлой прокрутки. */
-  protected rollGrid(weightOf: WeightOf): Grid {
-    const grid = super.rollGrid(weightOf);
+  /**
+   * Сетка прокрутки: заржавевший столбец не крутится — в нём остаются символы прошлой прокрутки.
+   * canJam = false — спокойная прокрутка: в ней не может быть черепов и кубика, а в заевшем столбце они как раз
+   * и остались бы. Ржавчина в этот ход не заедает — столбец крутится вместе со всеми.
+   */
+  protected rollGrid(weightOf: WeightOf, canUseLuck = true, canJam = true): Grid {
+    const grid = super.rollGrid(weightOf, canUseLuck);
     const column = this.rustyColumn;
     if (column === null || !this.lastGrid) return grid;
+    if (!canJam) {
+      this.clearRust(); // символы прошлой сетки в спокойную прокрутку не пускаем (черепа сожгли бы кон)
+      return grid;
+    }
     this.rustyColumn = null;
     return jamGrid(grid, this.lastGrid, column);
   }

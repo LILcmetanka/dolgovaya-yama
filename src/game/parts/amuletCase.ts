@@ -18,12 +18,10 @@ import {
   AMULET_CASE_PRICE_Y,
   AMULET_SIZE,
   amuletCaseX,
-  BOARD_CHIP_X,
-  BOARD_TICKET_X,
-  DISPLAY,
   SOCKET_RADIUS,
+  SHOP_HUD,
 } from '../layout';
-import { addText, CHIP_DEPTH, LED_COLOR, LED_STYLE, RED_TEXT } from '../theme';
+import { addText, LED_COLOR, LED_STYLE, RED_TEXT, SHOP_FLY_DEPTH } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
 /** Места в витрине: сначала амулеты, потом билет за фишки и гнездо за билеты. */
@@ -32,15 +30,13 @@ export const SOCKET_PLACE = AMULET_OFFER_SIZE + 1;
 // Размеры: амулет и билет в витрине крупнее, чем в гнезде и на табло.
 const GOOD_SCALES = { amulet: 1.35, ticket: 1.5, socket: 1.15 };
 const PRICE_ICON_SCALE = 0.6;
+const PRICE_TEXT_DX = -6; // «× 2» — правее значка ценника
 const DIM_ALPHA = 0.4; // амулет некуда поставить — он тусклый
 // Анимации, мс.
-const PAY_FLY_TIME = 400; // билеты или фишки летят с табло в витрину
+const PAY_FLY_TIME = 400; // билеты или фишки летят из шапки панели в витрину
 const PAY_STAGGER = 70;
 const SHAKE_TIME = 50; // один рывок тряски «не хватает»
-// Чемодан: выезжает сверху, крышка откидывается, вещи появляются по одной.
-const SLIDE_FROM = 260; // с какой высоты выезжает
-const SLIDE_DELAY = 350; // ждёт, пока вид повернётся к магазину
-const SLIDE_TIME = 450;
+// Чемодан приезжает и уезжает вместе с панелью; здесь — только крышка и вещи.
 const LID_TIME = 350; // крышка открывается
 const POP_TIME = 220;
 const POP_STAGGER = 90;
@@ -66,19 +62,20 @@ function paysWithChips(place: number): boolean {
 }
 
 /**
- * Чемодан с амулетами на стене над торговым автоматом: 2 амулета, билет и гнездо.
- * При входе в магазин он выезжает сверху закрытым, крышка откидывается, вещи появляются по одной.
+ * Чемодан с амулетами на панели магазина над торговым автоматом: 2 амулета, билет и гнездо.
+ * При входе в магазин панель привозит его сверху закрытым, крышка откидывается, вещи появляются по одной.
  * Клик по месту (или клавиша с номером, её ловит сцена) — купить, когда чемодан открыт. При наведении — подсказка.
  */
 export class AmuletCase {
   private readonly scene: Phaser.Scene;
+  private readonly layer: Phaser.GameObjects.Container; // слой магазина: чемодан и вещи на нём
   private readonly goods: Phaser.GameObjects.Image[] = []; // что лежит на месте
   private readonly priceIcons: Phaser.GameObjects.Image[] = []; // ценник: билет или фишка…
   private readonly priceTexts: Phaser.GameObjects.Text[] = []; // …и «× 2»
   private prices: (number | null)[] = []; // цена места; null — место пустое
   private amulets: (Amulet | null)[] = []; // какой амулет на каком месте
   private readonly suitcase: Phaser.GameObjects.Container; // корпус и обе крышки — выезжают вместе
-  private readonly lidFront: Phaser.GameObjects.Container; // закрытая крышка: закрывает вещи
+  private readonly lidFront: Phaser.GameObjects.Container; // закрытая крышка: лежит на корпусе; вещи и ценники — соседи чемодана в слое панели и рисуются поверх неё (их прячут явно)
   private readonly lidBack: Phaser.GameObjects.Container; // откинутая крышка: стоит над чемоданом
   private open = false; // крышка откинута, вещи на местах — можно покупать
   private readonly isAvailable: boolean; // амулеты открыты (со второго забега); нет — чемодан спрятан и не работает
@@ -88,9 +85,10 @@ export class AmuletCase {
     return this.open;
   }
 
-  /** buy(place) — кликнули по месту витрины. */
-  constructor(scene: Phaser.Scene, buy: (place: number) => void, hint: Hint, isAvailable: boolean) {
+  /** buy(place) — кликнули по месту витрины; layer — слой магазина, куда кладётся чемодан и его вещи. */
+  constructor(scene: Phaser.Scene, buy: (place: number) => void, hint: Hint, isAvailable: boolean, layer: Phaser.GameObjects.Container) {
     this.scene = scene;
+    this.layer = layer;
     this.isAvailable = isAvailable;
     createChipTextures(scene);
     createTicketTexture(scene);
@@ -107,8 +105,11 @@ export class AmuletCase {
       attachHint(good, hint, () => (this.open ? this.hintFor(place) : null), () => buy(place));
       this.goods.push(good);
       const icon = paysWithChips(place) ? CHIP_TEXTURE : TICKET_TEXTURE;
-      this.priceIcons.push(scene.add.image(x - 18, AMULET_CASE_PRICE_Y, icon).setScale(PRICE_ICON_SCALE).setDepth(GOODS_DEPTH).setVisible(false));
-      this.priceTexts.push(addText(scene, x - 6, AMULET_CASE_PRICE_Y, '', { ...LED_STYLE, fontSize: '16px' }).setOrigin(0, 0.5).setDepth(GOODS_DEPTH));
+      const priceIcon = scene.add.image(x - 18, AMULET_CASE_PRICE_Y, icon).setScale(PRICE_ICON_SCALE).setDepth(GOODS_DEPTH).setVisible(false);
+      this.priceIcons.push(priceIcon);
+      const priceText = addText(scene, x + PRICE_TEXT_DX, AMULET_CASE_PRICE_Y, '', { ...LED_STYLE, fontSize: '16px' }).setOrigin(0, 0.5).setDepth(GOODS_DEPTH);
+      this.priceTexts.push(priceText);
+      this.layer.add([good, priceIcon, priceText]);
     }
     if (!isAvailable) this.hideAll();
   }
@@ -169,6 +170,7 @@ export class AmuletCase {
     const suitcase = scene.add.container(0, 0, [lidBack, body]);
     suitcase.setDepth(BODY_DEPTH);
     suitcase.add(lidFront); // едет вместе с корпусом, закрытая крышка рисуется поверх корпуса
+    this.layer.add(suitcase); // чемодан — на панели магазина: уезжает и приезжает вместе с ней
     return { suitcase, lidFront, lidBack };
   }
 
@@ -195,6 +197,28 @@ export class AmuletCase {
     return amulet ? [t(amulet.name), t(amulet.description)] : null;
   }
 
+  /**
+   * Панель поехала: чемодан пуст и закрыт — вещи и ценники прошлого захода убираются сразу, чтобы на съезде не мелькал
+   * старый магазин, а крышка не мигала туда-сюда. Наполняет его fill, когда панель уже встала.
+   */
+  clear(): void {
+    this.open = false;
+    this.amulets = [];
+    this.prices = new Array<number | null>(AMULET_CASE_PLACES).fill(null);
+    for (const target of [this.suitcase, this.lidFront, this.lidBack, ...this.goods, ...this.priceIcons, ...this.priceTexts]) {
+      this.scene.tweens.killTweensOf(target);
+    }
+    this.suitcase.setY(0); // чемодан на своём месте на панели
+    this.lidFront.setScale(1, 1);
+    this.lidBack.setScale(1, 0);
+    for (let place = 0; place < AMULET_CASE_PLACES; place++) {
+      this.goods[place].setVisible(false);
+      this.priceIcons[place].setVisible(false);
+      // Ценник могли поймать посреди тряски deny — возвращаем его на место, иначе он встанет не там.
+      this.priceTexts[place].setX(amuletCaseX(place, AMULET_CASE_PLACES) + PRICE_TEXT_DX).setText('').setVisible(false);
+    }
+  }
+
   /** Разложить товар. Амулетов может быть меньше мест — тогда место пустое. */
   fill(stock: CaseStock): void {
     if (!this.isAvailable) return; // амулетов ещё нет — чемодан не открываем
@@ -211,24 +235,14 @@ export class AmuletCase {
     this.playOpening();
   }
 
-  /** Чемодан выезжает закрытым, крышка откидывается, вещи появляются по одной — потом можно покупать. */
+  /** Панель привезла чемодан закрытым: крышка откидывается, вещи появляются по одной — потом можно покупать. */
   private playOpening(): void {
     const tweens = this.scene.tweens;
-    for (const target of [this.suitcase, this.lidFront, this.lidBack, ...this.goods]) tweens.killTweensOf(target);
-    this.suitcase.setY(-SLIDE_FROM);
+    for (const target of [this.lidFront, this.lidBack, ...this.goods]) tweens.killTweensOf(target);
     this.lidFront.setScale(1, 1);
     this.lidBack.setScale(1, 0);
-    tweens.add({
-      targets: this.suitcase,
-      y: 0,
-      delay: SLIDE_DELAY,
-      duration: SLIDE_TIME,
-      ease: 'Back.easeOut',
-      onComplete: () => {
-        tweens.add({ targets: this.lidFront, scaleY: 0, duration: LID_TIME, ease: 'Sine.easeInOut' });
-        tweens.add({ targets: this.lidBack, scaleY: 1, duration: LID_TIME, ease: 'Sine.easeInOut', onComplete: () => this.popGoods() });
-      },
-    });
+    tweens.add({ targets: this.lidFront, scaleY: 0, duration: LID_TIME, ease: 'Sine.easeInOut' });
+    tweens.add({ targets: this.lidBack, scaleY: 1, duration: LID_TIME, ease: 'Sine.easeInOut', onComplete: () => this.popGoods() });
   }
 
   /** Вещи и ценники появляются по одной, пустые места пропускаем. */
@@ -279,15 +293,15 @@ export class AmuletCase {
     });
   }
 
-  /** Купили место place: с табло в витрину летят билеты (или фишки — за билет), товар исчезает — landed(x, y) с его места. */
+  /** Купили место place: из шапки панели в витрину летят билеты (или фишки — за билет), товар исчезает — landed(x, y) с его места. */
   sell(place: number, landed: (x: number, y: number) => void): void {
     const good = this.goods[place];
     const { x, y } = good;
-    const fromX = paysWithChips(place) ? BOARD_CHIP_X : BOARD_TICKET_X;
+    const fromX = paysWithChips(place) ? SHOP_HUD.chipX : SHOP_HUD.ticketX;
     const texture = paysWithChips(place) ? CHIP_TEXTURE : TICKET_TEXTURE;
     const count = 3; // для красоты: цена может быть любой
     for (let index = 0; index < count; index++) {
-      const coin = this.scene.add.image(fromX, DISPLAY.y, texture).setDepth(CHIP_DEPTH);
+      const coin = this.scene.add.image(fromX, SHOP_HUD.y, texture).setDepth(SHOP_FLY_DEPTH);
       this.scene.tweens.add({
         targets: coin,
         x,
@@ -312,7 +326,7 @@ export class AmuletCase {
   /** Не хватает: ценник места трясётся. */
   deny(place: number): void {
     const text = this.priceTexts[place];
-    const homeX = amuletCaseX(place, AMULET_CASE_PLACES) - 6;
+    const homeX = amuletCaseX(place, AMULET_CASE_PLACES) + PRICE_TEXT_DX;
     this.scene.tweens.killTweensOf(text);
     text.setX(homeX);
     this.scene.tweens.add({ targets: text, x: homeX + 6, duration: SHAKE_TIME, yoyo: true, repeat: 2, onComplete: () => text.setX(homeX) });

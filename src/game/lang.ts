@@ -48,8 +48,25 @@ const TEXTS = {
     en: 'Goal. Pay the debt before you run out of spins. The debt grows every round.\n\nSpin the machine: patterns of matching symbols add chips to the pot. Each spin in a row raises the pot multiplier. A skull burns the pot until you take it.\n\nTake: the pot goes to the board, the multiplier resets.\n\nEnough chips for the debt: hand it to the note or the Collector\'s ATM, then the shop. Not enough: GOOD LUCK on the screen and the machine spins by itself — take the pot once it reaches the goal. Reach it and the debt is paid, your chips stay, the score goes one debt back; miss it and the run is over.',
   },
   howToKeys: {
-    ru: 'Клавиши\nПробел: крутить, назад из магазина\nEnter: забрать кон, отдать долг\nD: отдать долг раньше\n1–8: предмет с полки\n→ или клик: этот экран\nEsc или P: пауза\nM: звук\nL: язык\n\nВ магазине\n1–4: торговый автомат\n5–8: чемодан с амулетами\n9: кассета, 0: барабан',
-    en: 'Keys\nSpace: spin, leave the shop\nEnter: take the pot, pay the debt\nD: pay the debt early\n1–8: shelf item\n→ or click: this screen\nEsc or P: pause\nM: sound\nL: language\n\nIn the shop\n1–4: vending machine\n5–8: amulet suitcase\n9: tape, 0: drum',
+    ru: 'Клавиши\nПробел: крутить, назад из магазина\nEnter: забрать кон, отдать долг\nD: отдать долг раньше\n1–8: предмет с полки\n→ или клик: этот экран\nEsc или P: пауза\nM: звук\nL: язык\nT: режим прокрутки\n\nВ магазине\n1–4: торговый автомат\n5–8: чемодан с амулетами\n9: кассета, 0: барабан',
+    en: 'Keys\nSpace: spin, leave the shop\nEnter: take the pot, pay the debt\nD: pay the debt early\n1–8: shelf item\n→ or click: this screen\nEsc or P: pause\nM: sound\nL: language\nT: spin mode\n\nIn the shop\n1–4: vending machine\n5–8: amulet suitcase\n9: tape, 0: drum',
+  },
+  // Переключатель режима прокрутки у рычага (шаг 70): три плашки.
+  spinModeTitle: { ru: 'Режим прокрутки', en: 'Spin mode' },
+  spinModeNormal: { ru: 'ОБЫЧНО', en: 'NORMAL' },
+  spinModeRisk: { ru: 'РИСК', en: 'RISK' },
+  spinModeCalm: { ru: 'СПОКОЙНО', en: 'CALM' },
+  spinModeNormalWhat: {
+    ru: 'Обычная прокрутка: черепа и выигрыш как есть. Бесплатные прокрутки, смена автомата и последний шанс — по обычным правилам',
+    en: 'Normal spin: skulls and winnings as usual. Free spins, machine change and last chance follow the usual rules',
+  },
+  spinModeRiskWhat: {
+    ru: 'Черепов {0} чаще, выигрыш {1}. Складывается с предметом «Риск». Бесплатные прокрутки, смена автомата и последний шанс — по обычным правилам',
+    en: 'Skulls {0} as often, winnings {1}. Stacks with the "Risk" item. Free spins, machine change and last chance follow the usual rules',
+  },
+  spinModeCalmWhat: {
+    ru: 'Черепов и выигрыша нет — только серия +1. Заряженные предметы и смена автомата их не тратят. Заевший столбец спокойная прокрутка не переносит. Бесплатные прокрутки и последний шанс — по обычным правилам',
+    en: 'No skulls and no winnings — only the streak +1. Charged items and a machine change do not spend them. A calm spin does not carry the jammed column over. Free spins and last chance follow the usual rules',
   },
   closedSlot: { ru: 'Закрытое место', en: 'Locked slot' },
   closedSlotHow: { ru: 'Открывается за фишки в магазине', en: 'Opens for chips in the shop' },

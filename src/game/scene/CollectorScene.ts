@@ -14,7 +14,7 @@ const KABOOM_SHAKE = 0.03;
 const LAST_CHANCE_TENSION = 1; // в последнем шансе сердце в музыке бьётся быстрее всего
 
 /**
- * Слой Коллектора: в конце раунда вид поворачивается. Хватает фишек — из темноты выезжает банкомат, отдаёшь долг, получаешь купон
+ * Слой Коллектора: в конце раунда к автомату приходит Коллектор. Хватает фишек — из темноты выезжает банкомат, отдаёшь долг, получаешь купон
  * (билет), дальше магазин. Не хватает — на экране банкомата GOOD LUCK, и автомат сходит с ума: сам крутит LAST_CHANCE_SPINS прокруток,
  * кон копится, у игрока одна кнопка «забрать». Забрал не меньше доли нехватки (lastChance.ts) — выжил: выезжает чемодан с фишками,
  * долг оплачен, фишки целы, билета нет, а счёт откатывается на один долг назад. Не добрал — автомат говорит KABOOM и взрывается:
@@ -54,9 +54,13 @@ export abstract class CollectorScene extends SaveScene {
    */
   private reachOut(isPaidEarly: boolean): void {
     const enough = this.hasEnoughForDebt();
+    this.tooltip.hide(); // подсказка плашки режима не должна висеть над выехавшим банкоматом
+    this.panel.setModeVisible(false); // банкомат встаёт на место переключателя: пока он выехал, режим не выбрать
     this.sfx.play('hand'); // банкомат выезжает
     this.collector.reachOut(this.debt, enough, () => {
       if (!enough) {
+        // Банкомат уехал после GOOD LUCK — переключатель снова виден (в последнем шансе режим всё равно не выбрать).
+        this.panel.setModeVisible(true);
         if (this.lastChanceUsed) this.kaboom();
         else this.startLastChance();
         return;
@@ -85,7 +89,10 @@ export abstract class CollectorScene extends SaveScene {
     this.sfx.play('payment');
     this.collector.takePayment(
       (x, y) => this.panel.flyTickets(TICKETS_PER_DEBT, x, y),
-      () => this.openShop(),
+      () => {
+        this.panel.setModeVisible(true); // банкомат уехал — переключатель режима снова на месте
+        this.openShop();
+      },
     );
   }
 

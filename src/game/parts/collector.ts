@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { createChipTextures, createNoteGlowTexture, drawNoteTexture, NOTE_GLOW_TEXTURE, NOTE_TEXTURE } from '../decor';
 import { t } from '../lang';
 import { Atm } from './atm';
-import { CENTER_X, CENTER_Y, HOME_SCROLL, NOTE, NOTE_ANGLE, SCREEN, VIEW_WIDTH } from '../layout';
+import { CENTER_X, CENTER_Y, NOTE, NOTE_ANGLE, SCREEN, VIEW_WIDTH } from '../layout';
 import { GOOD_LUCK_TIME } from '../lastChance';
 import { addText, GAME_OVER_DEPTH, GOLD_TEXT, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT } from '../theme';
 
@@ -223,13 +223,12 @@ export class Collector {
     return [screen, title];
   }
 
-  /** Конец забега: экран трясётся и гаснет. В темноте вид возвращается — dark(), потом экран загорается. */
+  /** Конец забега: камера трясётся и гаснет. В темноте — dark() (экран DEATH), потом экран загорается. */
   blackout(dark: () => void): void {
     const camera = this.scene.cameras.main;
     camera.shake(300, 0.01);
     camera.fadeOut(BLACKOUT_TIME, 0, 0, 0);
     camera.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      camera.setScroll(HOME_SCROLL, 0); // вид снова на автомате
       this.atm.hide();
       dark();
       camera.fadeIn(BLACKOUT_TIME);

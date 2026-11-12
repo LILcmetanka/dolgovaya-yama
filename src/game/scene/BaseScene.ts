@@ -105,7 +105,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isSpinning = false; // сетка крутится — ввод игнорируется
   protected isRerolling = false; // окно перемешки и подмены открыто: сетку ещё не посчитали, кроме выбора ничего нельзя
   protected isRoundOver = false; // прокрутки кончились — расплата и магазин, крутить и забирать нельзя
-  protected isShopping = false; // вид повёрнут к магазину — можно покупать (пока крутится барабан — нельзя)
+  protected isShopping = false; // панель магазина опущена — можно покупать (пока крутится барабан — нельзя)
   protected isAwaitingPayment = false; // банкомат выехал и фишек хватает — ждём «отдать» (клик по банкомату или Enter)
   protected isDealing = false; // идёт игра Дилера «больше или меньше» — крутить и забирать нельзя
   protected isLastChance = false; // фишек не хватило: автомат крутит сам, у игрока одна кнопка «забрать»
@@ -128,7 +128,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected itemShelf!: ItemShelf; // полка с предметами и включённые предметы у экрана
   protected rerollMenu!: RerollMenu; // окно перемешки и подмены на месте окошка выплаты
   protected amuletRack!: AmuletRack; // гнёзда с амулетами на верхушке корпуса
-  protected shop!: Shop; // комната слева и торговый автомат
+  protected shop!: Shop; // панель магазина: жалюзи с торговым автоматом, витриной амулетов, барабаном и кассетой
   protected cassette!: Cassette; // кассета в магазине и видеомагнитофон у монитора
   protected amuletCase!: AmuletCase; // чемодан с амулетами над торговым автоматом
   protected drum!: Drum; // «барабан» в магазине: колесо с призами за фишки
@@ -194,6 +194,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected refreshHud(): void {
     this.panel.showBalance(this.balance);
     this.panel.showTickets(this.tickets);
+    this.shop.showMoney(this.balance, this.tickets); // та же пара чисел — на табло панели магазина
     this.panel.showMultiplier(this.multiplier());
     this.panel.showSpinsLeft(this.spinsLeft);
     this.panel.showFreeSpins(this.freeSpins);
@@ -303,6 +304,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.reveal = null;
     markTutorialDone(); // сразу: сцена может перезапуститься посреди фейда
     reveal.finish();
+    this.panel.setModeVisible(true); // тьма погасла — переключатель режима снова виден и нажимается
   }
 
   /** Счёт — сколько долгов закрыто. */

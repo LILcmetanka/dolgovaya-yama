@@ -1,10 +1,10 @@
 import Phaser from 'phaser';
 import { createAtmosphereTextures, DUST_TEXTURE, SCANLINES_TEXTURE, VIGNETTE_TEXTURE } from '../decor';
-import { ROOM_SIDE, SCREEN, VIEW_CENTER_X, VIEW_WIDTH } from '../layout';
+import { SCREEN, VIEW_CENTER_X, VIEW_WIDTH } from '../layout';
 
 // Пыль в свете лампы.
 const DUST_COUNT = 18;
-const DUST_AREA = { left: -360 - ROOM_SIDE, right: 960 + ROOM_SIDE, top: 80, bottom: 600 }; // по всей комнате, и слева у магазина
+const DUST_AREA = { left: 0, right: VIEW_WIDTH, top: 80, bottom: 600 }; // по всей комнате: камера стоит на месте, вид — от 0 до VIEW_WIDTH
 const DUST_RISE = { min: 40, max: 90 }; // на столько px пылинка поднимается за свой полёт
 const DUST_TIME = { min: 6000, max: 11000 }; // столько летит, мс
 // Мигание света: свет на миг гаснет.

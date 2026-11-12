@@ -35,16 +35,16 @@ export class Reveal {
   private noteOpen = 0; // 0…1 — насколько оно открылось
   private isFading = false; // тьма уже гаснет: второй раз твин не запускаем
 
-  constructor(scene: Phaser.Scene, homeScroll: number, machine: Box, note: Box) {
+  constructor(scene: Phaser.Scene, machine: Box, note: Box) {
     this.scene = scene;
     this.machine = {
-      x: machine.x - homeScroll,
+      x: machine.x,
       y: machine.y,
       rx: machine.width / 2 + MACHINE_GLOW_PAD,
       ry: machine.height / 2 + MACHINE_GLOW_PAD,
     };
     this.note = {
-      x: note.x - homeScroll,
+      x: note.x,
       y: note.y,
       rx: note.width / 2 + NOTE_GLOW_EXTRA,
       ry: note.height / 2 + NOTE_GLOW_EXTRA,

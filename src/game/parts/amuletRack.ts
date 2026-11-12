@@ -8,6 +8,7 @@ import { attachHint, type Hint } from './tooltip';
 
 // Анимации, мс.
 const FLY_TIME = 550; // купленный амулет летит из витрины в гнездо
+const FLY_FADE = 200; // и гаснет, пройдя к гнезду столько px: гнездо за панелью — амулет уходит за жалюзи, а не летит через витрину
 const CAP_POP_TIME = 500; // заглушка слетает с купленного гнезда
 const TRIGGER_TIME = 140; // амулет сработал: подпрыгивает
 const TRIGGER_SCALE = 1.35;
@@ -101,26 +102,19 @@ export class AmuletRack {
     });
   }
 
-  /** Купили новый амулет: он летит из (fromX, fromY) в свободное гнездо index и там встаёт. count — сколько копий стало. */
+  /**
+   * Купили новый амулет: он летит из (fromX, fromY) в свободное гнездо index и там встаёт. count — сколько копий стало.
+   * Гнездо за панелью магазина: амулет гаснет, не долетая, будто уходит за жалюзи.
+   */
   putAmulet(index: number, amulet: Amulet, count: number, fromX: number, fromY: number): void {
     const badge = this.badges[index];
     if (!badge) return; // гнезда с таким номером нет — ставить некуда
     this.amulets[index] = amulet;
     this.counts[amulet.id] = count;
-    const flying = this.scene.add.image(fromX, fromY, amuletTexture(amulet)).setScale(1.4).setDepth(POPUP_DEPTH);
-    this.scene.tweens.add({
-      targets: flying,
-      x: badge.x,
-      y: badge.y,
-      scale: 1,
-      duration: FLY_TIME,
-      ease: 'Cubic.easeInOut',
-      onComplete: () => {
-        flying.destroy();
-        badge.setTexture(amuletTexture(amulet)).setVisible(true);
-        this.refreshCopies();
-        this.bounce(badge);
-      },
+    this.flyToBadge(badge, amuletTexture(amulet), fromX, fromY, () => {
+      badge.setTexture(amuletTexture(amulet)).setVisible(true);
+      this.refreshCopies();
+      this.bounce(badge);
     });
   }
 
@@ -129,18 +123,31 @@ export class AmuletRack {
     const badge = this.badges[index];
     if (!badge) return; // гнезда с таким номером нет — лететь некуда
     this.counts[amulet.id] = count;
-    const flying = this.scene.add.image(fromX, fromY, amuletTexture(amulet)).setScale(1.4).setDepth(POPUP_DEPTH);
+    this.flyToBadge(badge, amuletTexture(amulet), fromX, fromY, () => {
+      this.refreshCopies();
+      this.bounce(badge);
+    });
+  }
+
+  /**
+   * Амулет летит из (fromX, fromY) к гнезду и гаснет, пройдя FLY_FADE px пути (или весь путь, если он короче): гнездо
+   * за панелью магазина, и амулет будто уходит за жалюзи. Погас — landed(): гнездо уже занято, остаётся показать.
+   */
+  private flyToBadge(badge: Phaser.GameObjects.Image, texture: string, fromX: number, fromY: number, landed: () => void): void {
+    const distance = badge.x - fromX;
+    const fadeAtX = fromX + Math.sign(distance) * Math.min(FLY_FADE, Math.abs(distance));
+    const flying = this.scene.add.image(fromX, fromY, texture).setScale(1.4).setDepth(POPUP_DEPTH);
     this.scene.tweens.add({
       targets: flying,
-      x: badge.x,
+      x: fadeAtX,
       y: badge.y,
       scale: 1,
+      alpha: 0,
       duration: FLY_TIME,
       ease: 'Cubic.easeInOut',
       onComplete: () => {
         flying.destroy();
-        this.refreshCopies();
-        this.bounce(badge);
+        landed();
       },
     });
   }

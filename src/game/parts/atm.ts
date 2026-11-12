@@ -1,13 +1,13 @@
 import Phaser from 'phaser';
 import { CHIP_TEXTURE, createChipTextures, createTicketTexture, TICKET_TEXTURE } from '../decor';
-import { DISPLAY, HOME_SCROLL, VIEW_WIDTH } from '../layout';
+import { DISPLAY, VIEW_WIDTH } from '../layout';
 import { addText, LAMP_GOLD, LED_COLOR, LED_STYLE, RED_TEXT } from '../theme';
 
 // Банкомат Коллектора: в него закидывают фишки в уплату долга, он печатает купон (тот же билет 🎟).
 // Выезжает справа от автомата, камера не поворачивается: встаёт перед телевизором, правее рычага.
 const ATM_Y = 330;
-const ATM_IN_X = HOME_SCROLL + VIEW_WIDTH + 120; // спрятан за правым краем вида
-const ATM_OUT_X = 935; // выехал к игроку
+const ATM_IN_X = VIEW_WIDTH + 120; // спрятан за правым краем вида
+const ATM_OUT_X = 1024; // выехал к игроку — перед телевизором
 const BODY_WIDTH = 200;
 const BODY_HEIGHT = 320;
 const BODY_COLOR = 0x2b3544;

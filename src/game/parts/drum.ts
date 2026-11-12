@@ -14,9 +14,9 @@ import {
 import { DRUM_PRICE_GROWTH, DRUM_SECTORS, prizeItem, type DrumPrize } from '../drum';
 import { ITEMS } from '../items';
 import { t } from '../lang';
-import { BOARD_CHIP_X, DISPLAY, DRUM_RADIUS, DRUM_WHEEL, ITEM_SIZE } from '../layout';
+import { DRUM_RADIUS, DRUM_WHEEL, ITEM_SIZE, SHOP_HUD } from '../layout';
 import type { Sfx } from '../sound';
-import { addText, CHIP_DEPTH, LED_COLOR, LED_STYLE, RED_TEXT } from '../theme';
+import { addText, LED_COLOR, LED_STYLE, RED_TEXT, SHOP_FLY_DEPTH } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
 // Где что: стрелка — над колесом (остриё заходит за обод), ценник — под колесом.
@@ -30,7 +30,7 @@ const SPIN_TURNS = 3; // колесо делает столько полных �
 const SPIN_TIME = 2600; // мс
 const LAND_JITTER = 0.3; // колесо встаёт не точно серединой сектора: до такой доли сектора в сторону
 const GLOW_TIME = 450; // выпавший сектор вспыхивает, потом приз вылетает, мс
-const PAY_CHIPS = 4; // столько фишек летит с табло в колесо и из колеса на табло (для красоты: сумма может быть любой)
+const PAY_CHIPS = 4; // столько фишек летит из шапки панели в колесо и из колеса в шапку (для красоты: сумма может быть любой)
 const CHIP_FLY_TIME = 420; // мс
 const CHIP_STAGGER = 70; // фишки летят друг за другом, мс
 const SHAKE_TIME = 50; // один рывок тряски «не хватает фишек», мс
@@ -42,7 +42,7 @@ function faceOf(prize: DrumPrize): DrumFace {
 }
 
 /**
- * «Барабан» в магазине — колесо на стене справа от торгового автомата: на секторах предметы, билет, место на полке и фишки.
+ * «Барабан» в магазине — колесо на панели справа от торгового автомата: на секторах предметы, билет, место на полке и фишки.
  * Клик по колесу (или 0, её ловит сцена) — крутить; цена — на табличке под колесом. Колесо делает несколько оборотов,
  * стрелка щёлкает о штырьки и останавливает его на секторе, который сцена выбрала заранее. Сектора, которые выпасть не могут, затемнены.
  */
@@ -55,8 +55,8 @@ export class Drum {
   private readonly priceText: Phaser.GameObjects.Text; // «× 15» под колесом
   private available: boolean[] = []; // какие сектора сейчас могут выпасть — так нарисовано колесо
 
-  /** spin — кликнули по колесу; sfx — щелчки стрелки, пока колесо крутится. */
-  constructor(scene: Phaser.Scene, spin: () => void, hint: Hint, sfx: Sfx, isAvailable: boolean) {
+  /** spin — кликнули по колесу; sfx — щелчки стрелки, пока колесо крутится; layer — слой магазина: колесо с ценником на панели. */
+  constructor(scene: Phaser.Scene, spin: () => void, hint: Hint, sfx: Sfx, isAvailable: boolean, layer: Phaser.GameObjects.Container) {
     this.scene = scene;
     this.sfx = sfx;
     createChipTextures(scene);
@@ -72,6 +72,7 @@ export class Drum {
     const plate = scene.add.rectangle(DRUM_WHEEL.x, PRICE_Y, PRICE_PLATE.width, PRICE_PLATE.height, 0x020617).setRounded(5);
     const priceIcon = scene.add.image(DRUM_WHEEL.x - 22, PRICE_Y, CHIP_TEXTURE).setScale(PRICE_ICON_SCALE);
     this.priceText = addText(scene, DRUM_WHEEL.x - 8, PRICE_Y, '', { ...LED_STYLE, fontSize: '17px' }).setOrigin(0, 0.5);
+    layer.add([back, this.wheel, this.glow, pointer, plate, priceIcon, this.priceText]); // колесо — на панели магазина
     if (!isAvailable) {
       // Барабана ещё нет: все части спрятаны, колесо не кликается.
       for (const part of [back, this.wheel, this.glow, pointer, plate, priceIcon, this.priceText]) part.setVisible(false);
@@ -107,11 +108,11 @@ export class Drum {
   }
 
   /**
-   * Крутить: фишки летят с табло в колесо, колесо делает SPIN_TURNS оборотов и встаёт сектором sector под стрелкой
+   * Крутить: фишки летят из шапки панели в колесо, колесо делает SPIN_TURNS оборотов и встаёт сектором sector под стрелкой
    * (стрелка щёлкает на каждом штырьке), сектор вспыхивает — тогда landed(x, y): оттуда вылетает приз.
    */
   spin(sector: number, landed: (x: number, y: number) => void): void {
-    this.flyChips(BOARD_CHIP_X, DISPLAY.y, DRUM_WHEEL.x, DRUM_WHEEL.y);
+    this.flyChips(SHOP_HUD.chipX, SHOP_HUD.y, DRUM_WHEEL.x, DRUM_WHEEL.y);
     const step = 360 / this.faces.length;
     const jitter = Phaser.Math.RND.realInRange(-LAND_JITTER, LAND_JITTER) * step; // не Math.random: его очередь — для призов
     const start = this.wheel.angle;
@@ -149,15 +150,15 @@ export class Drum {
     this.scene.time.delayedCall(GLOW_TIME, () => landed(x, y));
   }
 
-  /** Выпали фишки: они летят из (x, y) на табло — потом done(). */
+  /** Выпали фишки: они летят из (x, y) в шапку панели, к числу фишек — потом done(). */
   payOut(x: number, y: number, done: () => void): void {
-    this.flyChips(x, y, BOARD_CHIP_X, DISPLAY.y, done);
+    this.flyChips(x, y, SHOP_HUD.chipX, SHOP_HUD.y, done);
   }
 
   /** PAY_CHIPS фишек друг за другом летят из (fromX, fromY) в (toX, toY); долетела последняя — done(). */
   private flyChips(fromX: number, fromY: number, toX: number, toY: number, done?: () => void): void {
     for (let index = 0; index < PAY_CHIPS; index++) {
-      const chip = this.scene.add.image(fromX, fromY, CHIP_TEXTURE).setDepth(CHIP_DEPTH);
+      const chip = this.scene.add.image(fromX, fromY, CHIP_TEXTURE).setDepth(SHOP_FLY_DEPTH);
       const isLast = index === PAY_CHIPS - 1;
       this.scene.tweens.add({
         targets: chip,
