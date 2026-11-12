@@ -1,8 +1,8 @@
-import { countCrowns, freeSpinsFor, hasClover, isJackpot, JACKPOT_SPINS, JACKPOT_TICKETS, luckyGrid } from '../bonus';
+import { countCrowns, freeSpinsFor, hasClover, isJackpot, JACKPOT_SPINS, JACKPOT_TICKETS, luckyGrid, MAX_FREE_SPINS_PER_ROUND } from '../bonus';
 import { cellsOf } from '../evil';
 import { CENTER_X, cellX, cellY, GRID_Y, SPIN_LAMPS_Y } from '../layout';
 import type { SpinResult } from '../patterns';
-import { spinGrid, type Grid, type WeightOf } from '../rules';
+import { spinGrid, spinsAfterBonus, type Grid, type WeightOf } from '../rules';
 import { GOLD_TEXT, GREEN_TEXT, LAMP_GOLD } from '../theme';
 import { PhaseScene } from './PhaseScene';
 
@@ -31,11 +31,13 @@ export abstract class BonusScene extends PhaseScene {
     if (isJackpot(result)) this.collectJackpot();
   }
 
-  /** Короны на экране: хватило — бесплатные прокрутки. Короны в рамках, огни бегут золотом, в ряду лампочек — новые короны. */
+  /** Короны на экране: хватило — бесплатные прокрутки (не больше потолка за раунд). Короны в рамках, огни бегут золотом. */
   private collectCrowns(grid: Grid): void {
-    const free = freeSpinsFor(countCrowns(grid));
-    if (free === 0) return;
+    // Потолок — из-за удачи: без него цепочка бесплатных прокруток не кончается (MAX_FREE_SPINS_PER_ROUND).
+    const free = Math.min(freeSpinsFor(countCrowns(grid)), MAX_FREE_SPINS_PER_ROUND - this.freeSpinsGiven);
+    if (free <= 0) return;
     this.freeSpins += free;
+    this.freeSpinsGiven += free;
     this.sfx.play('crown');
     const crowns = cellsOf(grid, 'crown');
     this.screen.highlightCells(crowns, CROWN_BORDER);
@@ -58,10 +60,14 @@ export abstract class BonusScene extends PhaseScene {
   /** Джекпот: кроме фишек — билеты (летят с сетки на табло) и прокрутки (над лампочками — «+N», лампочки подмигивают). */
   private collectJackpot(): void {
     this.tickets += JACKPOT_TICKETS;
-    this.spinsLeft += JACKPOT_SPINS;
+    // У потолка прокруток добавляется меньше (или ничего) — показываем фактически добавленное, чтобы «+3» не врало.
+    const added = spinsAfterBonus(this.spinsLeft, JACKPOT_SPINS) - this.spinsLeft;
+    this.spinsLeft += added;
     this.sfx.play('ticket', 0.3);
     this.panel.flyTickets(JACKPOT_TICKETS, CENTER_X, GRID_Y);
-    this.effects.popupAt(CENTER_X, SPIN_LAMPS_Y - 20, `+${JACKPOT_SPINS}`, GOLD_TEXT);
-    this.panel.winkSpinLamps(this.spinsLeft);
+    if (added > 0) {
+      this.effects.popupAt(CENTER_X, SPIN_LAMPS_Y - 20, `+${added}`, GOLD_TEXT);
+      this.panel.winkSpinLamps(this.spinsLeft);
+    }
   }
 }

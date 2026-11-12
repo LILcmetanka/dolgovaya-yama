@@ -16,12 +16,10 @@ import {
 import { AMULETS } from '../amulets';
 import { amuletKey, isSeen, itemKey, machineKey, WHO_COLLECTOR, WHO_DEALER } from '../codex';
 import { CHARACTERS, ORDINARY } from '../characters';
-import { MAGNIFIER } from '../collectorGame';
 import { BLOOD_WIN, SPIDER_BITE } from '../evil';
 import { ITEMS } from '../items';
 import { t } from '../lang';
 import { AMULET_SIZE, ITEM_SIZE, VIEW_CENTER_X, VIEW_WIDTH, WALL_PANEL, WALL_TV } from '../layout';
-import { BULLET } from '../shot';
 import { isPaying, isUnlocked, symbolsUnlockedAt, SYMBOLS, TICKET_SCATTER, type SlotSymbol } from '../rules';
 import { addText } from '../theme';
 
@@ -57,7 +55,9 @@ const HIDDEN_COLUMNS = 6;
 const HIDDEN_WIDTH = 160;
 const HIDDEN_HEIGHT = 44;
 const HIDDEN_GAP = 8;
-const HIDDEN_TOP_GAP = 14; // от последней строки до плиток
+// Страницы: 8 рядов по 2 столбца — 16 строк. Больше не влезает в панель (низ 632): 12 предметов и 11 амулетов
+// дают 12 рядов строк плюс ряды «???». Листаются кликом по панели или по счётчику «‹ 1/2 ›».
+const PAGE_LINES = 8;
 
 /** Строка вкладки: значок (картинка или эмодзи), название и описание. */
 interface Row {
@@ -105,7 +105,9 @@ function symbolNote(symbol: SlotSymbol): string {
  * Экран на стене справа от автомата: маленький, как телевизор. В покое на стекле тусклый «?», а когда в автомат вошли новые
  * символы — зелёное «NEW» мигает, пока экран не откроют. Клик по нему (→ ловит сцена) открывает большой экран поверх игры с вкладками:
  * «Символы» (цены и что делает каждый; новые — в золотой рамке), «Предметы», «Кто есть кто», «Как играть» (цель, долг, клавиши).
- * Закрыть — клик мимо, ✕, Esc, Пробел или →. Вид не поворачивается; что можно сейчас, решает сцена (пока открыт, крутить нельзя).
+ * Строк больше, чем влезает в панель, поэтому у «Предметов» и «Кто есть кто» страницы по 16 строк: клик по панели
+ * или по счётчику «‹ 1/2 ›» листает, «???» — на тех же страницах. Закрыть — клик мимо, ✕, Esc, Пробел или →.
+ * Вид не поворачивается; что можно сейчас, решает сцена (пока открыт, крутить нельзя).
  */
 export class WallScreen {
   private readonly scene: Phaser.Scene;
@@ -115,6 +117,8 @@ export class WallScreen {
   private readonly overlay: Phaser.GameObjects.GameObject[] = []; // всё, что видно на большом экране, кроме содержимого вкладки
   private content: Phaser.GameObjects.Container; // содержимое вкладки — пересобирается при смене вкладки и языка
   private tab: Tab = 'symbols';
+  private page = 0; // страница вкладки «Предметы» или «Кто есть кто»
+  private pages = 1; // сколько их всего у открытой вкладки
   private round = 0; // для какого раунда нарисованы символы
   private isOpen = false; // большой экран открыт
   private isEnabled = true; // по телевизору можно кликнуть
@@ -125,7 +129,7 @@ export class WallScreen {
   constructor(scene: Phaser.Scene, round: number, toggle: () => void) {
     this.scene = scene;
     createWallTvTexture(scene, WALL_TV);
-    createItemTextures(scene, [...ITEMS, MAGNIFIER, BULLET], ITEM_SIZE);
+    createItemTextures(scene, ITEMS, ITEM_SIZE);
     createAmuletTextures(scene, AMULETS, AMULET_SIZE);
     this.tv = scene.add.image(WALL_TV.x, WALL_TV.y, WALL_TV_TEXTURE);
     // Картинка шире корпуса (отсвет на стене) — кликать можно только по самому телевизору.
@@ -226,7 +230,8 @@ export class WallScreen {
     shade.on('pointerdown', close);
     const panel = scene.add.rectangle(WALL_PANEL.x, WALL_PANEL.y, WALL_PANEL.width, WALL_PANEL.height, PANEL_COLOR);
     panel.setStrokeStyle(3, PANEL_LINE, 0.6);
-    panel.setInteractive(); // клик по самой рамке ничего не делает, а не закрывает
+    panel.setInteractive(); // клик по самой рамке не закрывает, а листает вкладку: на «Предметах» строк две страницы
+    panel.on('pointerdown', () => this.nextPage());
     this.overlay.push(shade, panel);
     const top = WALL_PANEL.y - WALL_PANEL.height / 2;
     const left = WALL_PANEL.x - WALL_PANEL.width / 2;
@@ -258,8 +263,9 @@ export class WallScreen {
     this.setOverlayVisible(false);
   }
 
-  /** Вкладка tab: подсветить кнопку, собрать содержимое заново. */
+  /** Вкладка tab: подсветить кнопку, собрать содержимое заново. Другая вкладка начинается с первой страницы. */
   private showTab(tab: Tab): void {
+    if (tab !== this.tab) this.page = 0;
     this.tab = tab;
     TABS.forEach((entry, index) => {
       const active = entry.id === tab;
@@ -268,24 +274,32 @@ export class WallScreen {
     this.content.destroy();
     this.content = this.scene.add.container(0, 0).setDepth(OVERLAY_DEPTH).setScrollFactor(0).setVisible(this.isOpen);
     const left = WALL_PANEL.x - WALL_PANEL.width / 2 + PAD;
-    const top = WALL_PANEL.y - WALL_PANEL.height / 2 + 2 * PAD + TAB_HEIGHT + 4;
+    // −2: ряды начинаются чуть выше, чтобы двухстрочное описание восьмого ряда не задело нижнюю рамку панели.
+    const top = WALL_PANEL.y - WALL_PANEL.height / 2 + 2 * PAD + TAB_HEIGHT - 2;
     if (tab === 'symbols') this.buildSymbols(left, top);
     else if (tab === 'items') this.buildItems(left, top);
     else if (tab === 'who') this.buildWho(left, top);
     else this.buildHowTo(left, top);
   }
 
+  /** Клик по панели или по счётчику: следующая страница. Одна страница — ничего не происходит. */
+  private nextPage(): void {
+    if (!this.isOpen || this.pages <= 1) return;
+    this.page = (this.page + 1) % this.pages;
+    this.showTab(this.tab);
+  }
+
   /** «Символы»: цены, что делают особые символы, джекпот — одна картинка. */
   private buildSymbols(left: number, top: number): void {
+    this.pages = 1;
     this.content.add(this.scene.add.image(left, top, MONITOR_SCREEN_TEXTURE).setOrigin(0));
   }
 
   /** «Предметы»: предметы с полки и амулеты, которые уже попадались в магазине, на полке или в гнёздах. */
   private buildItems(left: number, top: number): void {
-    const everything = [...ITEMS, MAGNIFIER, BULLET];
-    const hidden = everything.filter((item) => !isSeen(itemKey(item.id))).length + AMULETS.filter((amulet) => !isSeen(amuletKey(amulet.id))).length;
+    const hidden = ITEMS.filter((item) => !isSeen(itemKey(item.id))).length + AMULETS.filter((amulet) => !isSeen(amuletKey(amulet.id))).length;
     const rows: Row[] = [
-      ...everything
+      ...ITEMS
         .filter((item) => isSeen(itemKey(item.id)))
         .map((item) => ({ texture: itemTexture(item), name: t(item.name), description: t(item.description) })),
       ...AMULETS.filter((amulet) => isSeen(amuletKey(amulet.id))).map((amulet) => ({
@@ -315,40 +329,61 @@ export class WallScreen {
   /**
    * Строки в два столбца: значок слева, название и описание справа. Под ними — плитки «???» по числу ещё не встреченного
    * (что именно, не видно). Нечего показать совсем — «Пока ничего не встретил».
+   * Ряд — две строки или ряд плиток «???». Рядов бывает больше страницы (12 предметов и 11 амулетов), поэтому
+   * на экране PAGE_LINES рядов, а остальные — по клику на панель или на счётчик «‹ 1/2 ›».
    */
   private buildRows(left: number, top: number, rows: Row[], hidden: number): void {
     const scene = this.scene;
     if (rows.length === 0 && hidden === 0) {
       this.content.add(addText(scene, left + 10, top + 6, t('tabEmpty'), { fontSize: '22px', color: DIM_INK }));
+      this.pages = 1;
       return;
     }
-    rows.forEach((row, index) => {
-      const x = left + (index % ROW_COLUMNS) * ROW_WIDTH;
-      const y = top + Math.floor(index / ROW_COLUMNS) * ROW_HEIGHT;
-      const iconX = x + ROW_ICON / 2 + 6;
-      const iconY = y + ROW_ICON / 2;
-      if (row.texture) this.content.add(scene.add.image(iconX, iconY, row.texture).setDisplaySize(ROW_ICON, ROW_ICON));
-      else this.content.add(addText(scene, iconX, iconY, row.sign ?? '', { fontSize: '36px' }).setOrigin(0.5));
-      const textX = x + ROW_ICON + 20;
-      this.content.add(addText(scene, textX, y, row.name, { fontSize: '21px', fontStyle: 'bold', color: INK }));
-      this.content.add(addText(scene, textX, y + 27, row.description, { fontSize: '16px', color: DIM_INK, wordWrap: { width: ROW_WIDTH - ROW_ICON - 36 } }));
+    const rowLines: Row[][] = [];
+    for (let index = 0; index < rows.length; index += ROW_COLUMNS) rowLines.push(rows.slice(index, index + ROW_COLUMNS));
+    const hiddenLines = Math.ceil(hidden / HIDDEN_COLUMNS);
+    this.pages = Math.max(1, Math.ceil((rowLines.length + hiddenLines) / PAGE_LINES));
+    if (this.page >= this.pages) this.page = 0;
+    const first = this.page * PAGE_LINES; // номер первого ряда на странице
+    const last = first + PAGE_LINES;
+    rowLines.forEach((line, index) => {
+      if (index < first || index >= last) return;
+      const y = top + (index - first) * ROW_HEIGHT;
+      line.forEach((row, column) => {
+        const x = left + column * ROW_WIDTH;
+        const iconX = x + ROW_ICON / 2 + 6;
+        const iconY = y + ROW_ICON / 2;
+        if (row.texture) this.content.add(scene.add.image(iconX, iconY, row.texture).setDisplaySize(ROW_ICON, ROW_ICON));
+        else this.content.add(addText(scene, iconX, iconY, row.sign ?? '', { fontSize: '36px' }).setOrigin(0.5));
+        const textX = x + ROW_ICON + 20;
+        this.content.add(addText(scene, textX, y, row.name, { fontSize: '21px', fontStyle: 'bold', color: INK }));
+        this.content.add(addText(scene, textX, y + 27, row.description, { fontSize: '16px', color: DIM_INK, wordWrap: { width: ROW_WIDTH - ROW_ICON - 36 } }));
+      });
     });
-    this.buildHidden(left, top + Math.ceil(rows.length / ROW_COLUMNS) * ROW_HEIGHT + (rows.length > 0 ? HIDDEN_TOP_GAP : 0), hidden);
-  }
-
-  /** hidden плиток «???» рядами по HIDDEN_COLUMNS. */
-  private buildHidden(left: number, top: number, hidden: number): void {
-    for (let index = 0; index < hidden; index++) {
-      const x = left + 10 + (index % HIDDEN_COLUMNS) * (HIDDEN_WIDTH + HIDDEN_GAP);
-      const y = top + Math.floor(index / HIDDEN_COLUMNS) * (HIDDEN_HEIGHT + HIDDEN_GAP);
-      const tile = this.scene.add.rectangle(x + HIDDEN_WIDTH / 2, y + HIDDEN_HEIGHT / 2, HIDDEN_WIDTH, HIDDEN_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.25);
-      const label = addText(this.scene, x + HIDDEN_WIDTH / 2, y + HIDDEN_HEIGHT / 2, '???', { fontSize: '22px', fontStyle: 'bold', color: DIM_INK }).setOrigin(0.5).setAlpha(0.6);
-      this.content.add([tile, label]);
+    for (let line = 0; line < hiddenLines; line++) {
+      const index = rowLines.length + line;
+      if (index < first || index >= last) continue;
+      const y = top + (index - first) * ROW_HEIGHT + (ROW_HEIGHT - HIDDEN_HEIGHT) / 2; // плитки — посреди своего ряда
+      const from = line * HIDDEN_COLUMNS;
+      for (let tile = from; tile < Math.min(hidden, from + HIDDEN_COLUMNS); tile++) {
+        const x = left + 10 + (tile - from) * (HIDDEN_WIDTH + HIDDEN_GAP);
+        const box = scene.add.rectangle(x + HIDDEN_WIDTH / 2, y + HIDDEN_HEIGHT / 2, HIDDEN_WIDTH, HIDDEN_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.25);
+        const label = addText(scene, x + HIDDEN_WIDTH / 2, y + HIDDEN_HEIGHT / 2, '???', { fontSize: '22px', fontStyle: 'bold', color: DIM_INK }).setOrigin(0.5).setAlpha(0.6);
+        this.content.add([box, label]);
+      }
+    }
+    if (this.pages > 1) {
+      // «‹ 1/2 ›» — под крестиком, над первым рядом: там пусто на любой вкладке со строками.
+      const counter = addText(scene, left + SYMBOLS_WIDTH, top - 7, `‹ ${this.page + 1}/${this.pages} ›`, { fontSize: '16px', color: DIM_INK }).setOrigin(1, 0.5);
+      counter.setInteractive({ useHandCursor: true });
+      counter.on('pointerdown', () => this.nextPage());
+      this.content.add(counter);
     }
   }
 
   /** «Как играть»: слева цель и порядок игры, справа клавиши. */
   private buildHowTo(left: number, top: number): void {
+    this.pages = 1;
     const style = { fontSize: '21px', color: INK, lineSpacing: 5 };
     const goal = addText(this.scene, left + 10, top + 6, t('howToGoal'), { ...style, wordWrap: { width: 600 } });
     const keys = addText(this.scene, left + 10 + 650, top + 6, t('howToKeys'), { ...style, wordWrap: { width: 340 } });

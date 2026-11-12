@@ -1,9 +1,7 @@
 import Phaser from 'phaser';
-import { MAGNIFIER } from '../collectorGame';
 import { createItemTextures, createShelfTextures, DOOR_CODE_WIDTH, itemTexture, SHELF_CELL_TEXTURE, SHELF_DOOR_TEXTURE } from '../decor';
-import { ITEMS, MAX_SLOTS, type Item, type ItemEffects } from '../items';
+import { ITEMS, isItemOn, MAX_SLOTS, type Item, type ItemEffects } from '../items';
 import { t } from '../lang';
-import { BULLET } from '../shot';
 import { EFFECTS_STEP, EFFECTS_TOP_Y, EFFECTS_X, ITEM_SIZE, SHELF_CELL, shelfX, shelfY } from '../layout';
 import { addText, LED_STYLE, POPUP_DEPTH, pulse } from '../theme';
 import { attachHint, type Hint } from './tooltip';
@@ -28,20 +26,39 @@ const SPEND_TIME = 400; // включённый предмет сработал:
 const NEW_ITEM_SCALE = 1.15; // купленный предмет «дышит» (увеличивается во столько раз), пока его не нажмут: видно, что он нажимается
 const NEW_ITEM_BREATH = 550; // один вдох, мс
 
-/** Включённые предметы у экрана: щит, чеснок и ×3, у каждого свой ряд. Сигарета действует сразу — её там нет. */
-type EffectId = 'shield' | 'garlic' | 'triple';
-const EFFECT_IDS: EffectId[] = ['shield', 'garlic', 'triple'];
+/**
+ * Включённые предметы у экрана: только активные, одним «пакетом» сверху вниз, в этом порядке.
+ * Двенадцать позиций: при EFFECTS_STEP = 54 от EFFECTS_TOP_Y = 206 десять иконок ещё влезают в вид (640), двенадцать нет —
+ * поэтому при многих активных шаг поджимается, чтобы столбик не уехал за нижний край.
+ * Чеснока в столбике нет: он красит огни вокруг экрана (BaseScene.calmLampColor).
+ */
+type EffectId = 'shield' | 'triple' | 'candle' | 'risk' | 'hammer' | 'luckSpin' | 'shuffle' | 'swap' | 'cherries' | 'bells' | 'diamonds' | 'luck';
+const EFFECT_IDS: EffectId[] = ['shield', 'triple', 'candle', 'risk', 'hammer', 'luckSpin', 'shuffle', 'swap', 'cherries', 'bells', 'diamonds', 'luck'];
+const EFFECTS_BOTTOM = 610; // ниже этой линии центр нижней иконки не опускается: иконка ~33 px с пульсом (×1,25) у 640 уже обрезана
 
-/** Сколько раз ещё сработает включённый предмет (у чеснока — 1, пока он действует). */
+/** Сколько раз ещё сработает включённый предмет (у бустов и флагов — 1, пока действуют). */
 function effectCount(effects: ItemEffects, id: EffectId): number {
   if (id === 'shield') return effects.shields;
   if (id === 'triple') return effects.tripleTakes;
-  return effects.isGarlicOn ? 1 : 0;
+  return isItemOn(id, effects) ? 1 : 0;
 }
 
-/** Где у экрана стоит включённый предмет. */
-export function effectPosition(id: EffectId): { x: number; y: number } {
-  return { x: EFFECTS_X, y: EFFECTS_TOP_Y + EFFECT_IDS.indexOf(id) * EFFECTS_STEP };
+/** Место в столбике у экрана: index — номер видимого предмета сверху, count — сколько всего активно. */
+function effectSpot(index: number, count: number): { x: number; y: number } {
+  const step = count > 1 ? Math.min(EFFECTS_STEP, (EFFECTS_BOTTOM - EFFECTS_TOP_Y) / (count - 1)) : EFFECTS_STEP;
+  return { x: EFFECTS_X, y: EFFECTS_TOP_Y + index * step };
+}
+
+/** Сколько предметов включено. */
+function activeEffects(effects: ItemEffects): EffectId[] {
+  return EFFECT_IDS.filter((id) => effectCount(effects, id) > 0);
+}
+
+/** Где у экрана встанет включённый предмет: место по активному списку (для летящего — то, что он займёт). */
+export function effectPosition(id: EffectId, effects: ItemEffects): { x: number; y: number } {
+  const active = activeEffects(effects);
+  const index = active.indexOf(id);
+  return effectSpot(index, active.length);
 }
 
 /**
@@ -60,7 +77,7 @@ export class ItemShelf {
   /** slots — сколько клеток открыто; use — что делать, когда кликнули по предмету в клетке. */
   constructor(scene: Phaser.Scene, slots: number, use: (slot: number) => void, hint: Hint) {
     this.scene = scene;
-    createItemTextures(scene, [...ITEMS, BULLET, MAGNIFIER], ITEM_SIZE); // и патрон, и лупа: они тоже лежат на полке
+    createItemTextures(scene, ITEMS, ITEM_SIZE);
     createShelfTextures(scene, SHELF_CELL);
 
     for (let slot = 0; slot < MAX_SLOTS; slot++) {
@@ -78,8 +95,9 @@ export class ItemShelf {
       this.doors.push(door);
     }
 
-    for (const id of EFFECT_IDS) {
-      const { x, y } = effectPosition(id);
+    // Иконки создаём на все двенадцать позиций сразу: showEffects расставит только активные и прижмёт их к верху.
+    for (const [index, id] of EFFECT_IDS.entries()) {
+      const { x, y } = effectSpot(index, EFFECT_IDS.length);
       const item = ITEMS.find((candidate) => candidate.id === id) ?? ITEMS[0];
       const icon = scene.add.image(x, y, itemTexture(item)).setScale(EFFECT_SCALE).setVisible(false);
       icon.setInteractive();
@@ -229,16 +247,24 @@ export class ItemShelf {
     this.scene.tweens.add({ targets: target, x: homeX + 6, duration: SHAKE_TIME, yoyo: true, repeat: 2, onComplete: () => target.setX(homeX) });
   }
 
-  /** Столбик у экрана: виден каждый включённый предмет; если включено несколько одинаковых — рядом число. */
+  /** Столбик у экрана: только включённые предметы, подряд сверху вниз; если включено несколько одинаковых — рядом число. */
   showEffects(effects: ItemEffects): void {
-    for (const id of EFFECT_IDS) {
+    const active = activeEffects(effects);
+    for (const [index, id] of active.entries()) {
       const count = effectCount(effects, id);
       const icon = this.effectIcons.get(id);
       const label = this.effectCounts.get(id);
       if (!icon || !label) continue;
-      if (count > 0 && !icon.visible) pulse(this.scene, icon.setVisible(true), 1.25, EFFECT_SCALE);
-      icon.setVisible(count > 0);
+      const { x, y } = effectSpot(index, active.length);
+      icon.setPosition(x, y);
+      label.setPosition(x + 14, y + 12);
+      if (!icon.visible) pulse(this.scene, icon.setVisible(true), 1.25, EFFECT_SCALE);
       label.setText(count > 1 ? String(count) : '');
+    }
+    for (const [id, icon] of this.effectIcons) {
+      if (active.includes(id)) continue;
+      icon.setVisible(false);
+      this.effectCounts.get(id)?.setText('');
     }
   }
 

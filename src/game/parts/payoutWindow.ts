@@ -19,6 +19,9 @@ import {
 const CHIP_X = 452; // фишка слева от суммы
 const CHIP_Y = 552; // фишка и «× 400» — посередине окошка
 const PAYOUT_TEXT_X = 474; // «× 400» — правее фишки
+const PAYOUT_TEXT_SIZE = 26; // обычная сумма в окошке
+// В последнем шансе строка длиннее («× 3400 / 662»), и при 26 px она залезала под купол кнопки «забрать» (x ≈ 652): мельче.
+const GOAL_TEXT_SIZE = 22;
 // Кнопка «забрать» на самом табло — небольшая кнопка в металлической оправе без слов: купол светится золотым (черепа — красным).
 const BUTTON_X = 664;
 const BUTTON_Y = 552;
@@ -60,6 +63,8 @@ export class PayoutWindow {
   private readonly buttonDome: Phaser.GameObjects.Image; // купол — краснеет вместе с суммой при черепах
   private flyingChips = 1; // сколько фишек полетит при «забрать»
   private isLit = false; // окошко горит (или загорается)
+  private goal: number | null = null; // сколько надо собрать в последнем шансе; null — цели нет, окошко показывает просто кон
+  private pot = 0; // что сейчас на кону — для перерисовки, когда меняется цель
 
   /** take — что делать, когда нажали кнопку «забрать» (Enter сцена ловит сама). */
   constructor(scene: Phaser.Scene, take: () => void) {
@@ -70,7 +75,7 @@ export class PayoutWindow {
     // Погашенная кнопка: пустая оправа с тёмным гнездом — видно, где она, но не горит. Не интерактивна.
     scene.add.image(BUTTON_X, BUTTON_Y, TAKE_BEZEL_TEXTURE);
     this.chip = scene.add.image(CHIP_X, CHIP_Y, CHIP_TEXTURE);
-    this.payoutText = addText(scene, PAYOUT_TEXT_X, CHIP_Y, '', { ...LED_STYLE, fontSize: '26px' }).setOrigin(0, 0.5);
+    this.payoutText = addText(scene, PAYOUT_TEXT_X, CHIP_Y, '', { ...LED_STYLE, fontSize: `${PAYOUT_TEXT_SIZE}px` }).setOrigin(0, 0.5);
     this.buttonGlow = scene.add.circle(0, 0, BUTTON_GLOW_RADIUS, LAMP_GOLD, BUTTON_GLOW_ALPHA);
     this.buttonDome = scene.add.image(0, 0, TAKE_DOME_TEXTURE).setTint(LAMP_GOLD);
     const shine = scene.add.image(BUTTON_SHINE_OFFSET.x, BUTTON_SHINE_OFFSET.y, TAKE_SHINE_TEXTURE).setAngle(-25);
@@ -83,17 +88,34 @@ export class PayoutWindow {
   }
 
   /**
-   * Окошко показывает кон: есть что забрать — горят «× сумма» и кнопка, нет — гаснет.
+   * Цель последнего шанса: сколько надо собрать. Пока она есть, окошко горит даже при пустом коне и показывает «× кон / цель»;
+   * null — обычная игра, окошко показывает просто кон и при нуле гаснет. Зовётся до showPot (см. refreshHud).
+   */
+  setGoal(goal: number | null): void {
+    this.goal = goal;
+    this.paintText();
+  }
+
+  /**
+   * Окошко показывает кон: есть что забрать или есть цель — горят «× сумма» и кнопка, иначе гаснет.
    * Сцена зовёт это при каждом обновлении приборов, поэтому окошко не останется погашенным, когда на кону что-то есть.
    */
   showPot(pot: number, debt: number): void {
-    if (pot === 0) {
+    this.pot = pot;
+    if (pot === 0 && this.goal === null) {
       this.turnOff(0);
       return;
     }
-    this.payoutText.setText(`× ${pot}`);
+    this.paintText();
     this.flyingChips = chipsForPot(pot, debt);
     this.turnOn();
+  }
+
+  /** Сумма в окошке: «× 400», а в последнем шансе — «× 400 / 150» (сколько собрано из цели); строка с целью мельче. */
+  private paintText(): void {
+    const hasGoal = this.goal !== null;
+    this.payoutText.setFontSize(hasGoal ? GOAL_TEXT_SIZE : PAYOUT_TEXT_SIZE);
+    this.payoutText.setText(hasGoal ? `× ${this.pot} / ${this.goal}` : `× ${this.pot}`);
   }
 
   /** Пока крутится или идёт расплата — кнопка тусклее. */

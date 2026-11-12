@@ -11,7 +11,7 @@ import {
   symbolTexture,
 } from '../decor';
 import { t } from '../lang';
-import { CELL_RADIUS, CELL_SIZE, cellX, cellY, GLASS, GRID_Y, PHASE_TITLE_Y, SCREEN } from '../layout';
+import { CELL_RADIUS, CELL_SIZE, CELL_STEP, cellX, cellY, GLASS, GRID_Y, PHASE_TITLE_Y, SCREEN } from '../layout';
 import { PATTERNS, type PatternHit } from '../patterns';
 import { GRID_COLUMNS, GRID_ROWS, isPaying, randomSymbol, SYMBOLS, type Grid, type SlotSymbol, type WeightOf } from '../rules';
 import type { Sfx } from '../sound';
@@ -38,6 +38,14 @@ const MACHINE_FONT_SIZE = '36px'; // новый автомат: его знач�
 const NEWS_ICON_SCALE = 1.5; // значок автомата в новости — крупнее, чем на корпусе
 const NEWS_ICON_GAP = 12; // между значком и названием
 const LOCK_SHADE = 0.5; // столбец с замком темнеет: прозрачность тени
+// Выбор клетки или столбца после прокрутки (перемешка и подмена, шаг 63б).
+const PICK_BORDER = 0xfde047; // обводка того, что выделили мышью
+const PICK_BORDER_WIDTH = 6; // толщина, как у рамок найденных паттернов
+const PICK_GLOW_WIDTH = PICK_BORDER_WIDTH * 2; // второй, мягкий проход — свечение вокруг, его видно в зазоре
+const PICK_GLOW_ALPHA = 0.35;
+const PICK_OUTSET = (CELL_STEP - CELL_SIZE) / 2; // 3: половина зазора — обводка ложится в зазор, а не под соседние клетки
+const REROLL_STOP_TIME = 650; // перекрут столбца перемешкой: мелькает и встаёт, мс
+const REVEAL_TIME = 260; // подскок клетки, в которую подмена поставила джокера, мс
 // Ржавый автомат: столбец заржавел — в следующей прокрутке он не крутится, а дёргается на месте.
 const RUST_SHOW_TIME = 250; // ржавчина проступает, мс
 const RUST_HIDE_TIME = 300; // и сходит после прокрутки, мс
@@ -85,6 +93,10 @@ export class SlotScreen {
   private readonly patternFrames: Phaser.GameObjects.Rectangle[]; // рамки схем на стекле, в порядке PATTERNS
   private readonly cells: Phaser.GameObjects.Image[][]; // клетки сетки: cells[ряд][столбец]
   private readonly cellHighlights: Phaser.GameObjects.Graphics; // рамки вокруг клеток найденных паттернов
+  private readonly pickHighlight: Phaser.GameObjects.Graphics; // обводка клетки или столбца под мышью, пока выбирают
+  private readonly zones: Phaser.GameObjects.Zone[][]; // невидимые клик-зоны клеток: ловят мышь, только пока выбирают
+  private pickMode: 'column' | 'cell' | null = null; // что выбирают сейчас; null — выбора нет
+  private pickCallback: ((row: number, col: number) => void) | null = null; // кому отдать выбранную клетку
   private readonly rust: Phaser.GameObjects.Image; // ржавчина на заевшем столбце
   private rustyColumn: number | null = null; // какой столбец заржавел: в следующей прокрутке он не крутится
   private lampTick = 0; // сколько раз огни уже обновились
@@ -105,7 +117,10 @@ export class SlotScreen {
     this.cells = this.drawGrid();
     createRustTexture(scene, CELL_SIZE, columnHeight(), CELL_RADIUS);
     this.rust = scene.add.image(0, GRID_Y, RUST_TEXTURE).setVisible(false); // над клетками, под рамками выигрыша
-    this.cellHighlights = scene.add.graphics();
+    // Слои: рамки найденных паттернов (2) — выше обводки выбора (1), чтобы не перекрывать их; обе выше клеток (0).
+    this.cellHighlights = scene.add.graphics().setDepth(2);
+    this.pickHighlight = scene.add.graphics().setDepth(1);
+    this.zones = this.drawPickZones();
   }
 
   /**
@@ -144,18 +159,114 @@ export class SlotScreen {
   }
 
   /**
+   * Пятнадцать невидимых клик-зон — по одной на клетку. Созданы сразу и выключены: включаются, только когда
+   * игрок выбирает столбец (перемешка) или клетку (подмена), иначе они перехватывали бы клики по сетке.
+   * Размер — с шаг клетки, а не с клетку: соседние зоны смыкаются, и в зазорах между клетками нет мёртвых полос,
+   * где обводка выбора пропадала бы под курсором.
+   */
+  private drawPickZones(): Phaser.GameObjects.Zone[][] {
+    const zones: Phaser.GameObjects.Zone[][] = [];
+    for (let row = 0; row < GRID_ROWS; row++) {
+      const line: Phaser.GameObjects.Zone[] = [];
+      for (let col = 0; col < GRID_COLUMNS; col++) {
+        const zone = this.scene.add.zone(cellX(col), cellY(row), CELL_STEP, CELL_STEP);
+        zone.setInteractive({ useHandCursor: true });
+        zone.disableInteractive();
+        zone.on('pointerover', () => this.showPickHover(row, col));
+        zone.on('pointerout', () => this.pickHighlight.clear());
+        zone.on('pointerdown', () => this.pickCallback?.(row, col));
+        line.push(zone);
+      }
+      zones.push(line);
+    }
+    return zones;
+  }
+
+  /**
+   * Начать выбор: column — игрок выбирает столбец (наведение обводит все три клетки), cell — одну клетку.
+   * Выбранную клетку (ряд, столбец) получает pick.
+   */
+  beginPick(mode: 'column' | 'cell', pick: (row: number, col: number) => void): void {
+    this.pickMode = mode;
+    this.pickCallback = pick;
+    for (const line of this.zones) for (const zone of line) zone.setInteractive({ useHandCursor: true });
+  }
+
+  /** Выбор кончился (сделали, пропустили или вышло время): зоны снова выключены, обводка снята. */
+  endPick(): void {
+    this.pickMode = null;
+    this.pickCallback = null;
+    this.pickHighlight.clear();
+    for (const line of this.zones) for (const zone of line) zone.disableInteractive();
+  }
+
+  /** Обводка того, на что показывает мышь: весь столбец (column) или одна клетка (cell). */
+  private showPickHover(row: number, col: number): void {
+    this.pickHighlight.clear();
+    const size = CELL_SIZE + 2 * PICK_OUTSET; // рамка идёт по зазору вокруг клетки, а не по её краю
+    if (this.pickMode === 'column') {
+      const top = cellY(0) - CELL_SIZE / 2 - PICK_OUTSET;
+      this.strokePick(cellX(col) - CELL_SIZE / 2 - PICK_OUTSET, top, size, columnHeight() + 2 * PICK_OUTSET);
+    } else if (this.pickMode === 'cell') {
+      const left = cellX(col) - CELL_SIZE / 2 - PICK_OUTSET;
+      this.strokePick(left, cellY(row) - CELL_SIZE / 2 - PICK_OUTSET, size, size);
+    }
+  }
+
+  /** Обводка выбора в два прохода: мягкое свечение пошире и яркая линия — в зазоре между клетками её хорошо видно. */
+  private strokePick(x: number, y: number, width: number, height: number): void {
+    const radius = CELL_RADIUS + PICK_OUTSET;
+    this.pickHighlight.lineStyle(PICK_GLOW_WIDTH, PICK_BORDER, PICK_GLOW_ALPHA);
+    this.pickHighlight.strokeRoundedRect(x, y, width, height, radius);
+    this.pickHighlight.lineStyle(PICK_BORDER_WIDTH, PICK_BORDER);
+    this.pickHighlight.strokeRoundedRect(x, y, width, height, radius);
+  }
+
+  /**
+   * Перемешка (шаг 63б): один столбец перекручивается заново — три клетки мелькают символами этой прокрутки (weightOf)
+   * и встают на symbolAt. Длительность — REROLL_STOP_TIME, потом stopped().
+   */
+  rerollColumn(col: number, weightOf: WeightOf, symbolAt: (row: number) => SlotSymbol, stopped: () => void): void {
+    this.spinColumn(col, weightOf, (row) => symbolTexture(symbolAt(row)), REROLL_STOP_TIME, stopped);
+  }
+
+  /** Подмена (шаг 63б): клетка показывает новый символ с подскоком, потом done(). */
+  revealCell(row: number, col: number, symbol: SlotSymbol, done: () => void): void {
+    this.showSymbol(row, col, symbol);
+    this.scene.tweens.add({
+      targets: this.cells[row][col],
+      y: cellY(row) - BOUNCE_HEIGHT,
+      duration: REVEAL_TIME / 2,
+      ease: 'Quad.easeOut',
+      yoyo: true,
+      onComplete: done,
+    });
+  }
+
+  /**
    * Прокрутка: столбцы мелькают (символами, которые есть в автомате: weightOf) и встают на символы grid слева направо, потом — stopped().
    * Заржавевший столбец не крутится — дёргается на месте; после прокрутки ржавчина сходит.
    */
   spin(grid: Grid, weightOf: WeightOf, stopped: () => void): void {
     for (let col = 0; col < GRID_COLUMNS; col++) {
       if (col === this.rustyColumn) this.shudderColumn(col);
-      else this.spinColumn(col, grid, weightOf);
+      else this.spinColumn(col, weightOf, (row) => symbolTexture(grid[row][col]));
     }
     this.scene.time.delayedCall(columnStopTime(GRID_COLUMNS - 1) + RESULT_PAUSE, () => {
       this.clearRust();
       stopped();
     });
+  }
+
+  /**
+   * Смена автомата — событие на сетке (шаг 67): столбцы мелькают как при прокрутке и встают все 15 клеток
+   * на значок нового характера. Выигрыша нет; ржавчина и старые символы снимаются.
+   */
+  spinMachine(character: MachineCharacter, stopped: () => void): void {
+    this.clearRust();
+    const icon = characterTexture(character);
+    for (let col = 0; col < GRID_COLUMNS; col++) this.spinColumn(col, () => 1, () => icon);
+    this.scene.time.delayedCall(columnStopTime(GRID_COLUMNS - 1) + RESULT_PAUSE, stopped);
   }
 
   /** Заржавевший столбец: рычаг дёрнули — он скрипит и дёргается, но не крутится (его символы остаются). */
@@ -187,8 +298,17 @@ export class SlotScreen {
     this.scene.tweens.add({ targets: this.rust, alpha: 0, duration: RUST_HIDE_TIME, onComplete: () => this.rust.setVisible(false) });
   }
 
-  /** Один столбец: три клетки мелькают случайными символами, потом встают на итоговые. */
-  private spinColumn(col: number, grid: Grid, weightOf: WeightOf): void {
+  /**
+   * Один столбец: три клетки мелькают случайными символами, потом встают на итоговые картинки (finalTexture).
+   * stopTime — когда он встаёт (обычно columnStopTime); stopped — что сделать после остановки (перекруту перемешки).
+   */
+  private spinColumn(
+    col: number,
+    weightOf: WeightOf,
+    finalTexture: (row: number) => string,
+    stopTime = columnStopTime(col),
+    stopped?: () => void,
+  ): void {
     const flicker = this.scene.time.addEvent({
       delay: FLICKER_DELAY,
       loop: true,
@@ -196,17 +316,24 @@ export class SlotScreen {
         for (let row = 0; row < GRID_ROWS; row++) this.showSymbol(row, col, randomSymbol(weightOf));
       },
     });
-    this.scene.time.delayedCall(columnStopTime(col), () => {
+    this.scene.time.delayedCall(stopTime, () => {
       flicker.remove();
-      for (let row = 0; row < GRID_ROWS; row++) this.showSymbol(row, col, grid[row][col]);
+      for (let row = 0; row < GRID_ROWS; row++) this.showTexture(row, col, finalTexture(row));
       this.bounceColumn(col);
       this.sfx.play('stop');
+      stopped?.();
     });
   }
 
   /** Показать символ в клетке: меняем только текстуру картинки — это дёшево, даже когда 15 клеток мелькают. */
   private showSymbol(row: number, col: number, symbol: SlotSymbol): void {
-    this.cells[row][col].setTexture(symbolTexture(symbol));
+    this.cells[row][col].setTexture(symbolTexture(symbol)).setScale(1);
+  }
+
+  /** Показать в клетке готовую картинку под размер клетки: значок автомата меньше клетки, его растягиваем. */
+  private showTexture(row: number, col: number, texture: string): void {
+    const cell = this.cells[row][col].setTexture(texture).setScale(1);
+    cell.setScale(CELL_SIZE / cell.displayWidth); // масштаб — по картинке: у символов и значков он разный
   }
 
   /** Короткий подскок столбца при остановке. */

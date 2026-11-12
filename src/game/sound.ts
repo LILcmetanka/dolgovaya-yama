@@ -16,7 +16,7 @@ const HEART_MAX_BPM = 118; // прокрутки кончаются, а на д�
 const DRONE_NOTE = 55; // гул — ля большой октавы, Гц
 const BELL_EVERY_BEATS = 16; // иногда — тихий тревожный звон
 
-/** Звуки игры: что умеет звук. Его отдают частям, которым нужен точный момент (остановка столбца, выстрел). */
+/** Звуки игры: что умеет звук. Его отдают частям, которым нужен точный момент (остановка столбца, взрыв). */
 export interface Sfx {
   play(name: SoundName, delay?: number): void;
 }
@@ -46,10 +46,6 @@ export type SoundName =
   | 'card'
   | 'cardWin'
   | 'cardLose'
-  | 'cylinder'
-  | 'cock'
-  | 'gunshot'
-  | 'dryFire'
   | 'shatter'
   | 'spider'
   | 'lock'
@@ -311,7 +307,7 @@ const SOUNDS: Record<SoundName, (s: Sound, at: number) => void> = {
   deny: (s, at) => s.tone(at, 140, 0.18, 'square', 0.25, 110), // «нельзя»
   turn: (s, at) => s.noise(at, 0.5, 400, 0.15, 0.6), // поворот — шорох одежды
   hand: (s, at) => {
-    s.noise(at, 0.4, 250, 0.3, 0.7); // рука выдвигается из темноты
+    s.noise(at, 0.4, 250, 0.3, 0.7); // банкомат выезжает из темноты
     s.tone(at, 50, 0.6, 'sine', 0.3, 40);
   },
   payment: (s, at) => {
@@ -325,27 +321,6 @@ const SOUNDS: Record<SoundName, (s: Sound, at: number) => void> = {
   card: (s, at) => s.noise(at, 0.07, 3500, 0.3, 2), // карту перевернули
   cardWin: (s, at) => [0, 7].forEach((step, index) => s.tone(at + index * 0.08, note(step + 5), 0.2, 'triangle', 0.25)),
   cardLose: (s, at) => s.tone(at, 200, 0.5, 'sawtooth', 0.25, 70),
-  cylinder: (s, at) => {
-    let time = at;
-    for (let index = 0; index < 10; index++) {
-      s.noise(time, 0.03, 4200, 0.25, 5); // барабан дробовика трещит, замедляясь
-      time += 0.04 + index * 0.009;
-    }
-    s.tone(time, 260, 0.06, 'square', 0.25, 160); // барабан встал на место
-  },
-  cock: (s, at) => {
-    s.tone(at, 700, 0.03, 'square', 0.2, 500); // курок взведён
-    s.noise(at + 0.06, 0.03, 5000, 0.25, 6);
-  },
-  gunshot: (s, at) => {
-    s.noise(at, 0.06, 3000, 0.9, 0.5); // хлопок
-    s.noise(at, 0.7, 500, 0.8, 0.4); // гул выстрела
-    s.tone(at, 140, 0.5, 'sawtooth', 0.45, 35);
-  },
-  dryFire: (s, at) => {
-    s.tone(at, 1100, 0.025, 'square', 0.3); // сухой щелчок: холостой
-    s.noise(at, 0.04, 6500, 0.3, 6);
-  },
   shatter: (s, at) => {
     s.noise(at, 0.5, 5500, 0.45, 0.8); // стекло экрана разлетается
     for (let index = 0; index < 5; index++) s.tone(at + index * 0.04, 2400 + index * 380, 0.09, 'triangle', 0.12); // осколки звенят

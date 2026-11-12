@@ -1,40 +1,17 @@
 import Phaser from 'phaser';
-import {
-  CHIP_TEXTURE,
-  createChipTextures,
-  createHandTextures,
-  createNoteGlowTexture,
-  drawNoteTexture,
-  HAND_FIST_TEXTURE,
-  HAND_OPEN_TEXTURE,
-  NOTE_GLOW_TEXTURE,
-  NOTE_TEXTURE,
-} from '../decor';
+import { createChipTextures, createNoteGlowTexture, drawNoteTexture, NOTE_GLOW_TEXTURE, NOTE_TEXTURE } from '../decor';
 import { t } from '../lang';
 import { Atm } from './atm';
-import { DarkRoom, type RoomMode } from './darkRoom';
-import { ShadowFace } from './shadowFace';
-import { CENTER_X, CENTER_Y, DARK_ROOM, DISPLAY, HOME_SCROLL, NOTE, NOTE_ANGLE, SCREEN, TURN_SCROLL, VIEW_WIDTH } from '../layout';
+import { CENTER_X, CENTER_Y, HOME_SCROLL, NOTE, NOTE_ANGLE, SCREEN, VIEW_WIDTH } from '../layout';
+import { GOOD_LUCK_TIME } from '../lastChance';
 import { addText, GAME_OVER_DEPTH, GOLD_TEXT, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT } from '../theme';
 
 // Записка светится, когда долг можно отдать раньше: клик по ней или D.
 const NOTE_GLOW_MIN = 0.3; // свечение пульсирует: гаснет до такой яркости и разгорается снова
 const NOTE_GLOW_TIME = 700; // мс
-// Коллектор в темноте справа от комнаты: лица не видно, только глаза; рука появляется, когда он берёт оружие или принимает амулет.
-const HAND_Y = 330;
-const HAND_IN_X = TURN_SCROLL + VIEW_WIDTH + 220; // рука спрятана за правым краем вида
-const HAND_OUT_X = DARK_ROOM.x + 20; // рука протянута над столом
-const FRONT_DEPTH = 1; // рука и лицо — поверх комнаты (она на глубине 0 над автоматом)
-const HAND_PALM_X = HAND_OUT_X - 58; // ладонь протянутой руки — сюда летят фишки
-const HAND_PALM_Y = HAND_Y - 22;
-const ROOM_FADE_TIME = 450; // вид гаснет перед тёмной комнатой и после неё
-const ATM_WARN_TIME = 1600; // на экране банкомата горит GOOD LUCK, потом всё темнеет
-const PAYMENT_CHIPS = 6; // сколько фишек летит в ладонь при расплате (для красоты: сумма может быть любой)
-// Надписи на чёрном экране автомата: GOOD LUCK — фишек не хватило, дальше игра с Коллектором; DEATH — конец забега.
+// Надпись на чёрном экране автомата: KABOOM — конец забега. GOOD LUCK рисует банкомат (atm.ts), не эта часть.
 const SCREEN_TITLE_STYLE = { ...LED_STYLE, fontSize: '64px', color: RED_TEXT, shadow: { color: '#ef4444', blur: 18, fill: true } };
-const GOOD_LUCK_DEPTH = POPUP_DEPTH - 1; // GOOD LUCK — над сеткой, под всплывающими надписями
-const HIT_COLOR = 0x991b1b; // Коллектор ранен: красная вспышка в темноте
-const HIT_ALPHA = 0.6;
+const SCREEN_TITLE_DEPTH = POPUP_DEPTH - 1; // заголовок — над сеткой, под всплывающими надписями
 // Взрыв автомата (KABOOM): вспышка и огненные шары из экрана.
 const EXPLOSION_BALLS = 18;
 const EXPLOSION_COLORS = [0xfde047, 0xf97316, 0xdc2626, 0xffffff];
@@ -53,17 +30,9 @@ const BUTTON_COLOR = 0xea580c;
 const BUTTON_BORDER = 0xfbbf24;
 // Анимации, мс.
 const NOTE_FLIP_TIME = 140; // половина переворота записки
-const TURN_TIME = 600; // вид уезжает вбок или возвращается
-const HAND_MOVE_TIME = 450; // рука выдвигается из темноты или уходит обратно
-const HAND_GRIP_TIME = 300; // рука выходит из темноты взять оружие или уходит обратно
-const HAND_HOLD_TIME = 300; // кулак с фишками задерживается, прежде чем уйти
-const PAYMENT_FLY_TIME = 500; // фишки летят с табло в ладонь
-const PAYMENT_FLY_STAGGER = 70; // фишки взлетают друг за другом
 const BLACKOUT_TIME = 700; // экран гаснет и загорается снова
-const TITLE_BLINK_TIME = 500; // GOOD LUCK и DEATH мигают
-const GOOD_LUCK_FADE_TIME = 400; // GOOD LUCK гаснет — экран автомата снова горит
-const HIT_TIME = 250; // Коллектор ранен: рука отдёргивается в темноту за столько
-const HIT_FLASH_TIME = 500; // и столько гаснет красная вспышка
+const TITLE_BLINK_TIME = 500; // DEATH и KABOOM мигают
+const GOOD_LUCK_FADE_TIME = 400; // заголовок на экране автомата гаснет — экран снова горит
 
 /** Кнопка: тень стоит на месте, а «лицо» — контейнер с корпусом, бликом и надписями. */
 interface Button {
@@ -73,34 +42,28 @@ interface Button {
 
 /**
  * Всё про долг: записка на стене (фишек хватает — она светится, и по ней можно отдать долг раньше),
- * темнота справа от комнаты, в ней банкомат (платишь долг: фишки в щель, на выходе купон) и рука Коллектора
- * (когда фишек не хватает), поворот вида, GOOD LUCK на экране автомата, затемнение и экран DEATH.
+ * банкомат, в который платят долг (фишки в щель, на выходе купон), KABOOM на экране автомата,
+ * затемнение и экран DEATH.
  */
 export class Collector {
   private readonly scene: Phaser.Scene;
   private readonly note: Phaser.GameObjects.Image; // записка с долгом: бумажка с надписями одной картинкой
   private readonly noteGlow: Phaser.GameObjects.Image; // свечение вокруг записки: долг можно отдать раньше
-  private readonly hand: Phaser.GameObjects.Image; // рука Коллектора: когда фишек не хватает
-  private readonly atm: Atm; // банкомат: когда фишек хватает, долг платят в него
-  private isAtmOut = false; // банкомат выехал
-  private readonly room: DarkRoom; // тёмная комната Коллектора: картинка на весь вид или справа
-  private roomMode: RoomMode = 'none';
-  private readonly face: ShadowFace; // красные глаза и улыбка в тени
+  private readonly atm: Atm; // банкомат: долг платят в него, GOOD LUCK в последнем шансе горит на его экране
   private isNoteChecked = false; // на записке галочка: фишек на табло хватает на долг
   private noteDebt = 0; // что нарисовано на записке: долг, фишки на табло и на кону — для полоски долга
   private noteBalance = 0;
   private notePot = 0;
   private isPayable = false; // записка светится: по ней можно кликнуть и отдать долг раньше
-  private goodLuck: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = []; // GOOD LUCK на экране автомата
+  private goodLuck: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = []; // KABOOM на экране автомата, пока идёт взрыв
 
   /**
-   * pay — что делать, когда кликнули по протянутой руке (Enter сцена ловит сама);
+   * pay — что делать, когда кликнули по банкомату (Enter сцена ловит сама);
    * payEarly — когда кликнули по светящейся записке (D сцена ловит сама).
    */
   constructor(scene: Phaser.Scene, debt: number, pay: () => void, payEarly: () => void) {
     this.scene = scene;
     createChipTextures(scene);
-    createHandTextures(scene);
     createNoteGlowTexture(scene, NOTE.width, NOTE.height);
 
     // Записка: бумажка, «ДОЛГ» и сумма — одна картинка из decor.ts.
@@ -113,14 +76,7 @@ export class Collector {
     this.note.setInteractive({ useHandCursor: true }).disableInteractive();
     this.note.on('pointerdown', payEarly);
 
-    // Темнота справа от комнаты и спрятанная в ней рука; над ладонью — «фишка × долг».
-    this.room = new DarkRoom(scene);
-    this.hand = scene.add.image(HAND_IN_X, HAND_Y, HAND_OPEN_TEXTURE);
-    this.hand.setInteractive({ useHandCursor: true });
-    this.hand.on('pointerdown', pay);
-    this.hand.setDepth(FRONT_DEPTH);
     this.atm = new Atm(scene, pay);
-    this.face = new ShadowFace(scene);
   }
 
   /** Галочка на записке появляется, как только фишек на табло хватает на долг. Записка при этом подпрыгивает. */
@@ -133,7 +89,7 @@ export class Collector {
   }
 
   /**
-   * Полоска долга на записке: сколько долга уже на табло и сколько лежит на кону (заберёшь — будет на табло).
+   * Полоска долга на записке: сколько долга уже на табло и сколько лежит на кону (после последнего шанса — собранное).
    * Зовёт refreshHud при любом изменении, поэтому перерисовываем, только если числа сменились.
    */
   showProgress(debt: number, balance: number, pot: number): void {
@@ -195,165 +151,35 @@ export class Collector {
 
   /**
    * Справа от автомата выезжает банкомат (камера стоит на месте). Фишек хватает — на его экране долг, ждёт оплаты — ready().
-   * Не хватает — на экране красное GOOD LUCK, через ATM_WARN_TIME всё гаснет, и ты в тёмной комнате Коллектора
-   * (на весь вид, enterRoom): в тени проступают его глаза — ready().
+   * Не хватает — на экране красное GOOD LUCK: через GOOD_LUCK_TIME оно гаснет, и начинается последний шанс — ready().
    */
   reachOut(debt: number, isEnough: boolean, ready: () => void): void {
-    this.isAtmOut = true;
     this.atm.slideIn(debt, isEnough, () => {
       if (isEnough) {
         ready();
         return;
       }
-      this.scene.time.delayedCall(ATM_WARN_TIME, () => this.enterRoom(ready));
-    });
-  }
-
-  /** Вид гаснет, банкомат пропадает, вид встаёт на тёмную комнату (картинка на весь вид) и загорается; глаза проступают — ready(). */
-  private enterRoom(ready: () => void): void {
-    const camera = this.scene.cameras.main;
-    camera.fadeOut(ROOM_FADE_TIME, 0, 0, 0);
-    camera.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      this.atm.hide();
-      this.isAtmOut = false;
-      camera.setScroll(TURN_SCROLL, 0);
-      this.room.show('full');
-      this.roomMode = 'full';
-      camera.fadeIn(ROOM_FADE_TIME, 0, 0, 0);
-      this.face.show(ready);
-    });
-  }
-
-  /**
-   * Выстрел в автомат: вид уезжает вбок к Коллектору, справа его комната (слева прозрачная — виден экран автомата),
-   * проступают глаза — ready().
-   */
-  reachShot(ready: () => void): void {
-    this.room.show('side');
-    this.roomMode = 'side';
-    this.scene.tweens.add({
-      targets: this.scene.cameras.main,
-      scrollX: TURN_SCROLL,
-      duration: TURN_TIME,
-      ease: 'Sine.easeInOut',
-      onComplete: () => this.face.show(ready),
-    });
-  }
-
-  /**
-   * Вернуться к автомату через delay мс — потом done(). Из комнаты на весь вид — через затемнение, из боковой — камера уезжает
-   * обратно.
-   */
-  private returnHome(delay: number, done: () => void): void {
-    const camera = this.scene.cameras.main;
-    if (this.roomMode === 'full') {
-      this.scene.time.delayedCall(delay, () => {
-        camera.fadeOut(ROOM_FADE_TIME, 0, 0, 0);
-        camera.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-          camera.setScroll(HOME_SCROLL, 0);
-          this.room.hide();
-          this.roomMode = 'none';
-          camera.fadeIn(ROOM_FADE_TIME, 0, 0, 0);
-          camera.once(Phaser.Cameras.Scene2D.Events.FADE_IN_COMPLETE, done);
-        });
+      // GOOD LUCK погорел — банкомат уезжает, пока автомат начинает крутить сам: он больше не нужен.
+      this.scene.time.delayedCall(GOOD_LUCK_TIME, () => {
+        this.atm.slideOut(() => {});
+        ready();
       });
-      return;
-    }
-    this.scene.tweens.add({
-      targets: camera,
-      scrollX: HOME_SCROLL,
-      delay,
-      duration: TURN_TIME,
-      ease: 'Sine.easeInOut',
-      onComplete: () => {
-        this.room.hide();
-        this.roomMode = 'none';
-        done();
-      },
     });
   }
 
-  /**
-   * Долг отдан. Банкомат: фишки летят с табло в щель, он печатает купон — тогда paid(x, y) с места купона
-   * (оттуда сцена пускает билеты), уезжает, вид возвращается. Рука: фишки летят в ладонь — paid(x, y) с места ладони,
-   * рука сжимает их и уходит. Вид вернулся к автомату — done().
-   */
+  /** Долг отдан: фишки летят с табло в щель, банкомат печатает купон — paid(x, y) с места купона, уезжает — done(). */
   takePayment(paid: (x: number, y: number) => void, done: () => void): void {
-    if (this.isAtmOut) {
-      this.atm.swallowAndPrint(paid, () => this.leave(done));
-      return;
-    }
-    for (let index = 0; index < PAYMENT_CHIPS; index++) {
-      const chip = this.scene.add.image(DISPLAY.x, DISPLAY.y, CHIP_TEXTURE).setScale(1.3);
-      this.scene.tweens.add({
-        targets: chip,
-        x: HAND_PALM_X,
-        y: HAND_PALM_Y,
-        scale: 0.8,
-        delay: index * PAYMENT_FLY_STAGGER,
-        duration: PAYMENT_FLY_TIME,
-        ease: 'Cubic.easeIn',
-        onComplete: () => chip.destroy(),
-      });
-    }
-    this.scene.time.delayedCall(PAYMENT_CHIPS * PAYMENT_FLY_STAGGER + PAYMENT_FLY_TIME, () => {
-      paid(HAND_PALM_X, HAND_PALM_Y);
-      this.leave(done);
-    });
+    this.atm.swallowAndPrint(paid, () => this.leave(done));
   }
 
-  /** Где ладонь протянутой руки — туда летит то, что отдают Коллектору. */
-  palmPosition(): { x: number; y: number } {
-    return { x: HAND_PALM_X, y: HAND_PALM_Y };
-  }
-
-  /** Рука выходит из темноты ладонью вверх: принять амулет (откуп) или фишки. */
-  stretchHand(): void {
-    this.hand.setTexture(HAND_OPEN_TEXTURE);
-    this.moveHand(HAND_OUT_X);
-  }
-
-  private moveHand(x: number): void {
-    this.scene.tweens.killTweensOf(this.hand);
-    this.scene.tweens.add({ targets: this.hand, x, duration: HAND_GRIP_TIME, ease: 'Cubic.easeOut' });
-  }
-
-  /** Рука сжимается и уходит, вид возвращается к автомату — потом done(). Без расплаты: за амулет или после игры. */
-  goAway(done: () => void): void {
-    this.leave(done);
-  }
-
-  /** Банкомат уезжает вбок или рука сжимает фишки в кулак и уходит, вид возвращается к автомату — потом done(). */
+  /** Банкомат уезжает вбок — потом done(). */
   private leave(done: () => void): void {
-    if (this.isAtmOut) {
-      this.isAtmOut = false;
-      this.atm.slideOut(done);
-      return;
-    }
-    this.hand.setTexture(HAND_FIST_TEXTURE);
-    this.face.hide();
-    this.scene.tweens.add({ targets: this.hand, x: HAND_IN_X, delay: HAND_HOLD_TIME, duration: HAND_MOVE_TIME, ease: 'Cubic.easeIn' });
-    this.returnHome(HAND_HOLD_TIME + HAND_MOVE_TIME, done);
+    this.atm.slideOut(done);
   }
 
-  /** Коллектор берёт оружие: из темноты выходит рука в кулак; отпустил — рука уходит обратно. Ход Коллектора в рулетке. */
-  grip(isHolding: boolean): void {
-    if (isHolding) this.hand.setTexture(HAND_FIST_TEXTURE);
-    this.moveHand(isHolding ? HAND_OUT_X : HAND_IN_X);
-  }
-
-  /** Коллектор ранен: в комнате красная вспышка, рука отдёргивается и уходит, вид возвращается к автомату — потом done(). */
-  recoil(done: () => void): void {
-    const hit = this.scene.add.rectangle(DARK_ROOM.x, DARK_ROOM.y, DARK_ROOM.width, DARK_ROOM.height, HIT_COLOR, HIT_ALPHA).setDepth(FRONT_DEPTH + 1);
-    this.scene.tweens.add({ targets: hit, alpha: 0, duration: HIT_FLASH_TIME, onComplete: () => hit.destroy() });
-    this.scene.tweens.add({ targets: this.hand, x: HAND_IN_X, duration: HIT_TIME, ease: 'Cubic.easeOut' });
-    this.face.hide();
-    this.returnHome(HIT_FLASH_TIME, done);
-  }
-
-  /** Фишек не хватает: экран автомата гаснет, на нём мигает красное GOOD LUCK — впереди игра с Коллектором (или KABOOM). */
-  warnGoodLuck(text = 'GOOD LUCK'): void {
-    this.goodLuck = this.screenTitle(text, GOOD_LUCK_DEPTH);
+  /** Конец забега: экран автомата гаснет, на нём мигает красное KABOOM. */
+  warnGoodLuck(text: string): void {
+    this.goodLuck = this.screenTitle(text, SCREEN_TITLE_DEPTH);
   }
 
   /** Автомат взрывается: белая вспышка на весь вид и огненные шары из экрана в разные стороны. */
@@ -379,9 +205,10 @@ export class Collector {
     }
   }
 
-  /** Игра с Коллектором кончилась, а забег идёт: GOOD LUCK тает, экран автомата снова горит. */
+  /** Заголовок на экране автомата (KABOOM) тает, экран снова горит. Пусто — ничего не делает. */
   clearGoodLuck(): void {
     const parts = this.goodLuck;
+    if (parts.length === 0) return;
     this.goodLuck = [];
     this.scene.tweens.killTweensOf(parts);
     this.scene.tweens.add({ targets: parts, alpha: 0, duration: GOOD_LUCK_FADE_TIME, onComplete: () => parts.forEach((part) => part.destroy()) });
@@ -403,19 +230,14 @@ export class Collector {
     camera.fadeOut(BLACKOUT_TIME, 0, 0, 0);
     camera.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       camera.setScroll(HOME_SCROLL, 0); // вид снова на автомате
-      this.hand.setX(HAND_IN_X);
       this.atm.hide();
-      this.isAtmOut = false;
-      this.face.hide();
-      this.room.hide();
-      this.roomMode = 'none';
       dark();
       camera.fadeIn(BLACKOUT_TIME);
     });
   }
 
-  /** Конец забега: всё темнеет, экран автомата чёрный, на нём мигает title (DEATH или KABOOM). Ниже — счёт, рекорд и «ЗАНОВО». */
-  showDeath(closedDebts: number, record: number, restart: () => void, title = 'DEATH'): void {
+  /** Конец забега: всё темнеет, экран автомата чёрный, на нём мигает title (KABOOM). Ниже — счёт, рекорд и «ЗАНОВО». */
+  showDeath(closedDebts: number, record: number, restart: () => void, title: string): void {
     const shade = this.scene.add.rectangle(CENTER_X, CENTER_Y, VIEW_WIDTH, 640, 0x000000, 0.6); // на весь вид у автомата
     shade.setInteractive(); // ловит клики, чтобы кнопки под затемнением не нажимались
     const scoreText = `${t('debtsPaid')}: ${closedDebts} · ${t('best')}: ${record}`;

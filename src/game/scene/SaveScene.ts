@@ -1,3 +1,4 @@
+import { copyEffects } from '../items';
 import { tapePrice, type RunSave } from '../save';
 import { hasCassette } from '../progress';
 import { ShopScene } from './ShopScene';
@@ -6,13 +7,13 @@ import { ShopScene } from './ShopScene';
  * Слой кассеты (шаг 45). В магазине кассета продаётся за билеты: 2, 3, 4… по купленным за забег.
  * Купил — она ложится в отделение REC видеомагнитофона. Нажми на неё между прокрутками — она запишет забег как есть
  * (посреди раунда тоже) и переедет в отделение PLAY; переписать нельзя. Нажми на записанную между прокрутками
- * или у Коллектора (не в рулетке) — плёнка перематывается, сцена перезапускается с записью, а автомат съедает кассету:
- * в магазине можно купить новую. Запись живёт только в памяти: закрыл вкладку — забег заново.
+ * (у Коллектора и в последнем шансе уже поздно) — плёнка перематывается, сцена перезапускается с записью, а автомат
+ * съедает кассету: в магазине можно купить новую. Запись живёт только в памяти: закрыл вкладку — забег заново.
  */
 export abstract class SaveScene extends ShopScene {
-  /** Магазин открылся (isAfterShot — после выстрела в автомат): у кассеты — её цена. */
-  protected openShop(isAfterShot = false): void {
-    super.openShop(isAfterShot);
+  /** Магазин открылся: у кассеты — её цена. */
+  protected openShop(): void {
+    super.openShop();
     this.showTapePrice();
   }
 
@@ -57,7 +58,7 @@ export abstract class SaveScene extends ShopScene {
   }
 
   /**
-   * Записать забег как есть (REC): раунд, прокрутки, кон, серию, фишки, билеты, предметы, амулеты, автомат, рулетку.
+   * Записать забег как есть (REC): раунд, прокрутки, кон, серию, фишки, билеты, предметы, амулеты с копиями, автомат.
    * Только между прокрутками у автомата; не сейчас — кассета трясётся. Переписать нельзя: запись одна, пока кассету не съест автомат.
    * Заморозка столбца и прошлая сетка в снимок не попадают: после отката первая прокрутка начинается без них.
    */
@@ -81,14 +82,14 @@ export abstract class SaveScene extends ShopScene {
       tickets: this.tickets,
       slots: this.slots,
       shelf: [...this.shelf],
-      effects: { ...this.itemEffects },
+      effects: copyEffects(this.itemEffects), // глубокая копия: symbolBoost — тоже объект
       sockets: this.sockets,
       amulets: [...this.amulets],
+      amuletCounts: { ...this.amuletCounts },
       bones: this.bones,
-      roulettes: this.roulettes,
-      bulletsBought: this.bulletsBought,
       machine: this.machine,
       diceDrought: this.diceDrought,
+      lastChanceUsed: this.lastChanceUsed, // на записи флаг такой, какой был: запись до нехватки — шанс ещё есть
     };
     this.tapeState = 'recorded';
     this.tooltip.hide();
@@ -98,7 +99,7 @@ export abstract class SaveScene extends ShopScene {
   }
 
   /**
-   * Откатиться (PLAY): можно между прокрутками и у Коллектора, когда он ждёт (canRewind), в рулетке — нельзя.
+   * Откатиться (PLAY): можно между прокрутками (canRewind); у Коллектора и в последнем шансе — уже нельзя.
    * Плёнка перематывается, автомат съедает кассету, вид гаснет — сцена перезапускается с записью (create её загрузит).
    * Не сейчас — кассета трясётся.
    */
@@ -109,7 +110,6 @@ export abstract class SaveScene extends ShopScene {
       this.cassette.denyUse();
       return;
     }
-    this.isChoosingDeal = false; // Коллектор больше ничего не предлагает: ни амулеты, ни рулетку
     this.isRewinding = true;
     this.tapeRecord = null;
     this.tooltip.hide();
@@ -121,7 +121,7 @@ export abstract class SaveScene extends ShopScene {
 
   /**
    * Сцена перезапустилась после отката: забег с кассеты. Зовётся до частей — они строятся по числу мест, гнёзд и долгу.
-   * Прокрутки, кон, серия, кровь, клевер, щит бронежилета — как на записи (раунд идёт с того же места).
+   * Прокрутки, кон, серия, кровь, клевер, щит бронежилета, амулеты с их копиями — как на записи (раунд идёт с того же места).
    * Ржавчина не записывается. Кассету съел автомат: её снова продают.
    */
   protected loadTape(record: RunSave, tapesBought: number): void {
@@ -133,31 +133,33 @@ export abstract class SaveScene extends ShopScene {
     this.isLuckyNext = record.isLuckyNext;
     this.roundShields = record.roundShields;
     this.isDebtNewsShown = record.isDebtNewsShown;
-    this.debt = record.debt; // после выстрела в автомат он больше обычного
+    this.debt = record.debt; // долг этого раунда: на Счастливом автомате он больше
     this.balance = record.balance;
     this.tickets = record.tickets;
     this.slots = record.slots;
     this.shelf = [...record.shelf];
-    this.itemEffects = { ...record.effects };
+    this.itemEffects = copyEffects(record.effects);
     this.sockets = record.sockets;
     this.amulets = [...record.amulets];
+    this.amuletCounts = { ...record.amuletCounts };
     this.bones = record.bones;
-    this.roulettes = record.roulettes;
-    this.bulletsBought = record.bulletsBought;
     this.machine = record.machine; // корпус его цвета и значок покажет MachineBadge — части строятся после
     this.diceDrought = record.diceDrought;
+    // Шанс — точно как на записи: записано до нехватки — он ещё есть; записано после — уже израсходован.
+    this.lastChanceUsed = record.lastChanceUsed;
     this.tapesBought = tapesBought;
     this.tapeState = 'forSale';
     this.newsRound = record.round; // новость этого раунда на записи уже была
   }
 
   /**
-   * Части созданы: полка, амулеты, включённые предметы, лампочки, кон и записка — как на кассете. Вид загорается, в углу «▶».
+   * Части созданы: полка, амулеты с копиями, включённые предметы, лампочки, кон и записка — как на кассете. Вид загорается, в углу «▶».
    * Раунд идёт с того же места, новый (startRound) не начинается; фазу проверяем, как в начале раунда.
+   * Последний шанс — ровно как на записи (loadTape): запись до нехватки — шанс ещё есть, после — израсходован.
    */
   protected playTape(): void {
     this.itemShelf.setItems(this.shelf);
-    this.amuletRack.setAmulets(this.amulets);
+    this.amuletRack.setAmulets(this.amulets, this.amuletCounts);
     this.showItemEffects();
     this.showBones();
     this.collector.markNote(this.debt, this.hasEnoughForDebt());

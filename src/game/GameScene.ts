@@ -7,7 +7,6 @@ import { AmuletCase } from './parts/amuletCase';
 import { AmuletRack } from './parts/amuletRack';
 import { Atmosphere } from './parts/atmosphere';
 import { BrokenScreen } from './parts/brokenScreen';
-import { BulletStand } from './parts/bulletStand';
 import { Cassette } from './parts/cassette';
 import { ChipCase } from './parts/chipCase';
 import { Collector } from './parts/collector';
@@ -20,22 +19,22 @@ import { MachineBadge } from './parts/machineBadge';
 import { MachinePanel } from './parts/panel';
 import { PauseScreen } from './parts/pauseScreen';
 import { PayoutWindow } from './parts/payoutWindow';
+import { RerollMenu } from './parts/rerollMenu';
 import { Reveal } from './parts/reveal';
-import { ShotgunTable } from './parts/shotgunTable';
 import { addRotateHint } from './parts/rotateHint';
 import { SettingsPanel } from './parts/settingsPanel';
 import { Shop } from './parts/shop';
 import { SlotScreen } from './parts/slotScreen';
 import { WallScreen } from './parts/wallScreen';
 import { Tooltip } from './parts/tooltip';
-import { ShotScene } from './scene/ShotScene';
+import { CollectorScene } from './scene/CollectorScene';
 import { MAX_SLOTS } from './items';
 import { hasAmulets, hasCassette, hasDrum, isTutorialDone, markTutorialDone } from './progress';
 import type { RunSave } from './save';
 import { getVolumes, isSilent, setVolume, toggleSound, volumeShare, type VolumeKind } from './settings';
 
 // Клавиши 1–9 и 0: в игре 1–8 — места на полках; в магазине 1–4 — ряды торгового автомата, 5–8 — места витрины амулетов,
-// 9 — кассета, 0 — барабан (а «-» — патрон); у Коллектора 1–6 — амулеты в лотке. Вне магазина 9 — вставить кассету в видеомагнитофон.
+// 9 — кассета, 0 — барабан. Вне магазина 9 — вставить кассету в видеомагнитофон.
 const NUMBER_KEYS = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE', 'ZERO'];
 const VENDING_KEYS = 4; // сколько клавиш у торгового автомата
 const CASE_KEYS = 4; // сколько клавиш у витрины амулетов; за ними — кассета (9) и барабан (0)
@@ -45,9 +44,9 @@ const MUSIC_TICK = 100; // как часто музыка планирует у�
 /**
  * Единственная сцена игры «Долговая яма» — верхний слой: создаёт части автомата и разбирает клавиши.
  * Сама игра — в слоях ниже (папка scene/): BaseScene → PhaseScene → BonusScene → MachineScene → RoundScene → DealerScene → ShopScene →
- * SaveScene → CollectorScene → ShotScene → GameScene. Здесь же — поворот к монитору символов и обратно.
+ * SaveScene → CollectorScene → GameScene. Здесь же — поворот к монитору символов и обратно.
  */
-export class GameScene extends ShotScene {
+export class GameScene extends CollectorScene {
   private corner!: CornerButtons; // значки в углу: настройки, «звук выключен», во весь экран
   private pauseScreen!: PauseScreen; // экран паузы
   private settingsPanel!: SettingsPanel; // настройки на экране паузы
@@ -67,29 +66,21 @@ export class GameScene extends ShotScene {
     this.monitor = new WallScreen(this, this.round, () => this.toggleMonitor()); // мебель комнаты: под рычагом и рукой Коллектора
     this.tooltip = new Tooltip(this);
     this.screen = new SlotScreen(this, this.sfx);
-    this.brokenScreen = new BrokenScreen(this); // поверх сетки: дыра и трещины после выстрела в автомат
+    this.brokenScreen = new BrokenScreen(this); // поверх сетки: дыра и трещины после взрыва (KABOOM)
     this.machineBadge = new MachineBadge(this, machineBody, this.machine, this.tooltip);
     this.panel = new MachinePanel(this, () => this.spin());
     this.payout = new PayoutWindow(this, () => this.take());
     this.itemShelf = new ItemShelf(this, this.slots, (slot) => this.useItem(slot), this.tooltip);
+    // Окно перемешки и подмены — после полки: текстуры предметов уже созданы (createItemTextures в ItemShelf).
+    this.rerollMenu = new RerollMenu(this, (id) => this.chooseReroll(id), () => this.skipReroll(), this.tooltip);
     this.amuletRack = new AmuletRack(this, this.sockets, this.tooltip);
-    // Полка с включёнными предметами и гнёзда амулетов — до Коллектора: его тёмная комната закрывает всё, что нарисовано раньше неё.
+    // Полка с включёнными предметами и гнёзда амулетов — до Коллектора: его банкомат, GOOD LUCK и экран KABOOM ложатся поверх всего, что нарисовано раньше.
     this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
     this.chipCase = new ChipCase(this);
     this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip);
     this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip, hasAmulets());
     this.cassette = new Cassette(this, hasCassette() && this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip);
     this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx, hasDrum());
-    this.bulletStand = new BulletStand(this, () => this.buyBullet(), this.tooltip);
-    this.shotgunTable = new ShotgunTable(
-      this,
-      () => this.playRoulette(),
-      (target) => this.shoot(target),
-      (index) => this.giveAmulet(index),
-      () => this.useMagnifier(this.magnifierSlot()),
-      this.tooltip,
-      this.sfx,
-    );
     this.dealerTable = new DealerTable(this, (dir) => this.guess(dir), () => this.stopDealing(), this.sfx);
     this.effects = new Effects(this);
     this.atmosphere = new Atmosphere(this);
@@ -221,6 +212,7 @@ export class GameScene extends ShotScene {
     this.tooltip.hide();
     this.pauseScreen.relabel();
     this.monitor.relabel();
+    this.rerollMenu.relabel(); // окно перемешки: заголовок по текущему режиму
     if (!this.isPaused) this.collector.flipNote(this.debt, this.hasEnoughForDebt());
   }
 
@@ -274,7 +266,6 @@ export class GameScene extends ShotScene {
     });
     NUMBER_KEYS.forEach((key, index) => this.onKey(key, () => this.onNumber(index)));
     this.onKey('D', () => this.payEarly()); // отдать долг раньше: фишек на табло хватает — записка светится
-    this.onKey('MINUS', () => this.buyBullet()); // в магазине — купить патрон
     this.onKey('UP', () => this.onUp());
     this.onKey('DOWN', () => this.onDown());
     this.onKey('PLUS', () => this.guess('equal')); // у Дилера — «=»: в Phaser клавиша «= / +» зовётся PLUS (код 187)
@@ -294,51 +285,50 @@ export class GameScene extends ShotScene {
   }
 
   /**
-   * Пробел: на паузе — продолжить, у монитора — назад к автомату, у Коллектора — играть в рулетку,
-   * в магазине — назад к автомату, в игре — дёрнуть рычаг, после проигрыша — «заново» (через 0,8 с).
+   * Пробел: на паузе — продолжить, в окне перемешки — пропустить его, у монитора — назад к автомату,
+   * в последнем шансе — забрать кон, в магазине — назад к автомату, в игре — дёрнуть рычаг,
+   * после проигрыша — «заново» (через 0,8 с).
    */
   private onSpace(): void {
     if (this.isPaused) this.resumeGame();
+    else if (this.isRerolling) this.skipReroll(); // окно открыто: ни прокрутки, ни «забрать» — только пропуск
     else if (this.isAtMonitor) this.lookBack();
-    else if (this.isChoosingDeal) this.playRoulette();
+    else if (this.isLastChance) this.stopLastChance();
     else if (this.isShopping) this.leaveShop();
     else if (!this.isGameOver) this.spin();
     else if (this.canRestartWithSpace) this.restartGame();
   }
 
   /**
-   * Enter: на паузе — продолжить, рука протянута — отдать долг,
-   * у Коллектора — играть в рулетку, у Дилера — остановиться, иначе — забрать кон.
+   * Enter: на паузе — продолжить, в окне перемешки — пропустить его, банкомат выехал — отдать долг,
+   * у Дилера — остановиться, иначе — забрать кон (в последнем шансе это его банкует).
    */
   private onEnter(): void {
     if (this.isPaused) this.resumeGame();
+    else if (this.isRerolling) this.skipReroll();
     else if (this.isAwaitingPayment) this.payDebt();
-    else if (this.isChoosingDeal) this.playRoulette();
     else if (this.isDealing) this.stopDealing();
     else this.take();
   }
 
   /**
    * Клавиша 1–9 или 0: в магазине — купить; вне магазина 9 — кассета (записать или откатиться);
-   * у Коллектора 1–6 — амулет, в игре 1–8 — включить предмет с полки.
+   * в игре 1–8 — включить предмет с полки.
    */
   private onNumber(index: number): void {
     if (this.isShopping) this.onShopNumber(index);
     else if (index === TAPE_KEY) this.useTape();
-    else if (this.isChoosingDeal) this.giveAmulet(index);
     else if (index < MAX_SLOTS) this.useItem(index);
   }
 
-  /** ↑: в рулетке — выстрел в Коллектора, у Дилера — «>» (больше). */
+  /** ↑: у Дилера — «>» (больше). */
   private onUp(): void {
-    if (this.isAiming) this.shoot('collector');
-    else this.guess('higher');
+    this.guess('higher');
   }
 
-  /** ↓: в рулетке — выстрел в себя, у Дилера — «<» (меньше). */
+  /** ↓: у Дилера — «<» (меньше). */
   private onDown(): void {
-    if (this.isAiming) this.shoot('player');
-    else this.guess('lower');
+    this.guess('lower');
   }
 
   /** Клавиша в магазине: 1–4 — ряды торгового автомата, 5–8 — витрина амулетов, 9 — кассета, 0 — барабан. */

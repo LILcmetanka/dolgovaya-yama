@@ -263,9 +263,9 @@ export class AmuletCase {
 
   /**
    * Ценники: хватает (фишек для билета, билетов для остального) — жёлтые, нет — красные.
-   * Нет свободного гнезда — амулеты тусклые. socketPrice — цена следующего гнезда (или null).
+   * Амулет, который некуда поставить (amuletReady[place] — false), — тусклый. socketPrice — цена следующего гнезда (или null).
    */
-  refresh(balance: number, tickets: number, hasFreeSocket: boolean, socketPrice: number | null): void {
+  refresh(balance: number, tickets: number, amuletReady: boolean[], socketPrice: number | null): void {
     if (socketPrice !== this.prices[SOCKET_PLACE]) {
       this.prices[SOCKET_PLACE] = socketPrice;
       this.showPlace(SOCKET_PLACE);
@@ -275,7 +275,7 @@ export class AmuletCase {
       const money = paysWithChips(place) ? balance : tickets;
       this.priceTexts[place].setColor(price <= money ? LED_COLOR : RED_TEXT);
       const isAmulet = place < AMULET_OFFER_SIZE;
-      this.goods[place].setAlpha(isAmulet && !hasFreeSocket ? DIM_ALPHA : 1);
+      this.goods[place].setAlpha(isAmulet && !amuletReady[place] ? DIM_ALPHA : 1);
     });
   }
 

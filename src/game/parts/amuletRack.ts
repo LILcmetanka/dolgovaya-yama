@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { amuletTexture, createAmuletTextures, createSocketCapTexture, SOCKET_CAP_TEXTURE } from '../decor';
-import { AMULETS, MAX_SOCKETS, type Amulet, type AmuletId } from '../amulets';
+import { AMULETS, countOf, MAX_SOCKETS, type Amulet, type AmuletCounts, type AmuletId } from '../amulets';
 import { t } from '../lang';
 import { AMULET_SIZE, SOCKET_RADIUS, SOCKET_XS, SOCKET_Y } from '../layout';
 import { addText, GOLD_TEXT, POPUP_DEPTH } from '../theme';
@@ -23,6 +23,7 @@ export class AmuletRack {
   private readonly caps: Phaser.GameObjects.Image[] = []; // заглушки закрытых гнёзд
   private readonly badges: Phaser.GameObjects.Image[] = []; // амулет в гнезде; пустое гнездо — картинка скрыта
   private readonly amulets: (Amulet | null)[] = []; // какой амулет в каком гнезде
+  private counts: AmuletCounts = {}; // сколько копий каждого амулета (шаг 62б: дубли не занимают гнёзда)
   private readonly copyLabels: Phaser.GameObjects.Text[] = []; // «×N» под гнездом: сколько копий (видна от двух)
   private readonly bonesLabel: Phaser.GameObjects.Text; // коллекционер костей: «+45%» под его гнездом
 
@@ -67,29 +68,22 @@ export class AmuletRack {
   private hintFor(index: number): [string, string] | null {
     const amulet = this.amulets[index];
     if (!amulet) return null;
-    const copies = this.copiesInRack(amulet.id);
+    const copies = countOf(this.counts, amulet.id);
     const name = copies > 1 ? `${t(amulet.name)} ×${copies}` : t(amulet.name);
     return [name, t(amulet.description)];
   }
 
-  /** Сколько копий амулета id стоит по всем гнёздам. */
-  private copiesInRack(id: AmuletId): number {
-    return this.amulets.filter((amulet) => amulet?.id === id).length;
-  }
-
-  /** Обновить метки «×N» под гнёздами: у каждой копии — её номер среди таких же, метка видна со второй. */
+  /** Обновить метки «×N» под гнёздами: одна на гнездо, по счётчику, видна со второй копии. */
   private refreshCopies(): void {
-    const ordinals = new Map<AmuletId, number>();
     this.amulets.forEach((amulet, index) => {
       const label = this.copyLabels[index];
       if (!amulet) {
         label.setVisible(false);
         return;
       }
-      const ordinal = (ordinals.get(amulet.id) ?? 0) + 1;
-      ordinals.set(amulet.id, ordinal);
-      label.setVisible(ordinal >= 2);
-      if (ordinal >= 2) label.setX(SOCKET_XS[index] - COPY_LABEL_DX).setText(`×${ordinal}`);
+      const copies = countOf(this.counts, amulet.id);
+      label.setVisible(copies >= 2);
+      if (copies >= 2) label.setX(SOCKET_XS[index] - COPY_LABEL_DX).setText(`×${copies}`);
     });
   }
 
@@ -107,10 +101,12 @@ export class AmuletRack {
     });
   }
 
-  /** Купили амулет: он летит из (fromX, fromY) в гнездо index и там встаёт. */
-  putAmulet(index: number, amulet: Amulet, fromX: number, fromY: number): void {
-    this.amulets[index] = amulet;
+  /** Купили новый амулет: он летит из (fromX, fromY) в свободное гнездо index и там встаёт. count — сколько копий стало. */
+  putAmulet(index: number, amulet: Amulet, count: number, fromX: number, fromY: number): void {
     const badge = this.badges[index];
+    if (!badge) return; // гнезда с таким номером нет — ставить некуда
+    this.amulets[index] = amulet;
+    this.counts[amulet.id] = count;
     const flying = this.scene.add.image(fromX, fromY, amuletTexture(amulet)).setScale(1.4).setDepth(POPUP_DEPTH);
     this.scene.tweens.add({
       targets: flying,
@@ -128,8 +124,30 @@ export class AmuletRack {
     });
   }
 
-  /** Амулеты по гнёздам заново, без анимации: так бывает, когда один отдали Коллектору и остальные сдвинулись. */
-  setAmulets(amulets: Amulet[]): void {
+  /** Купили копию: она летит из (fromX, fromY) в гнездо index уже стоящего амулета — по прилёте только метка и подскок. */
+  putCopy(index: number, amulet: Amulet, count: number, fromX: number, fromY: number): void {
+    const badge = this.badges[index];
+    if (!badge) return; // гнезда с таким номером нет — лететь некуда
+    this.counts[amulet.id] = count;
+    const flying = this.scene.add.image(fromX, fromY, amuletTexture(amulet)).setScale(1.4).setDepth(POPUP_DEPTH);
+    this.scene.tweens.add({
+      targets: flying,
+      x: badge.x,
+      y: badge.y,
+      scale: 1,
+      duration: FLY_TIME,
+      ease: 'Cubic.easeInOut',
+      onComplete: () => {
+        flying.destroy();
+        this.refreshCopies();
+        this.bounce(badge);
+      },
+    });
+  }
+
+  /** Амулеты по гнёздам заново, без анимации: так бывает, когда кассета вернула забег к записи. counts — счётчики копий. */
+  setAmulets(amulets: Amulet[], counts: AmuletCounts): void {
+    this.counts = { ...counts };
     this.badges.forEach((badge, index) => {
       const amulet = amulets[index] ?? null;
       this.amulets[index] = amulet;
@@ -140,11 +158,10 @@ export class AmuletRack {
     this.refreshCopies();
   }
 
-  /** Амулет сработал: подпрыгивают все гнёзда с этим амулетом. */
+  /** Амулет сработал: подпрыгивает его гнездо (у каждого амулета оно одно). */
   trigger(id: AmuletId): void {
-    this.amulets.forEach((amulet, index) => {
-      if (amulet?.id === id) this.bounce(this.badges[index]);
-    });
+    const index = this.amulets.findIndex((amulet) => amulet?.id === id);
+    if (index >= 0) this.bounce(this.badges[index]);
   }
 
   /** Коллекционер костей: под его гнездом — сколько он уже прибавляет к выигрышам. */

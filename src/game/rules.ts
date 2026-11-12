@@ -8,6 +8,12 @@ import { GAME_CONFIG } from './gameConfig';
 
 /** Сколько прокруток даётся на один раунд. */
 export const SPINS_PER_ROUND = GAME_CONFIG.spinsPerRound;
+/**
+ * Потолок прокруток в раунде. Колокольчик 🔔 за каждый паттерн из 🔔 и буст «колокола» (вес ×2) добавляют прокрутки
+ * быстрее, чем они тратятся, — без потолка раунд не кончается никогда (симуляция шага 63а: 3000 забегов, на 10-м раунде
+ * прокруток уже 61 при двух колокольчиках). Потолок виден только в очень удачном раунде.
+ */
+export const MAX_SPINS_PER_ROUND = 30;
 /** Долг первого раунда. */
 export const DEBT_START = GAME_CONFIG.debtStart;
 /** Во сколько раз долг растёт с каждым раундом. */
@@ -42,6 +48,11 @@ export interface SlotSymbol {
 }
 
 /**
+ * Джокер 🃏 заменяет в паттерне любой платящий символ. Вынесен в константу: подмена (шаг 63б) ставит его в клетку сетки.
+ */
+export const JOKER: SlotSymbol = { id: 'joker', sign: '🃏', color: 0x312e81, weight: 8, price: 0, unlockRound: 3 };
+
+/**
  * Все символы автомата. Череп ничего не платит: паттерн из черепов сжигает кон (см. patterns.ts).
  * Джокер 🃏 заменяет в паттерне любой платящий символ. Особые символы (🎟 билет, 🎲 кубик, злые 🕷 🔒 🩸, удача 🍀 👑)
  * в паттерны не складываются — у них свои правила (TICKET_SCATTER, evil.ts, bonus.ts).
@@ -57,7 +68,7 @@ export const SYMBOLS: SlotSymbol[] = [
   { id: 'diamond', sign: '💎', color: 0x22d3ee, weight: 13, price: 15, unlockRound: 1 },
   { id: 'crown', sign: '👑', color: 0xca8a04, weight: 10, price: 0, unlockRound: 9 }, // 3 и больше на экране — бесплатные прокрутки (bonus.ts)
   { id: 'seven', sign: '7', color: 0xa855f7, weight: 9, price: 25, unlockRound: 1 },
-  { id: 'joker', sign: '🃏', color: 0x312e81, weight: 8, price: 0, unlockRound: 3 },
+  JOKER,
   { id: 'ticket', sign: '🎟', color: 0xb45309, weight: 6, price: 0, unlockRound: 2 }, // в клетке — не эмодзи, а красный билет, как на табло (decor.ts)
   { id: 'dice', sign: '🎲', color: 0x9d174d, weight: 2, price: 0, unlockRound: 4, isEvil: true },
   { id: 'spider', sign: '🕷', color: 0x3f3f46, weight: 6, price: 0, unlockRound: 6, isEvil: true },
@@ -191,4 +202,9 @@ export function streakAfterTake(streak: number): number {
 /** Сколько прокрутка кладёт на кон: выигрыш паттернов × множитель серии, округлённый до целого. */
 export function winWithMultiplier(win: number, multiplier: number): number {
   return Math.round(win * multiplier);
+}
+
+/** Прокрутки с бонусом, но не больше MAX_SPINS_PER_ROUND — иначе бонусы обгоняют трату и раунд не кончается. */
+export function spinsAfterBonus(spinsLeft: number, add: number): number {
+  return Math.min(MAX_SPINS_PER_ROUND, spinsLeft + add);
 }

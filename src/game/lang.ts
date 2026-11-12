@@ -22,6 +22,10 @@ const TEXTS = {
   warning: { ru: 'ВНИМАНИЕ', en: 'WARNING' },
   phase: { ru: 'ФАЗА', en: 'PHASE' }, // «ФАЗА 2» на стекле
   debtCovered: { ru: 'ДАЛЬШЕ — ПРИБЫЛЬ', en: "NOW IT'S PROFIT" }, // на стекле: на долг хватает — дальше крутишь себе в плюс
+  rerollAsk: { ru: 'ПОМЕНЯТЬ СЕТКУ?', en: 'CHANGE THE GRID?' }, // окно перемешки и подмены
+  rerollColumn: { ru: 'КАКОЙ СТОЛБЕЦ?', en: 'WHICH COLUMN?' },
+  rerollCell: { ru: 'КАКАЯ КЛЕТКА?', en: 'WHICH CELL?' },
+  rerollSkip: { ru: 'Пропустить', en: 'Skip' }, // ✕ в окне
   pause: { ru: 'ПАУЗА', en: 'PAUSE' }, // над знаком паузы
   // Экран на стене (WallScreen): вкладки и их надписи.
   tabSymbols: { ru: 'СИМВОЛЫ', en: 'SYMBOLS' },
@@ -31,8 +35,8 @@ const TEXTS = {
   tabEmpty: { ru: 'Пока ничего не встретил', en: 'Nothing met yet' },
   whoCollector: { ru: 'Коллектор', en: 'Collector' },
   whoCollectorWhat: {
-    ru: 'Приходит за долгом. Фишек не хватает: отдай амулет, сыграй с ним в рулетку (раз за забег) или вставь кассету',
-    en: "Comes for the debt. Short on chips: give an amulet, play roulette (once per run) or insert the tape",
+    ru: 'Приходит за долгом. Фишек не хватает: на экране GOOD LUCK, и автомат крутит сам — забери кон, когда он возьмёт порог. Добрал — чемодан платит долг, но счёт откатывается на один долг назад',
+    en: 'Comes for the debt. Short on chips: GOOD LUCK on the screen and the machine spins by itself — take the pot once it reaches the goal. Reach it and a case of chips pays the debt, but the score rolls back one debt',
   },
   whoDealer: { ru: 'Дилер', en: 'Dealer' },
   whoDealerWhat: {
@@ -40,12 +44,12 @@ const TEXTS = {
     en: 'Comes when the 🎲 drops. Guess if the next card is higher, lower or the same: ">" and "<" ×1.5, "=" ×8. Wrong: the pot burns',
   },
   howToGoal: {
-    ru: 'Цель. Отдать долг, пока не кончились прокрутки. Каждый раунд долг больше.\n\nКрути автомат: паттерны из одинаковых символов добавляют фишки в кон. Каждая прокрутка подряд поднимает множитель кона. Череп сжигает кон, пока ты его не забрал.\n\nЗабрать: кон уходит на табло, множитель сбрасывается.\n\nФишек на долг хватает: отдай его записке или руке Коллектора, потом магазин. Не хватает: у Коллектора можно отдать амулет, сыграть в рулетку (раз за забег) или вставить кассету.',
-    en: 'Goal. Pay the debt before you run out of spins. The debt grows every round.\n\nSpin the machine: patterns of matching symbols add chips to the pot. Each spin in a row raises the pot multiplier. A skull burns the pot until you take it.\n\nTake: the pot goes to the board, the multiplier resets.\n\nEnough chips for the debt: hand it to the note or the Collector, then the shop. Not enough: at the Collector you can give an amulet, play roulette (once per run) or insert the tape.',
+    ru: 'Цель. Отдать долг, пока не кончились прокрутки. Каждый раунд долг больше.\n\nКрути автомат: паттерны из одинаковых символов добавляют фишки в кон. Каждая прокрутка подряд поднимает множитель кона. Череп сжигает кон, пока ты его не забрал.\n\nЗабрать: кон уходит на табло, множитель сбрасывается.\n\nФишек на долг хватает: отдай его записке или банкомату Коллектора, потом магазин. Не хватает: на экране GOOD LUCK, и автомат крутит сам — забери кон, когда он возьмёт порог. Добрал — долг закрыт, фишки целы, счёт на один долг назад; не добрал — конец забега.',
+    en: 'Goal. Pay the debt before you run out of spins. The debt grows every round.\n\nSpin the machine: patterns of matching symbols add chips to the pot. Each spin in a row raises the pot multiplier. A skull burns the pot until you take it.\n\nTake: the pot goes to the board, the multiplier resets.\n\nEnough chips for the debt: hand it to the note or the Collector\'s ATM, then the shop. Not enough: GOOD LUCK on the screen and the machine spins by itself — take the pot once it reaches the goal. Reach it and the debt is paid, your chips stay, the score goes one debt back; miss it and the run is over.',
   },
   howToKeys: {
-    ru: 'Клавиши\nПробел: крутить, назад из магазина\nEnter: забрать кон, отдать долг\nD: отдать долг раньше\n1–8: предмет с полки\n→ или клик: этот экран\nEsc или P: пауза\nM: звук\nL: язык\n\nВ магазине\n1–4: торговый автомат\n5–8: чемодан с амулетами\n9: кассета, 0: барабан, «-»: патрон',
-    en: 'Keys\nSpace: spin, leave the shop\nEnter: take the pot, pay the debt\nD: pay the debt early\n1–8: shelf item\n→ or click: this screen\nEsc or P: pause\nM: sound\nL: language\n\nIn the shop\n1–4: vending machine\n5–8: amulet suitcase\n9: tape, 0: drum, "-": bullet',
+    ru: 'Клавиши\nПробел: крутить, назад из магазина\nEnter: забрать кон, отдать долг\nD: отдать долг раньше\n1–8: предмет с полки\n→ или клик: этот экран\nEsc или P: пауза\nM: звук\nL: язык\n\nВ магазине\n1–4: торговый автомат\n5–8: чемодан с амулетами\n9: кассета, 0: барабан',
+    en: 'Keys\nSpace: spin, leave the shop\nEnter: take the pot, pay the debt\nD: pay the debt early\n1–8: shelf item\n→ or click: this screen\nEsc or P: pause\nM: sound\nL: language\n\nIn the shop\n1–4: vending machine\n5–8: amulet suitcase\n9: tape, 0: drum',
   },
   closedSlot: { ru: 'Закрытое место', en: 'Locked slot' },
   closedSlotHow: { ru: 'Открывается за фишки в магазине', en: 'Opens for chips in the shop' },
@@ -57,24 +61,12 @@ const TEXTS = {
   socketWhat: { ru: 'Ещё одно место для амулета', en: 'One more place for an amulet' },
   ticket: { ru: 'Билет', en: 'Ticket' }, // без эмодзи 🎟: билет в игре — одна красная картинка (decor.ts)
   ticketWhat: { ru: 'На амулеты и гнёзда', en: 'Buys amulets and sockets' },
-  giveAmulet: { ru: 'Отдать — долг закрыт', en: 'Give it — debt paid' },
-  notEnough: { ru: 'Не хватит на долг', en: 'Not enough for the debt' },
-  shotgun: { ru: 'Рулетка', en: 'Roulette' }, // дробовик на столе Коллектора
-  shotgunWhat: { ru: 'Один раз за забег. Выжил — чемодан платит долг, но счёт откатывается на один долг назад', en: 'Once per run. Survive — a case of chips pays the debt, but the score rolls back one debt' },
-  liveBullet: { ru: 'Боевой', en: 'Live round' },
-  blankBullet: { ru: 'Холостой', en: 'Blank' },
-  bulletsWhat: { ru: 'Столько в барабане, порядок неизвестен', en: 'This many in the cylinder, order unknown' },
-  nextBullet: { ru: 'Выстрелит следующим', en: 'Fires next' }, // лупа показала следующий патрон
-  shootCollector: { ru: 'В Коллектора', en: 'At the Collector' },
-  shootCollectorWhat: { ru: 'Боевой — ты выжил, холостой — его ход', en: 'Live — you survive, blank — his turn' },
-  shootSelf: { ru: 'В себя', en: 'At yourself' },
-  shootSelfWhat: { ru: 'Холостой — снова твой ход, боевой — смерть', en: 'Blank — your turn again, live — death' },
   drum: { ru: 'Барабан', en: 'Wheel' }, // колесо в магазине
   drumWhat: { ru: 'Крути за фишки. Каждая следующая прокрутка — цена ×{0}', en: 'Spin for chips. Each next spin: price ×{0}' },
   tape: { ru: 'Кассета', en: 'Cassette' },
   tapeWhat: { ru: 'Запиши забег как есть — и вернись к записи, когда попадёшь в беду. Автомат съест кассету', en: 'Record the run as it is — and go back to it when things go wrong. The machine eats the tape' },
   tapeBlank: { ru: 'Чистая. Между прокрутками — запиши забег как есть, переписать нельзя', en: 'Blank. Between spins — record the run as it is, no re-recording' },
-  tapeRecorded: { ru: 'Записано. Между прокрутками или у Коллектора (не в рулетке) — вернись к записи', en: 'Recorded. Between spins or at the Collector (not in roulette) — go back to the recording' },
+  tapeRecorded: { ru: 'Записано. Между прокрутками — вернись к записи', en: 'Recorded. Between spins — go back to the recording' },
   vcr: { ru: 'Видеомагнитофон', en: 'VCR' },
   vcrWhat: { ru: 'Кассета к нему — в магазине', en: 'Its cassette is sold in the shop' },
   // Монитор справа: что делает каждый особый символ. {0}, {1} — числа из правил (их подставляет монитор).

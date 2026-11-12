@@ -60,8 +60,8 @@ export class Atm {
   }
 
   /**
-   * Выехать: хватает фишек — на экране долг, щель светится; не хватает — на экране красное мигающее GOOD LUCK
-   * (за ним — тёмная комната Коллектора). Выехал — ready().
+   * Выехать: хватает фишек — на экране долг, щель светится; не хватает — на экране красное мигающее GOOD LUCK.
+   * Выехал — ready(); после GOOD LUCK сцена начинает последний шанс (CollectorScene).
    */
   slideIn(debt: number, isEnough: boolean, ready: () => void): void {
     this.scene.tweens.killTweensOf(this.demand);
@@ -89,13 +89,13 @@ export class Atm {
       duration: SLIDE_TIME,
       ease: 'Cubic.easeIn',
       onComplete: () => {
-        this.box.setVisible(false); // «за краем» у автомата — это внутри вида тёмной комнаты: спрятанный банкомат не должен там торчать
+        this.box.setVisible(false); // «за краем» — внутри вида: спрятанный банкомат не должен торчать на экране
         done();
       },
     });
   }
 
-  /** Спрятать мгновенно (конец забега, переход в тёмную комнату). */
+  /** Спрятать мгновенно (конец забега). */
   hide(): void {
     this.scene.tweens.killTweensOf([this.box, this.slot, this.demand]);
     this.slot.setAlpha(1);

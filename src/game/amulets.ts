@@ -81,7 +81,7 @@ export const AMULETS: Amulet[] = [
   {
     id: 'insurance', sign: '🧾',
     name: { ru: 'Страховка', en: 'Insurance' },
-    description: { ru: 'Сгоревший кон уходит на табло', en: 'A burned pot still goes to your chips' },
+    description: { ru: 'Сгоревший кон не пропадает: в раунде уходит на табло, в последнем шансе остаётся собранным', en: 'A burned pot is not lost: it goes to your chips in a round, or stays collected in the last chance' },
     rarity: 'legendary',
     maxCopies: 1,
     price: 4,
@@ -149,6 +149,35 @@ export const EARLY_PAY_MIN_SPINS = 3; // долг отдан раньше, а п
 export const EARLY_PAY_TICKETS = 1;
 export const TICKET_PRICE_SHARE = 1; // билет в витрине стоит такую долю долга следующего раунда — целый долг (один за посещение)
 const TICKET_PRICE_ROUND_TO = 5; // цена билета круглая: до 5 фишек
+
+/**
+ * Сколько копий каждого амулета: в гнёздах стоят уникальные амулеты, а дубли считаются счётчиком (шаг 62б).
+ * Ключа нет — копий этого амулета нет; нулевые ключи не храним.
+ */
+export type AmuletCounts = Partial<Record<AmuletId, number>>;
+
+/** Сколько копий амулета id по счётчикам. */
+export function countOf(counts: AmuletCounts, id: AmuletId): number {
+  return counts[id] ?? 0;
+}
+
+/** Добавить одну копию амулета id (мутация счётчика). */
+export function addCopy(counts: AmuletCounts, id: AmuletId): void {
+  counts[id] = countOf(counts, id) + 1;
+}
+
+/**
+ * Развернуть счётчики в список id по числу копий (в порядке AMULETS). Такой список нужен существующим функциям
+ * (copiesOf, winFactor, amuletWeight и остальным) — они считают копии по AmuletId[] и их не переписываем.
+ */
+export function amuletIdsFrom(counts: AmuletCounts): AmuletId[] {
+  const ids: AmuletId[] = [];
+  for (const amulet of AMULETS) {
+    const count = countOf(counts, amulet.id);
+    for (let i = 0; i < count; i++) ids.push(amulet.id);
+  }
+  return ids;
+}
 
 /** Сколько копий амулета id у игрока (стакинг: одинаковые амулеты усиливают друг друга). */
 export function copiesOf(owned: AmuletId[], id: AmuletId): number {

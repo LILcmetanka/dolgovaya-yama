@@ -260,7 +260,7 @@ export class Cassette {
     this.scene.tweens.add({ targets: this.glow, alpha: GLOW_MIN, duration: GLOW_TIME, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
   }
 
-  /** Сейчас нельзя ни записать, ни вставить (идёт прокрутка, рулетка…) — кассета трясётся. */
+  /** Сейчас нельзя ни записать, ни вставить (идёт прокрутка, последний шанс…) — кассета трясётся. */
   denyUse(): void {
     if (this.isMoving) return;
     this.shake([this.vcrTape, ...this.vcrReels], [this.tapeX, this.tapeX - TAPE_REEL_DX, this.tapeX + TAPE_REEL_DX]);

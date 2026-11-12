@@ -1,11 +1,10 @@
-import { amuletPrice, copiesOf, randomAmuletOffer, socketPrice, ticketPrice } from '../amulets';
+import { addCopy, amuletPrice, countOf, randomAmuletOffer, socketPrice, ticketPrice } from '../amulets';
 import { amuletKey, itemKey, see, WHO_COLLECTOR } from '../codex';
 import { characterDebt } from '../characters';
 import { canWin, DRUM_SECTORS, drumChips, drumPrice, prizeItem, randomSector, type DrumPrize } from '../drum';
 import { itemPrice, MAX_SLOTS, randomOffer, slotPrice } from '../items';
 import { hasAmulets, hasDrum } from '../progress';
 import { debtForRound } from '../rules';
-import { debtAfterShot } from '../shot';
 import type { SoundName } from '../sound';
 import { GOLD_TEXT } from '../theme';
 import { SOCKET_PLACE, TICKET_PLACE } from '../parts/amuletCase';
@@ -27,16 +26,16 @@ function prizeSound(prize: DrumPrize): SoundName {
  */
 export abstract class ShopScene extends DealerScene {
   /**
-   * Долг отдан (или пропущен выстрелом в автомат — isAfterShot: тогда следующий долг ×1,5): на записке следующий долг
-   * (записка переворачивается), вид поворачивается к магазину. Иначе долг — как на этом автомате: на Счастливом он больше.
+   * Долг отдан (или пропущен): на записке следующий долг (записка переворачивается), вид поворачивается к магазину.
+   * Долг — как на этом автомате: на Счастливом он больше.
    */
-  protected openShop(isAfterShot = false): void {
+  protected openShop(): void {
     this.round += 1;
     const debt = debtForRound(this.round);
-    this.debt = isAfterShot ? debtAfterShot(debt) : characterDebt(debt, this.machine);
+    this.debt = characterDebt(debt, this.machine);
     this.updateRecord();
     this.collector.flipNote(this.debt, this.hasEnoughForDebt());
-    const offer = randomOffer();
+    const offer = randomOffer(this.round);
     this.offer = offer;
     const amuletOffer = hasAmulets() ? randomAmuletOffer(this.amuletIds()) : [];
     this.amuletOffer = amuletOffer;
@@ -126,27 +125,40 @@ export abstract class ShopScene extends DealerScene {
     else this.buyAmulet(place);
   }
 
-  /** Купить амулет за билеты: он летит из витрины в следующее свободное гнездо и действует со следующей прокрутки. */
+  /** Купить амулет за билеты: он летит из витрины в гнездо. Новый амулет — в свободное гнездо, копия уже стоящего — в его гнездо. */
   private buyAmulet(place: number): void {
     const amulet = this.amuletOffer[place];
     if (!amulet) return;
-    if (copiesOf(this.amuletIds(), amulet.id) >= amulet.maxCopies) {
+    if (countOf(this.amuletCounts, amulet.id) >= amulet.maxCopies) {
       this.sfx.play('deny');
       this.amuletCase.deny(place); // копий уже под потолок — ценник трясётся
       return;
     }
-    const price = amuletPrice(amulet);
-    if (price > this.tickets || this.amulets.length >= this.sockets) {
+    const socket = this.amulets.findIndex((owned) => owned.id === amulet.id); // гнездо этого амулета; −1 — такого ещё нет
+    if (socket < 0 && this.amulets.length >= this.sockets) {
       this.sfx.play('deny');
-      this.amuletCase.deny(place); // не хватает билетов или нет свободного гнезда — ценник трясётся
+      this.amuletCase.deny(place); // амулет новый, а свободного гнезда нет — ценник трясётся
       return;
     }
-    const socket = this.amulets.length; // гнёзда заполняются по порядку
+    const price = amuletPrice(amulet);
+    if (price > this.tickets) {
+      this.sfx.play('deny');
+      this.amuletCase.deny(place); // не хватает билетов — ценник трясётся
+      return;
+    }
     this.tickets -= price;
-    this.amulets.push(amulet);
     this.amuletOffer[place] = null;
+    const isNew = socket < 0;
+    let index = socket;
+    if (isNew) {
+      index = this.amulets.length;
+      this.amulets.push(amulet); // гнездо занято сразу: второй быстрый клик его уже не получит
+    }
+    addCopy(this.amuletCounts, amulet.id);
+    const count = countOf(this.amuletCounts, amulet.id); // сколько копий станет после этой покупки
     this.amuletCase.sell(place, (x, y) => {
-      this.amuletRack.putAmulet(socket, amulet, x, y);
+      if (isNew) this.amuletRack.putAmulet(index, amulet, count, x, y); // анимация — только когда амулет долетел
+      else this.amuletRack.putCopy(index, amulet, count, x, y);
       this.showBones();
     });
     this.afterPurchase();
@@ -251,7 +263,9 @@ export abstract class ShopScene extends DealerScene {
    */
   protected refreshShop(): void {
     this.shop.refresh(this.balance, this.shelf.includes(null), slotPrice(this.slots, this.debt));
-    this.amuletCase.refresh(this.balance, this.tickets, this.amulets.length < this.sockets, socketPrice(this.sockets));
+    // Амулет в витрине готов, если есть свободное гнездо (для нового) или он уже стоит (копию докупаем в то же гнездо).
+    const amuletReady = this.amuletOffer.map((amulet) => amulet !== null && (this.amulets.length < this.sockets || countOf(this.amuletCounts, amulet.id) > 0));
+    this.amuletCase.refresh(this.balance, this.tickets, amuletReady, socketPrice(this.sockets));
     const drumCost = drumPrice(this.drumSpins, this.debt);
     this.drum.showPrice(drumCost, drumCost <= this.balance);
     this.drum.showAvailable(this.drumSectors());

@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
-import { multiplierStep, START_SOCKETS, type Amulet, type AmuletId } from '../amulets';
+import { amuletIdsFrom, multiplierStep, START_SOCKETS, type Amulet, type AmuletCounts, type AmuletId } from '../amulets';
 import { resetCodex } from '../codex';
 import { ORDINARY, type MachineCharacter } from '../characters';
-import { noEffects, START_SLOTS, type Item, type ItemEffects, type ShopItem } from '../items';
+import { garlicOn, noEffects, START_SLOTS, type Item, type ItemEffects, type ShopItem } from '../items';
 import { PHASES, type Phase } from '../phases';
+import { lastChanceThreshold } from '../lastChance';
 import { hasAmulets, markTutorialDone } from '../progress';
 import { debtForRound, multiplierForStreak, SPINS_PER_ROUND } from '../rules';
 import type { RunSave, TapeState } from '../save';
@@ -13,7 +14,6 @@ import type { AmuletCase } from '../parts/amuletCase';
 import type { AmuletRack } from '../parts/amuletRack';
 import type { Atmosphere } from '../parts/atmosphere';
 import type { BrokenScreen } from '../parts/brokenScreen';
-import type { BulletStand } from '../parts/bulletStand';
 import type { Cassette } from '../parts/cassette';
 import type { ChipCase } from '../parts/chipCase';
 import type { Collector } from '../parts/collector';
@@ -24,8 +24,8 @@ import type { ItemShelf } from '../parts/itemShelf';
 import type { MachineBadge } from '../parts/machineBadge';
 import type { MachinePanel } from '../parts/panel';
 import type { PayoutWindow } from '../parts/payoutWindow';
+import type { RerollMenu } from '../parts/rerollMenu';
 import type { Reveal } from '../parts/reveal';
-import type { ShotgunTable } from '../parts/shotgunTable';
 import type { Shop } from '../parts/shop';
 import type { SlotScreen } from '../parts/slotScreen';
 import type { WallScreen } from '../parts/wallScreen';
@@ -60,11 +60,11 @@ function saveRecord(record: number): void {
  * Сцена игры собрана слоями — каждый слой в своём файле добавляет свою часть игры:
  * BaseScene (состояние забега и табло) → PhaseScene (фазы) → BonusScene (короны, клевер, джекпот) →
  * MachineScene (характер автомата: ржавчина, новый автомат) → RoundScene (прокрутка, кон, предметы) → DealerScene (игра Дилера) →
- * ShopScene (магазин) → SaveScene (кассета: записать забег и откатиться) → CollectorScene (расплата и игра с Коллектором) →
- * ShotScene (выстрел в автомат) → GameScene (создаёт части и разбирает клавиши).
+ * ShopScene (магазин) → SaveScene (кассета: записать забег и откатиться) → CollectorScene (расплата и последний шанс) →
+ * GameScene (создаёт части и разбирает клавиши).
  *
  * Этот слой — состояние забега в простых полях и части автомата (их создаёт GameScene).
- * Правила — в rules.ts, patterns.ts, items.ts, amulets.ts, collectorGame.ts, shot.ts и characters.ts,
+ * Правила — в rules.ts, patterns.ts, items.ts, amulets.ts, lastChance.ts и characters.ts,
  * картинки и анимации — в частях из parts/: сцена говорит им, что показать.
  */
 export abstract class BaseScene extends Phaser.Scene {
@@ -83,32 +83,33 @@ export abstract class BaseScene extends Phaser.Scene {
   protected itemEffects: ItemEffects = noEffects(); // какие предметы сейчас включены
   protected offer: (ShopItem | null)[] = []; // что лежит в торговом автомате; купленное — null
   protected sockets = 0; // сколько гнёзд для амулетов открыто
-  protected amulets: Amulet[] = []; // амулеты в гнёздах, по порядку гнёзд
+  protected amulets: Amulet[] = []; // амулеты в гнёздах, по порядку гнёзд (каждый — уникальный, дубли — счётчиком ниже)
+  protected amuletCounts: AmuletCounts = {}; // сколько копий каждого амулета (шаг 62б: копии не занимают гнёзда)
   protected amuletOffer: (Amulet | null)[] = []; // что лежит в витрине амулетов; купленное — null
   protected isTicketForSale = false; // в витрине ещё лежит билет за фишки
   protected drumSpins = 0; // сколько раз крутил барабан в этом магазине — каждая следующая прокрутка дороже
   protected bones = 0; // сколько паттернов из черепов выпало за забег — для коллекционера костей
   protected roundShields = 0; // сколько ещё черепов в этом раунде отобьёт бронежилет
-  protected roulettes = 0; // сколько раз в этом забеге сыграл с Коллектором в рулетку — она одна за забег
-  protected bulletsBought = 0; // сколько патронов куплено за забег — каждый следующий дороже
-  protected machine: MachineCharacter = ORDINARY; // какой автомат стоит: в начале забега обычный, после выстрела — с характером
+  protected machine: MachineCharacter = ORDINARY; // какой автомат стоит: в начале забега обычный, дальше приходит событием на сетке (шаг 67)
   protected newsRound = 0; // в каком раунде уже показали новость о новом символе — второй раз не показываем
   protected isDebtNewsShown = false; // в этом раунде уже показали «НА ДОЛГ ХВАТАЕТ» — второй раз не показываем
   protected diceDrought = 0; // сколько прокруток подряд не было кубика — его шанс растёт («подстраховка»)
   protected isBloodNext = false; // на экране была кровь: следующая прокрутка кровавая
   protected isLuckyNext = false; // на экране был клевер: следующая прокрутка — с паттерном наверняка
   protected freeSpins = 0; // сколько бесплатных прокруток за короны ещё впереди — они крутятся сами
+  protected freeSpinsGiven = 0; // сколько бесплатных прокруток уже дали в этом раунде — потолок MAX_FREE_SPINS_PER_ROUND
   protected phase: Phase = PHASES[0]; // какая фаза сейчас (phases.ts) — по числу закрытых долгов
   protected tapeState: TapeState = 'forSale'; // кассета: продаётся, чистая (в REC) или записана (в PLAY)
   protected tapesBought = 0; // сколько кассет куплено за забег — от этого цена; откат этого числа не откатывает
   protected tapeRecord: RunSave | null = null; // что записано на кассету: забег в начале раунда
   protected isSpinning = false; // сетка крутится — ввод игнорируется
+  protected isRerolling = false; // окно перемешки и подмены открыто: сетку ещё не посчитали, кроме выбора ничего нельзя
   protected isRoundOver = false; // прокрутки кончились — расплата и магазин, крутить и забирать нельзя
   protected isShopping = false; // вид повёрнут к магазину — можно покупать (пока крутится барабан — нельзя)
-  protected isAwaitingPayment = false; // рука протянута и фишек хватает — ждём «отдать» (клик по руке или Enter)
-  protected isChoosingDeal = false; // фишек не хватило: можно отдать амулет или сыграть в рулетку
-  protected isAiming = false; // рулетка, твой ход — ждём, в кого стреляешь
+  protected isAwaitingPayment = false; // банкомат выехал и фишек хватает — ждём «отдать» (клик по банкомату или Enter)
   protected isDealing = false; // идёт игра Дилера «больше или меньше» — крутить и забирать нельзя
+  protected isLastChance = false; // фишек не хватило: автомат крутит сам, у игрока одна кнопка «забрать»
+  protected lastChanceUsed = false; // последний шанс уже был в этом забеге — он один: вторая нехватка кончает забег
   protected isGameOver = false; // долг не отдан — DEATH, конец забега
   protected isRewinding = false; // кассету вставили — плёнка перематывается, потом сцена перезапустится с записью
   protected isPaused = false; // пауза (Esc, P, ⏸): анимации, таймеры и звук стоят
@@ -122,17 +123,16 @@ export abstract class BaseScene extends Phaser.Scene {
   protected screen!: SlotScreen; // экран 5×3, стекло с паттернами, бегущие огни
   protected panel!: MachinePanel; // табло, окошко множителя, лампочки прокруток, рычаг
   protected payout!: PayoutWindow; // окошко выплаты: электронное табло с коном и кнопкой «забрать»
-  protected collector!: Collector; // записка с долгом, банкомат и Коллектор в тени, GOOD LUCK и DEATH
-  protected chipCase!: ChipCase; // чемодан с фишками: выжил в рулетке — долг оплачен
+  protected collector!: Collector; // записка с долгом, банкомат и экран DEATH
+  protected chipCase!: ChipCase; // чемодан с фишками: выжил в последнем шансе — долг оплачен
   protected itemShelf!: ItemShelf; // полка с предметами и включённые предметы у экрана
+  protected rerollMenu!: RerollMenu; // окно перемешки и подмены на месте окошка выплаты
   protected amuletRack!: AmuletRack; // гнёзда с амулетами на верхушке корпуса
   protected shop!: Shop; // комната слева и торговый автомат
   protected cassette!: Cassette; // кассета в магазине и видеомагнитофон у монитора
   protected amuletCase!: AmuletCase; // чемодан с амулетами над торговым автоматом
   protected drum!: Drum; // «барабан» в магазине: колесо с призами за фишки
-  protected shotgunTable!: ShotgunTable; // стол Коллектора: рулетка с дробовиком и лоток для откупа амулетом
-  protected bulletStand!: BulletStand; // патрон на стене магазина: его покупают за билеты
-  protected brokenScreen!: BrokenScreen; // дыра и трещины на экране автомата после выстрела
+  protected brokenScreen!: BrokenScreen; // дыра и трещины на экране автомата после взрыва (KABOOM)
   protected machineBadge!: MachineBadge; // характер автомата: цвет корпуса и значок
   protected dealerTable!: DealerTable; // стол Дилера поверх экрана
   protected atmosphere!: Atmosphere; // пыль, полосы на экране, мигание света, тёмные края от тревоги
@@ -157,13 +157,12 @@ export abstract class BaseScene extends Phaser.Scene {
     this.offer = [];
     this.sockets = hasAmulets() ? START_SOCKETS : 0; // в первом забеге все гнёзда закрыты
     this.amulets = [];
+    this.amuletCounts = {};
     this.amuletOffer = [];
     this.isTicketForSale = false;
     this.drumSpins = 0;
     this.bones = 0;
     this.roundShields = 0;
-    this.roulettes = 0;
-    this.bulletsBought = 0;
     this.machine = ORDINARY;
     this.newsRound = 1;
     this.isDebtNewsShown = false;
@@ -171,17 +170,19 @@ export abstract class BaseScene extends Phaser.Scene {
     this.isBloodNext = false;
     this.isLuckyNext = false;
     this.freeSpins = 0;
+    this.freeSpinsGiven = 0;
     this.phase = PHASES[0];
     this.tapeState = 'forSale';
     this.tapesBought = 0;
     this.tapeRecord = null;
     this.isDealing = false;
+    this.isLastChance = false;
+    this.lastChanceUsed = false;
     this.isSpinning = false;
+    this.isRerolling = false;
     this.isRoundOver = false;
     this.isShopping = false;
     this.isAwaitingPayment = false;
-    this.isChoosingDeal = false;
-    this.isAiming = false;
     this.isGameOver = false;
     this.isRewinding = false;
     this.isPaused = false;
@@ -196,8 +197,10 @@ export abstract class BaseScene extends Phaser.Scene {
     this.panel.showMultiplier(this.multiplier());
     this.panel.showSpinsLeft(this.spinsLeft);
     this.panel.showFreeSpins(this.freeSpins);
+    // В последнем шансе цель окошка — сколько надо собрать; ставим до showPot: оно решает, гореть ли при пустом коне.
+    this.payout.setGoal(this.isLastChance ? lastChanceThreshold(this.debt, this.balance) : null);
     this.payout.showPot(this.pot, this.debt);
-    this.payout.setEnabled(this.canAct());
+    this.payout.setEnabled(this.canAct() || this.isLastChance); // в последнем шансе кнопка «забрать» работает
     this.collector.showPayable(this.canPayEarly());
     this.collector.showProgress(this.debt, this.balance, this.pot);
     this.cassette.showUsable(this.canRecord() || this.canRewind());
@@ -228,25 +231,27 @@ export abstract class BaseScene extends Phaser.Scene {
   protected calmLampColor(): number {
     if (this.isLuckyNext) return LAMP_LUCK;
     if (this.isBloodNext) return LAMP_BLOOD;
-    if (this.itemEffects.isGarlicOn) return LAMP_GARLIC;
+    if (garlicOn(this.itemEffects)) return LAMP_GARLIC;
     return this.phase === PHASES[0] ? LAMP_GOLD : LAMP_ANGRY;
   }
 
-  /** Какие амулеты стоят в гнёздах — их правила действуют. */
+  /** Какие амулеты стоят в гнёздах (с учётом копий) — их правила действуют. */
   protected amuletIds(): AmuletId[] {
-    return this.amulets.map((amulet) => amulet.id);
+    return amuletIdsFrom(this.amuletCounts);
   }
 
   /** Можно ли сейчас крутить, забирать и включать предметы. Пока впереди бесплатные прокрутки — нельзя: они крутятся сами. */
   protected canAct(): boolean {
     return (
       !this.isSpinning &&
+      !this.isRerolling &&
       !this.isRoundOver &&
       !this.isDealing &&
       !this.isGameOver &&
       !this.isRewinding &&
       !this.isPaused &&
       !this.isAtMonitor &&
+      !this.isLastChance &&
       this.freeSpins === 0
     );
   }
@@ -259,9 +264,11 @@ export abstract class BaseScene extends Phaser.Scene {
   /**
    * Светится ли записка (долг можно отдать раньше конца раунда): фишек на табло хватает, раунд идёт (не расплата и не магазин,
    * не Дилер, не перемотка, не конец забега) и прокруток осталось мало — PAY_EARLY_GLOW_SPINS. Пока крутится, записка светится, но клик подождёт.
+   * Открытое окно перемешки и подмены записку гасит: долг отдать нечем, пока сетку не посчитали (canAct() тут не годится —
+   * он гасит записку и на бесплатных прокрутках).
    */
   protected canPayEarly(): boolean {
-    const isRoundGoing = !this.isRoundOver && !this.isDealing && !this.isGameOver && !this.isRewinding;
+    const isRoundGoing = !this.isRoundOver && !this.isDealing && !this.isGameOver && !this.isRewinding && !this.isRerolling;
     return this.hasEnoughForDebt() && isRoundGoing && this.spinsLeft <= PAY_EARLY_GLOW_SPINS;
   }
 
@@ -270,10 +277,9 @@ export abstract class BaseScene extends Phaser.Scene {
     return this.tapeState === 'blank' && this.canAct();
   }
 
-  /** Можно ли откатиться: есть запись, и сейчас либо между прокрутками, либо Коллектор пришёл (но рулетка не идёт: isChoosingDeal в ней снят). */
+  /** Можно ли откатиться: есть запись и сейчас между прокрутками (в последнем шансе и у Коллектора — уже нельзя). */
   protected canRewind(): boolean {
-    const isFree = this.canAct() || (this.isChoosingDeal && !this.isPaused);
-    return this.tapeState === 'recorded' && !this.isRewinding && !this.isGameOver && isFree;
+    return this.tapeState === 'recorded' && !this.isRewinding && !this.isGameOver && this.canAct();
   }
 
   /**

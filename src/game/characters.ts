@@ -2,8 +2,9 @@ import type { Words } from './lang';
 import { DEBT_ROUND_TO, GRID_COLUMNS, type Grid, type SlotSymbol } from './rules';
 
 /**
- * Автоматы «с характером». Первый автомат забега — обычный. Выстрелил в автомат — приходит другой, со своим характером:
- * свои веса символов, свои выплаты и одно особое правило. Он стоит до следующего выстрела.
+ * Автоматы «с характером». Первый автомат забега — обычный. Дальше другой приходит событием на сетке (шаг 67):
+ * вместо прокрутки все 15 клеток встают на его значок — со своими весами символов, выплатами и одним особым правилом.
+ * Он стоит до следующего такого события. Долг на нём не растёт задним числом: он считается заново в магазине.
  * Характер видно по цвету корпуса и значку на нём; что автомат делает — в подсказке значка. Без Phaser — чтобы проверить симуляцией.
  */
 
@@ -49,7 +50,7 @@ export const ORDINARY: MachineCharacter = {
   rustChance: 0,
 };
 
-/** Автоматы с характером — приходят после выстрела, по одному случайно. */
+/** Автоматы с характером — приходят событием на сетке, по одному случайно. */
 export const CHARACTERS: MachineCharacter[] = [
   {
     id: 'greedy',
@@ -120,10 +121,19 @@ export function characterDebt(debt: number, character: MachineCharacter): number
   return Math.round((debt * character.debtFactor) / DEBT_ROUND_TO) * DEBT_ROUND_TO;
 }
 
-/** Новый автомат после выстрела: случайный характер, но не тот, что был. */
+/** Новый автомат: случайный характер, но не тот, что был. */
 export function randomCharacter(current: MachineCharacter): MachineCharacter {
   const others = CHARACTERS.filter((character) => character.id !== current.id);
   return others[Math.floor(Math.random() * others.length)];
+}
+
+// Смена автомата — событие на сетке (шаг 67): вместо прокрутки приходит другой, прокрутка при этом пустая.
+export const MACHINE_CHANGE_CHANCE = 0.05; // шанс события на обычную прокрутку (5%)
+export const MACHINE_CHANGE_FROM_ROUND = 2; // раньше нельзя: раунд 2 — это уже закрытый хотя бы один долг
+
+/** Пора ли сменить автомат: с раунда MACHINE_CHANGE_FROM_ROUND и с шансом MACHINE_CHANGE_CHANCE. */
+export function machineChangeDue(round: number): boolean {
+  return round >= MACHINE_CHANGE_FROM_ROUND && Math.random() < MACHINE_CHANGE_CHANCE;
 }
 
 /** Заржавеет ли столбец после прокрутки: его номер или null. Автомат без ржавчины случайность не тратит. */

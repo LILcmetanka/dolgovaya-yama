@@ -7,7 +7,6 @@ const BROKEN_DEPTH = POPUP_DEPTH - 2; // поверх сетки, под GOOD LU
 const SCREEN_CORNER = 16; // скругление экрана
 const DARK_ALPHA = 0.88; // экран погас: сетку почти не видно
 const CRACK_START_SCALE = 0.6; // трещины разбегаются от дыры
-const FLICKER_ALPHA = 0.3; // новый автомат: экран мигает, загораясь
 // Искры и дымок из дыры.
 const SPARKS = 9; // искр за раз
 const SPARK_SIZE = 3;
@@ -25,40 +24,30 @@ const CRACK_TIME = 140;
 const SPARK_TIME = { min: 350, max: 650 };
 const SPARK_PAUSE = { min: 1200, max: 2600 }; // пока автомат сломан, искры сыплются снова через столько
 const SMOKE_TIME = 1600;
-const FLICKER_TIME = 70;
-const LIGHT_UP_TIME = 300; // экран загорается
 
 /**
- * Сломанный автомат: пуля попала в экран — стекло вспыхивает, по нему дыра и трещины, экран гаснет, из дыры сыплются искры и идёт дымок.
- * Пришёл новый автомат — экран загорается, мигнув. Случайность искр — Phaser.Math.RND, не Math.random: эффекты идут сами
+ * Сломанный автомат: экран разбивается только взрывом KABOOM в конце забега — стекло вспыхивает, по нему дыра и трещины,
+ * экран гаснет, из дыры сыплются искры и идёт дымок. Случайность искр — Phaser.Math.RND, не Math.random: эффекты идут сами
  * и не должны съедать очередь Math.random в проверочных сценариях.
  */
 export class BrokenScreen {
   private readonly scene: Phaser.Scene;
   private readonly dark: Phaser.GameObjects.Rectangle; // погасший экран
   private readonly crack: Phaser.GameObjects.Image; // дыра и трещины
-  private sparkTimer: Phaser.Time.TimerEvent | null = null; // следующие искры
-  private broken = false;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     createCrackTexture(scene);
     this.dark = scene.add
-      .rectangle(SCREEN.x, SCREEN.y, SCREEN.width, SCREEN.height, 0x000000) // прозрачность — у самого прямоугольника: она и мигает
+      .rectangle(SCREEN.x, SCREEN.y, SCREEN.width, SCREEN.height, 0x000000) // прозрачность — у самого прямоугольника
       .setRounded(SCREEN_CORNER)
       .setDepth(BROKEN_DEPTH)
       .setVisible(false);
     this.crack = scene.add.image(SHOT_HOLE.x, SHOT_HOLE.y, CRACK_TEXTURE).setDepth(BROKEN_DEPTH).setVisible(false);
   }
 
-  /** Сломан ли автомат. */
-  isBroken(): boolean {
-    return this.broken;
-  }
-
-  /** Пуля попала: стекло вспыхивает, дыра и трещины, экран гаснет, искры и дымок — и потом снова, пока не придёт новый автомат. */
+  /** Взрыв: стекло вспыхивает, дыра и трещины, экран гаснет, искры и дымок — и потом снова, пока забег не кончился. */
   shatter(): void {
-    this.broken = true;
     const flash = this.scene.add
       .rectangle(SCREEN.x, SCREEN.y, SCREEN.width, SCREEN.height, 0xffffff, 0.9)
       .setRounded(SCREEN_CORNER)
@@ -71,12 +60,12 @@ export class BrokenScreen {
     this.sparkle();
   }
 
-  /** Искры и дымок из дыры; пока автомат сломан — следующие через случайную паузу. */
+  /** Искры и дымок из дыры; пока забег не кончился — следующие через случайную паузу. */
   private sparkle(): void {
     for (let index = 0; index < SPARKS; index++) this.addSpark();
     this.addSmoke();
     const pause = Phaser.Math.RND.between(SPARK_PAUSE.min, SPARK_PAUSE.max);
-    this.sparkTimer = this.scene.time.delayedCall(pause, () => this.sparkle());
+    this.scene.time.delayedCall(pause, () => this.sparkle());
   }
 
   /** Одна искра: вылетает из дыры в случайную сторону, падает и гаснет. */
@@ -107,25 +96,6 @@ export class BrokenScreen {
       duration: SMOKE_TIME,
       ease: 'Sine.easeOut',
       onComplete: () => smoke.destroy(),
-    });
-  }
-
-  /** Пришёл новый автомат: трещин и искр больше нет, экран загорается, мигнув. Автомат цел — ничего. */
-  repair(): void {
-    if (!this.broken) return;
-    this.broken = false;
-    this.sparkTimer?.remove();
-    this.sparkTimer = null;
-    this.crack.setVisible(false);
-    this.scene.tweens.add({
-      targets: this.dark,
-      alpha: FLICKER_ALPHA,
-      duration: FLICKER_TIME,
-      yoyo: true,
-      repeat: 1,
-      onComplete: () => {
-        this.scene.tweens.add({ targets: this.dark, alpha: 0, duration: LIGHT_UP_TIME, onComplete: () => this.dark.setVisible(false) });
-      },
     });
   }
 }

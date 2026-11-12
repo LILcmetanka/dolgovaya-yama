@@ -1,11 +1,12 @@
 import { machineKey, see } from '../codex';
-import { jamGrid, randomCharacter, rustColumn } from '../characters';
+import { jamGrid, rustColumn } from '../characters';
 import type { Grid, WeightOf } from '../rules';
 import { BonusScene } from './BonusScene';
 
 /**
  * Слой характера автомата (числа — в characters.ts). Веса символов и выплаты характера считает RoundScene, долг — ShopScene;
- * здесь — особое правило Ржавого (столбец заедает) и смена автомата: выстрелил — пока ты в магазине, привозят другой.
+ * здесь — особое правило Ржавого (столбец заедает) и приход нового автомата событием на сетке (шаг 67):
+ * прокрутка пустая, значок встаёт на корпус (showNewMachine).
  * Между BonusScene и RoundScene: RoundScene и так вырос за 440 строк.
  */
 export abstract class MachineScene extends BonusScene {
@@ -48,12 +49,7 @@ export abstract class MachineScene extends BonusScene {
     this.screen.clearRust();
   }
 
-  /** Выстрел в автомат: пока ты в магазине, привозят другой — случайный характер, но не тот, что был. Новый долг — уже с ним. */
-  protected changeMachine(): void {
-    this.machine = randomCharacter(this.machine);
-  }
-
-  /** Новый автомат встал на место разбитого: корпус его цвета, значок, на стекле — значок и название. */
+  /** Новый автомат встал на место: корпус его цвета, значок, на стекле — значок и название. Откуда он — решает RoundScene (machineArrives). */
   protected showNewMachine(): void {
     this.machineBadge.arrive(this.machine);
     see(machineKey(this.machine.id));
