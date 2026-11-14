@@ -273,7 +273,7 @@ export abstract class ShopScene extends DealerScene {
     this.afterPurchase(prizeSound(prize));
   }
 
-  /** После покупки (sound — её звук): табло, галочка на записке и ценники — по новому числу фишек и билетов. */
+  /** После покупки (sound — её звук): табло, записка долга и ценники — по новому числу фишек и билетов. */
   private afterPurchase(sound: SoundName = 'buy'): void {
     this.sfx.play(sound);
     this.tooltip.hide();

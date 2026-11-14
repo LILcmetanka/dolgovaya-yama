@@ -76,6 +76,7 @@ export const GOAL_NOTE_TEXTURE = 'note-goal'; // вторая записка: ц
 export const NOTE_GLOW_TEXTURE = 'note-glow'; // зелёное свечение вокруг записки: долг можно отдать раньше
 export const SHELF_CELL_TEXTURE = 'shelf-cell'; // клетка полки с предметами
 export const SHELF_DOOR_TEXTURE = 'shelf-door'; // стальная дверца с кодовым замком поверх закрытого отсека
+export const EFFECT_SLOT_TEXTURE = 'effect-slot'; // пустое гнездо под включённый предмет у экрана
 export const DOOR_CODE_WIDTH = 50; // окошко колёсиков кода на дверце
 export const DOOR_CODE_HEIGHT = 24;
 export const TICKET_TEXTURE = 'ticket'; // красный билет — вторая валюта
@@ -158,7 +159,7 @@ const NOTE_DEBT_FONT_SIZE = 44; // сумма крупно; длинная су�
 const NOTE_BAR_COLOR = '#16a34a'; // полоска долга: что уже на табло
 const NOTE_BAR_PENDING = 'rgba(22, 163, 74, 0.35)'; // …и что ещё на кону: заберёшь — будет на табло
 const NOTE_BAR_TRACK = 'rgba(30, 41, 59, 0.4)'; // пустая часть полоски
-const NOTE_BAR_Y = 104; // полоска под суммой, под галочкой
+const NOTE_BAR_Y = 104; // полоска долга под суммой
 const NOTE_CAPTION_Y = 95; // подпись под суммой (процент цели) — над полоской цели
 const NOTE_CAPTION_FONT_SIZE = 14;
 const NOTE_GOAL_AMOUNT_Y = 74; // сумма на записке цели — выше, чем на записке долга: под ней ещё процент и полоска
@@ -823,6 +824,22 @@ function drawItem(ctx: CanvasRenderingContext2D, item: Item, size: number): void
   ctx.shadowOffsetY = 2 * TEXTURE_SCALE;
   ctx.fillStyle = isText ? cssColor(item.color) : '#ffffff';
   ctx.fillText(item.sign, size / 2, size / 2 + 2);
+}
+
+/** Пустое гнездо под включённый предмет у экрана: тёмная ниша в бронзовой рамке — видно, что мест четыре (DONTLIKE хоч. 11). */
+export function createEffectSlotTexture(scene: Phaser.Scene, size: number): void {
+  if (scene.textures.exists(EFFECT_SLOT_TEXTURE)) return;
+  const g = scene.add.graphics();
+  const plate = size - 5; // сама плитка чуть меньше текстуры: тень уходит вниз-вправо
+  g.fillStyle(0x000000, 0.45);
+  g.fillRoundedRect(3, 4, plate, plate, 10); // тень на корпусе
+  g.fillStyle(TRIM_COLOR);
+  g.fillRoundedRect(0, 0, plate, plate, 10); // бронзовая рамка — как окантовка автомата
+  g.fillStyle(0x1c1917);
+  g.fillRoundedRect(3, 3, plate - 6, plate - 6, 8); // ниша
+  g.fillStyle(0x0b0f19);
+  g.fillRoundedRect(6, 6, plate - 12, plate - 12, 6); // глубина: к центру ещё темнее
+  bake(g, EFFECT_SLOT_TEXTURE, size, size);
 }
 
 /** Клетка полки: деревянная рамка и тёмная ниша; и доски, которыми заколочена закрытая клетка. */

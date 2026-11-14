@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { createItemTextures, createShelfTextures, DOOR_CODE_WIDTH, itemTexture, SHELF_CELL_TEXTURE, SHELF_DOOR_TEXTURE } from '../decor';
+import { createEffectSlotTexture, createItemTextures, createShelfTextures, DOOR_CODE_WIDTH, EFFECT_SLOT_TEXTURE, itemTexture, SHELF_CELL_TEXTURE, SHELF_DOOR_TEXTURE } from '../decor';
 import {
   activeSlotEffects,
   EFFECT_SLOTS,
@@ -12,7 +12,7 @@ import {
   type SlotEffectId,
 } from '../items';
 import { t } from '../lang';
-import { EFFECTS_STEP, EFFECTS_TOP_Y, EFFECTS_X, ITEM_SIZE, SHELF_CELL, shelfX, shelfY } from '../layout';
+import { EFFECTS_STEP, EFFECTS_TOP_Y, EFFECT_SLOT, EFFECTS_X, ITEM_SIZE, SHELF_CELL, shelfX, shelfY } from '../layout';
 import { addText, LED_STYLE, POPUP_DEPTH, pulse } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
@@ -82,6 +82,7 @@ export class ItemShelf {
     this.canDiscard = canDiscard;
     createItemTextures(scene, ITEMS, ITEM_SIZE);
     createShelfTextures(scene, SHELF_CELL);
+    createEffectSlotTexture(scene, EFFECT_SLOT);
 
     for (let slot = 0; slot < MAX_SLOTS; slot++) {
       const x = shelfX(slot);
@@ -96,6 +97,12 @@ export class ItemShelf {
       door.setVisible(slot >= slots);
       attachHint(door, hint, () => [t('closedSlot'), t('closedSlotHow')]);
       this.doors.push(door);
+    }
+
+    // Пустые гнёзда столбика у экрана: места видно всегда, даже когда ни один предмет не включён (DONTLIKE хоч. 11).
+    for (let index = 0; index < EFFECT_SLOTS; index++) {
+      const { x, y } = effectSpot(index);
+      scene.add.image(x, y, EFFECT_SLOT_TEXTURE);
     }
 
     // Иконки — на каждый предмет столбика: showEffects расставит первые EFFECT_SLOTS активных, остальные спрятаны.
