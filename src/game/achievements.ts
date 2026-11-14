@@ -221,7 +221,7 @@ export function earnedAchievements(state: AchievementState): AchievementId[] {
   if (has('insurance') && has('interest')) earned.push('bank');
   if (risk && state.effects.luckSpin) earned.push('nope');
   if (risk && has('skullPocket') && state.effects.tripleTakes > 0 && state.isWin) earned.push('luckyOne');
-  // «50 на 50» — доля черепов с плашки (с амулетами, автоматом, предметами и режимом), а не базовая доля раунда.
+  // «50 на 50» — доля черепов с плашки (с амулетами, автоматом, предметами и замахом), а не базовая доля раунда.
   if (state.isWin && !state.isFree && state.skullShare >= ACHIEVEMENT_SKULL_SHARE) earned.push('fiftyFifty');
   const first = state.shelf[0];
   // «Моё золото»: все слоты полки забиты одним и тем же предметом. С одним слотом это было бы слишком просто.

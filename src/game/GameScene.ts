@@ -137,7 +137,7 @@ export class GameScene extends CollectorScene {
       markTutorialDone();
       this.reveal = null;
     }
-    // Тьма первого забега: переключатель режима стоит вне пятна света — его не видно, значит и не нажимать,
+    // Тьма первого забега: шкала замаха стоит вне пятна света — её не видно, значит и не нажимать,
     // и подсказку над тьмой не показывать. Покажется, когда тьма погаснет (BaseScene.finishTutorial).
     if (this.reveal) this.panel.setChargeVisible(false);
     this.setupKeyboard();

@@ -99,7 +99,7 @@ export abstract class CollectorScene extends SaveScene {
     this.sfx.play('hand'); // банкомат выезжает
     this.collector.reachOut(this.debt, enough, () => {
       if (!enough) {
-        // Банкомат уехал после GOOD LUCK — переключатель снова виден.
+        // Банкомат уехал после GOOD LUCK — шкала замаха снова видна.
         this.panel.setChargeVisible(true);
         this.startLastChance();
         return;

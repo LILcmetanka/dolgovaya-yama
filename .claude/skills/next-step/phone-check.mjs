@@ -151,6 +151,10 @@ try {
   check(await val(`localStorage.getItem('dolgovaya-yama-lang')`) === 'ru', 'касание RU в паузе переключает язык');
   await shot('p-pause-ru.png');
   await tap(26, 618); // пауза снята
+  // Снимки ниже называются -en, поэтому английский возвращаем.
+  await val('window.__g.toggleLanguage(); 1');
+  await sleep(500);
+  check(await val(`localStorage.getItem('dolgovaya-yama-lang')`) === 'en', 'вернули английский для -en-снимков');
   await val(`window.__g.monitor.open()`);
   await sleep(600);
   await shot('m-symbols-en.png');

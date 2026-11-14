@@ -499,6 +499,7 @@ export abstract class RoundScene extends MachineScene {
   /** «Забрать»: кон уходит на табло. Бесплатно, но множитель уменьшается вдвое. */
   protected take(): void {
     if (!this.canAct() || this.pot === 0) return;
+    this.cancelChargeNow(); // забираешь кон — замах снят, отпускание клавиши после этого не крутит
     this.payout.press();
     this.sfx.play('take');
     this.payPot();
