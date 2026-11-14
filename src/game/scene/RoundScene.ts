@@ -749,6 +749,7 @@ export abstract class RoundScene extends MachineScene {
    * Флаг ранней оплаты помним: победа может задержать Коллектора, и после «ДАЛЬШЕ» он должен приехать тем же путём.
    */
   private endOfSpins(isPaidEarly = false): void {
+    this.cancelChargeNow(); // раунд кончился — замах снят (если его держали)
     this.isPaidEarly = isPaidEarly;
     this.closeRound();
     this.time.delayedCall(COLLECT_DELAY, () => this.callCollector(isPaidEarly));
@@ -760,6 +761,7 @@ export abstract class RoundScene extends MachineScene {
    * Потом гаснут чеснок, бусты, флаги, кровь, удача клевера и ржавчина.
    */
   protected closeRound(): void {
+    this.cancelChargeNow(); // конец раунда — замах снят
     this.isRoundOver = true;
     this.isBloodNext = false; // кровь не переходит в следующий раунд
     this.luckyClovers = 0; // и удача клевера

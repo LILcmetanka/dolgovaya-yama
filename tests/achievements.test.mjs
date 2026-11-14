@@ -90,8 +90,8 @@ test('grantAchievement не пишет в режиме разработчика,
 test('доля черепов от замаха: 18% в середине, сильный замах опаснее, слабый тише', () => {
   const share = (round, amulets, charge) => skullShareOf(round, 0, { machineId: 'classic', amulets, effects: noEffects(), charge });
   assert.ok(Math.abs(share(1, [], 0.5) - 0.18) < 0.005, '1-й раунд, середина шкалы — 18%');
-  assert.ok(share(13, ['skullPocket', 'skullPocket'], 1) > 0.45, '×2 и полный замах в 13-м — около 49%');
-  assert.ok(share(13, [], 0) < 0.18, 'слабый замах в 13-м безопаснее базы (16%)');
+  assert.ok(share(13, ['skullPocket', 'skullPocket'], 1) > 0.4, '×2 и полный замах в 13-м — около 44%');
+  assert.ok(share(13, [], 0) < share(13, [], 1), 'слабый замах в 13-м безопаснее сильного');
   assert.ok(share(1, [], 0) < share(1, [], 1), 'заряд двигает черепа вверх');
 });
 

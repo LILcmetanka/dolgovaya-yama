@@ -32,6 +32,7 @@ export abstract class ShopScene extends DealerScene {
    * Долг отдан (или пропущен): на записке следующий долг (записка переворачивается), сверху съезжает панель магазина.
    */
   protected openShop(): void {
+    this.cancelChargeNow(); // магазин — замах снят
     this.round += 1;
     this.debt = debtForRound(this.round);
     this.isShopOpen = true; // панель на экране — и пока едет, и когда уже стоит

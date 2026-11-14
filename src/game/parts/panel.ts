@@ -23,14 +23,14 @@ import {
   DISPLAY,
   GLASS,
   LEVER_MOUNT,
-  MODE_SWITCH,
+  CHARGE_ANCHOR,
   MULTIPLIER_WINDOW,
   PHASE_SIGNS_Y,
   SKULL_SCREEN,
   SPIN_LAMPS_Y,
 } from '../layout';
 import { t } from '../lang';
-import { CHARGE_FULL_TIME } from '../levers';
+import { clampCharge, CHARGE_FULL_TIME, RISK_CHARGE } from '../levers';
 import { SPINS_PER_ROUND } from '../rules';
 import {
   addText,
@@ -101,7 +101,7 @@ const LEVER_CALL_GROW = 1.25; // кольцо расходится до тако
 const LEVER_CALL_TIME = 900; // один «вздох» кольца, мс
 const LEVER_BALL_GROW = 0.15; // внизу шарик ближе к игроку — на столько крупнее (на каждую единицу укорочения штанги)
 // Шкала замаха у рычага (DONTLIKE п. 8): рамка на месте прежнего переключателя режимов и полоска внутри.
-const CHARGE_FRAME = { width: 108, height: 114 }; // рамка шкалы (место MODE_SWITCH, чтобы ничего не двигать)
+const CHARGE_FRAME = { width: 108, height: 114 }; // рамка шкалы (там же, где раньше стоял переключатель режимов)
 const CHARGE_TRACK = { width: 20, height: 78 }; // жёлоб шкалы
 const CHARGE_FILL_INSET = 4; // зазор между жёлобом и заливкой
 const CHARGE_FILL = 0x1c1917; // тёмная заливка рамки — как у кнопок в настройках
@@ -113,7 +113,7 @@ const CHARGE_LOW = 0x4ade80; // слабый замах — зелёный
 const CHARGE_MID = 0xfde047; // середина — жёлтый
 const CHARGE_HIGH = 0xef4444; // сильный — красный
 const CHARGE_MID_AT = 0.5; // с какого заряда заливка жёлтая
-const CHARGE_HIGH_AT = 0.8; // и с какого — красная
+const CHARGE_HIGH_AT = RISK_CHARGE; // и с какого — красная: ровно порог «риска», чтобы игрок видел его цветом
 const CHARGE_LOCK_TIME = 260; // на отпускании шкала коротко вспыхивает, мс
 
 /** Число на табло: шрифт BOARD_FONT_SIZE, а длинное число — мельче, чтобы не вылезло шире maxWidth. Тем же набирают шапку панели магазина. */
@@ -202,15 +202,15 @@ export class MachinePanel {
    */
   private addChargeBar(hint: Hint): void {
     this.chargeFrame = this.scene.add
-      .rectangle(MODE_SWITCH.x, MODE_SWITCH.y, CHARGE_FRAME.width, CHARGE_FRAME.height, CHARGE_FILL, 0.9)
+      .rectangle(CHARGE_ANCHOR.x, CHARGE_ANCHOR.y, CHARGE_FRAME.width, CHARGE_FRAME.height, CHARGE_FILL, 0.9)
       .setStrokeStyle(2, CHARGE_BRONZE)
       .setRounded(8);
     this.chargeTrack = this.scene.add
-      .rectangle(MODE_SWITCH.x, MODE_SWITCH.y - 8, CHARGE_TRACK.width, CHARGE_TRACK.height, CHARGE_TRACK_COLOR)
+      .rectangle(CHARGE_ANCHOR.x, CHARGE_ANCHOR.y - 8, CHARGE_TRACK.width, CHARGE_TRACK.height, CHARGE_TRACK_COLOR)
       .setStrokeStyle(0)
       .setRounded(6);
-    this.chargeFill = this.scene.add.rectangle(MODE_SWITCH.x, MODE_SWITCH.y - 8, CHARGE_TRACK.width - 2 * CHARGE_FILL_INSET, 1, CHARGE_LOW).setOrigin(0.5, 1).setRounded(4);
-    this.chargeText = addText(this.scene, MODE_SWITCH.x, MODE_SWITCH.y + CHARGE_TEXT_Y, '0%', {
+    this.chargeFill = this.scene.add.rectangle(CHARGE_ANCHOR.x, CHARGE_ANCHOR.y - 8, CHARGE_TRACK.width - 2 * CHARGE_FILL_INSET, 1, CHARGE_LOW).setOrigin(0.5, 1).setRounded(4);
+    this.chargeText = addText(this.scene, CHARGE_ANCHOR.x, CHARGE_ANCHOR.y + CHARGE_TEXT_Y, '0%', {
       fontSize: CHARGE_FONT_SIZE,
       fontStyle: 'bold',
       color: GOLD_TEXT,
@@ -221,7 +221,7 @@ export class MachinePanel {
 
   /** Заряд на шкале: value 0…1. Высота заливки, её цвет и процент. locked — короткая вспышка на отпускании. */
   showCharge(value: number, locked = false): void {
-    const charge = Math.max(0, Math.min(1, value));
+    const charge = clampCharge(value); // NaN и мусор — нейтральная середина, а не NaN-высота
     const height = Math.max(1, (CHARGE_TRACK.height - 2 * CHARGE_FILL_INSET) * charge);
     const color = charge >= CHARGE_HIGH_AT ? CHARGE_HIGH : charge >= CHARGE_MID_AT ? CHARGE_MID : CHARGE_LOW;
     this.chargeFill.setSize(CHARGE_TRACK.width - 2 * CHARGE_FILL_INSET, height).setFillStyle(color);
@@ -232,7 +232,7 @@ export class MachinePanel {
   }
 
   /** Спрятать шкалу: банкомат Коллектора выезжает как раз на её место. */
-  setModeVisible(visible: boolean): void {
+  setChargeVisible(visible: boolean): void {
     this.chargeFrame.setVisible(visible);
     this.chargeTrack.setVisible(visible);
     this.chargeFill.setVisible(visible);

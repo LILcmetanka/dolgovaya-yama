@@ -526,7 +526,7 @@ export class WallScreen {
       { label: SPACE_KEY, width: 92, caption: 'keySpin' }, { label: '↩', width: 52, caption: 'keyTake' },
       { label: 'D', width: 48, caption: 'keyDebt' }, { label: '1–8', width: 62, caption: 'keyItems' },
       { label: 'Esc', width: 58, caption: 'keyPause' }, { label: 'L', width: 48, caption: 'keyLanguage' },
-      { label: 'T', width: 48, caption: 'keyMode' }, { label: 'M', width: 48, caption: 'keySound' },
+      { label: 'M', width: 48, caption: 'keySound' },
     ], 18);
     // В магазине те же цифры — по рядам витрины: корзина намекает, где это.
     this.content.add(icon(centerX, top + 348, '🛒', 34));

@@ -193,6 +193,10 @@ export function defaultEcon() {
 const clone = (value) => structuredClone(value);
 // Амулеты по копиям: в гнёздах лежат уникальные (s.amulets), а копии — счётчиком (шаг 62б).
 const ids = (s) => A.amuletIdsFrom(s.amuletCounts);
+// Автомат забега: его id (машина меняется сама в начале раунда, см. startRound).
+const mach = (s) => s.machineId;
+/** Множитель серии, как BaseScene.multiplier: шаг от амулетов плюс бонус фазы 2. */
+const multiplier = (s) => R.multiplierForStreak(s.streak, A.multiplierStep(ids(s)) + s.phase.multiplierBonus);
 
 function newRun() {
   return {
@@ -207,10 +211,445 @@ function newRun() {
     earned: 0, peakBalance: 0, millionRound: null, millionSeconds: null,
     recordRound: null, recordSeconds: null, // когда earned перевалил 10 000 000 (CHIP_RECORD) — для SIM_CHASE_RECORD
     secondWindUsed: false, // «второе дыхание» тратится один раз за забег (failLastChance); кассета его не возвращает
-    insuranceUsed: false, // страховка сработала в этом раунде — второй сгоревший кон она не спасёт
+    insuranceSaves: 0, // сколько раз страховка сработала в раунде (копий до двух — столько и спасений)
   };
 }
 
+
+/** Веса символов следующей прокрутки: автомат, амулеты, предметы, риск/фарт, фаза и замах (как skullShare.ts). */
+function weightOf(s, isFree) {
+  const id = s.machineId;
+  const base = R.weightsForRound(s.round, E.diceWeight(s.diceDrought));
+  const owned = ids(s);
+  let others = 0;
+  for (const symbol of R.SYMBOLS) if (!R.isSkull(symbol) && !R.isDice(symbol)) others += base(symbol);
+  const legacySkull = others * LEGACY_SKULL_RATIO;
+  return (symbol) => {
+    if (!M.machineSymbolAllowed(id, symbol)) return 0; // «Тихий»: нет паука, замка, крови и клевера
+    const baseWeight = SKULL_SHARE_CONSTANT && R.isSkull(symbol) ? legacySkull : base(symbol);
+    const skullFactor = R.isSkull(symbol) ? M.machineSkullFactor(id) : 1; // «Жадный»: черепа тяжелее
+    const machined = A.amuletWeight(symbol, baseWeight, owned) * skullFactor; // огранка, череп в кармане
+    let weight = I.boostWeight(symbol, machined, s.effects); // чеснок, вишни, колокола, алмазы, удача
+    if (s.effects.risk && R.isSkull(symbol)) weight *= I.RISK_SKULL_FACTOR; // риск: черепа втрое чаще
+    if (s.effects.luckSpin && R.isSkull(symbol)) weight = 0; // фарт: на этой прокрутке черепов нет
+    // Замах рычага: сильный — черепа и крупные символы чаще, слабый — тише. Выплаты не меняет (DONTLIKE п. 8).
+    if (!isFree) {
+      if (R.isSkull(symbol)) weight *= L.skullChargeFactor(s.charge);
+      else if (symbol.price >= L.CHARGE_BIG_PRICE) weight *= L.bigChargeFactor(s.charge);
+    }
+    // До замечания 19 фаза 2 множила вес черепа (phase2SkullFactor = 1,2). SIM_PHASE_SKULL=1.2 возвращает это.
+    if (R.isSkull(symbol) && s.phase.number >= 2) weight *= LEGACY_PHASE_SKULL;
+    return isFree ? B.freeSpinWeight(symbol, weight) : weight;
+  };
+}
+
+function violate(g, name) {
+  g.violations[name] = (g.violations[name] ?? 0) + 1;
+}
+
+function guard(g, name) {
+  g.safeguards[name] = (g.safeguards[name] ?? 0) + 1;
+}
+
+/** Доход билетов: только пять источников из кода. Источник — страховка (вызовы с литералами), сумма — проверка. */
+function gainTickets(s, g, source, count) {
+  if (!(source in g.ticketIncome)) guard(g, 'билеты: неизвестный источник дохода');
+  if (count <= 0) return;
+  s.tickets += count;
+  if (source in g.ticketIncome) g.ticketIncome[source] += count;
+  g.ticketsLedger += count;
+}
+
+/** Трата билетов (амулеты, гнёзда, кассета, прокачка автомата) — тоже через одну дверь. Вернёт false, если не хватило. */
+function spendTickets(s, g, count) {
+  if (count > s.tickets) {
+    guard(g, 'билеты: расход больше остатка'); // все места покупки проверяют остаток заранее
+    return false;
+  }
+  s.tickets -= count;
+  g.ticketsLedger -= count;
+  return true;
+}
+
+const FINITE = ['round', 'debt', 'balance', 'earned', 'peakBalance', 'tickets', 'spinsLeft', 'pot', 'streak', 'luckyClovers', 'freeSpins'];
+
+/**
+ * Общая проверка состояния. Зовётся после раунда, прокрутки, магазина и отката.
+ * Здесь только настоящие проверки (долг, конечность, табло билетов, уровни, неотрицательные билеты); потолки,
+ * места и прочее, что уже обеспечено кодом, живут в guard-ах на своих местах.
+ */
+function check(s, g) {
+  if (s.debt !== R.debtForRound(s.round)) violate(g, 'долг ≠ debtForRound(раунд)');
+  if (!FINITE.every((key) => Number.isFinite(s[key]))) violate(g, 'в состоянии NaN или ∞');
+  if (s.tickets !== g.ticketsLedger) violate(g, 'билеты: табло не сходится с учётом');
+  if (s.tickets < 0) violate(g, 'билеты ушли в минус');
+  // Уровни меняет только прокачка (+1) и откат (возврат к записи): учёт — в upgradeMachine и rewind.
+  if (g.survived + g.secondWind + g.dead !== g.lastChances) violate(g, 'исходы последнего шанса не сходятся с числом шансов');
+  checkGuards(s, g);
+}
+
+/** Потолки и правила, которые уже обеспечены кодом: сработать могут только после правки. */
+function checkGuards(s, g) {
+  if (s.spinsLeft < 0 || s.spinsLeft > R.MAX_SPINS_PER_ROUND) guard(g, 'прокруток в раунде вне 0…MAX_SPINS_PER_ROUND');
+  if (g.freeSpinsGiven > B.MAX_FREE_SPINS_PER_ROUND) guard(g, 'фриспинов за раунд больше потолка');
+  if (I.activeSlotEffects(s.effects).length > I.EFFECT_SLOTS) guard(g, 'включено больше EFFECT_SLOTS предметов');
+  // Кассета: первый долг закрыт — ещё не продают (BaseScene.cassetteUnlocked). Проверяем момент покупки, а не текущий
+  // раунд: после последнего шанса и отката счёт уменьшается, и «сейчас раунд < 3» уже не значит «купили рано».
+  if (g.tapesBought > 0 && g.tapeClosedAtBuy < 3) guard(g, 'кассета куплена раньше третьего долга');
+}
+
+// ---------- Раунд ----------
+
+/**
+ * Доход забега — одна дверь, как BaseScene.earn в игре: баланс, «набрано» (earned) и пик табло.
+ * Цель — chipGoal: 1 000 000 (CHIP_GOAL), а в SIM_CHASE_RECORD=1 — 10 000 000 (CHIP_RECORD), как после «ДАЛЬШЕ».
+ * Момент первой ступени запоминаем сразу (millionRound, millionSeconds), второй — recordRound/recordSeconds.
+ * Своего правила в симуляторе нет: считаем то же, что считает игра после каждой прибавки баланса.
+ */
+function earn(s, g, amount) {
+  if (!(amount > 0)) return;
+  s.balance += amount;
+  s.earned += amount;
+  if (s.balance > s.peakBalance) s.peakBalance = s.balance;
+  if (s.millionRound === null && s.earned >= GOAL) {
+    s.millionRound = s.round;
+    s.millionSeconds = g.time;
+  }
+  if (s.recordRound === null && s.earned >= RECORD) {
+    s.recordRound = s.round;
+    s.recordSeconds = g.time;
+  }
+}
+
+/**
+ * Цель, на которой забег кончается: раунд не докручивается, долг этого раунда не платится — победа
+ * (CollectorScene.startVictory). Обычный прогон — 1 000 000; SIM_CHASE_RECORD=1 («ДАЛЬШЕ») — 10 000 000.
+ */
+function goalReached(s) {
+  return s.earned >= (CHASE_RECORD ? RECORD : GOAL);
+}
+
+/** Забрать кон на табло. isRoundEnd — кон забирается сам в конце раунда: серию не режем (KABOOM её обнулит). */
+function payPot(s, g, isRoundEnd = false) {
+  let amount = s.pot;
+  if (s.effects.tripleTakes > 0) { s.effects.tripleTakes -= 1; amount *= I.TRIPLE_TAKE_FACTOR; }
+  earn(s, g, amount); s.pot = 0;
+  if (s.effects.candle) s.effects.candle = false; // свеча: это «забрать» серию не режет
+  else if (!isRoundEnd) s.streak = R.streakAfterTake(s.streak);
+}
+
+/** Новый раунд. Серию НЕ трогаем: в коде она переходит в следующий раунд (BaseScene → RoundScene.startRound). */
+function startRound(s, st, g) {
+  const owned = ids(s);
+  // Фаза — по закрытым долгам (checkPhase); ставим её до прокруток: она даёт phase2BonusSpins (замечание 19).
+  s.phase = PH.phaseAt(s.round - 1);
+  const plan = A.spinsPerRound(R.SPINS_PER_ROUND, owned); // как RoundScene.startRound, без потолка
+  s.spinsLeft = PHASE_BONUS_SPINS ? R.spinsAfterBonus(plan, s.phase.bonusSpins) : plan; // потолок прокруток — как в игре
+  s.roundShields = A.vestShields(owned);
+  s.isBloodNext = false; // кровь не переходит в новый раунд
+  s.insuranceSaves = 0; // страховка снова готова: сработок на раунд — по числу копий
+  g.freeSpinsGiven = 0; // потолок бесплатных прокруток — на раунд
+  g.freeInRound = 0;
+  g.roundPaid = 0;
+  I.clearRoundEffects(s.effects); // бусты и флаги прошлого раунда не переходят в новый
+  check(s, g);
+}
+
+function closeRound(s, st, g) {
+  const streakBefore = s.streak;
+  s.isBloodNext = false; s.luckyClovers = 0; s.rustyColumn = null;
+  if (s.pot > 0) payPot(s, g, true); // кон забирается сам — серия остаётся
+  I.clearRoundEffects(s.effects);
+  if (st.streakReset) s.streak = 0; // ВТОРОЙ набор чисел: серия сгорает в конце раунда (в коде — нет)
+  else if (s.streak !== streakBefore) guard(g, 'серия меняется на closeRound'); // её держит payPot(isRoundEnd = true)
+  // Прокруток за раунд: в игре MAX_SPINS_PER_ROUND ограничивает только текущее число (spinsAfterBonus), а сумма
+  // за раунд растёт от колокольчиков, сигарет и джекпота — считаем её отдельно.
+  if (g.roundSpins > g.maxRoundSpins) g.maxRoundSpins = g.roundSpins;
+  if (g.roundSpins > R.MAX_SPINS_PER_ROUND) g.roundsOverCap += 1;
+  g.roundSpins = 0;
+}
+
+/** Игра Дилера: ставка — кон (пустой — Дилер ставит), угадываем лучшей стрелкой, пока шанс ≥ dealerChance. */
+function dealer(s, st, g) {
+  g.time += SECONDS.dealer;
+  let stake = D.dealerStake(s.pot, s.debt);
+  let card = D.randomCard();
+  for (let first = true; ; first = false) {
+    const dir = D.guessChance(card, 'higher') >= D.guessChance(card, 'lower') ? 'higher' : 'lower';
+    if (!first && D.guessChance(card, dir) < st.dealerChance) break;
+    const next = D.randomCard();
+    if (!D.isGuessRight(card, next, dir)) { s.pot = 0; return; }
+    stake = Math.round(stake * D.winFactor(dir)); card = next;
+  }
+  s.pot = stake;
+}
+
+/**
+ * Перемешка и подмена в симуляции (шаг 63б). В игре окно открывается после остановки сетки, до итога, и игрок видит сетку.
+ * Подмена — джокер в лучшую клетку: это выбор, а не случайность, исход виден, поэтому перебираем все 15.
+ * Перемешка — столбец, где больше всего неплатящих клеток, а новые символы случайные, как в игре; берём её, только если
+ * в этом столбце хотя бы две неплатящие клетки и прокрутка пока не выигрывает. За прокрутку — не больше одного применения.
+ * Здесь только решение игрока: сами клетки считает evaluateGrid ниже, один раз на итог.
+ */
+function rerollGrid(grid, s, w, g) {
+  const before = P.evaluateGrid(grid, { ignoreLocks: s.effects.hammer });
+  if (s.effects.swap) {
+    let best = null;
+    let bestScore = before.win;
+    for (let row = 0; row < R.GRID_ROWS; row++) {
+      for (let col = 0; col < R.GRID_COLUMNS; col++) {
+        const trial = grid.map((line, r) => line.map((cell, c) => (r === row && c === col ? R.JOKER : cell)));
+        const got = P.evaluateGrid(trial, { ignoreLocks: s.effects.hammer });
+        if (got.kind !== 'skull' && got.win > bestScore) { bestScore = got.win; best = trial; }
+      }
+    }
+    if (best) { s.effects.swap = false; g.swapUsed += 1; return best; } // джокер пригодился
+  }
+  if (s.effects.shuffle) {
+    let column = 0;
+    let junk = -1;
+    for (let col = 0; col < R.GRID_COLUMNS; col++) {
+      const bad = grid.filter((line) => !R.isPaying(line[col])).length;
+      if (bad > junk) { junk = bad; column = col; }
+    }
+    if (junk >= 2 && before.kind !== 'win') {
+      const trial = grid.map((line) => line.slice());
+      for (let row = 0; row < R.GRID_ROWS; row++) trial[row][column] = R.randomSymbol(w);
+      s.effects.shuffle = false;
+      g.shuffleUsed += 1;
+      return trial;
+    }
+  }
+  return grid; // не пригодилось — предмет остаётся заряженным до следующей платной прокрутки
+}
+
+/**
+ * Ржавчина (MachineScene.rollGrid / rustAfterSpin): шанс — из спеки автомата (MachineSpec.rustChance).
+ * У всех трёх автоматов он 0, путь спит: characters.ts (rustColumn, jamGrid) симулятор больше не импортирует.
+ */
+function jamGrid(grid, previous, column) {
+  return grid.map((cells, row) => cells.map((symbol, col) => (col === column ? previous[row][col] : symbol)));
+}
+
+function rustAfterSpin(s) {
+  if (s.freeSpins > 0 || s.luckyClovers > 0 || s.spinsLeft === 0) return;
+  const chance = M.machineSpec(mach(s)).rustChance;
+  if (chance === 0 || Math.random() >= chance) return;
+  s.rustyColumn = Math.floor(Math.random() * R.GRID_COLUMNS);
+}
+
+/** Короны → бесплатные прокрутки (игрового потолка за раунд нет), клевер → удача следующей, джекпот → билеты и прокрутки. */
+function collectBonuses(s, g, grid, result) {
+  const free = B.freeSpinsFor(B.countCrowns(grid)); // сколько положено за короны — столько и дают
+  if (free > 0) {
+    g.crownEvents += 1;
+    s.freeSpins += free; g.freeSpinsGiven += free; g.freeInRound += free;
+    g.freeMax = Math.max(g.freeMax, g.freeInRound);
+  }
+  const clovers = B.countClovers(grid); // клеверов может быть несколько — от их числа зависит сила паттерна
+  if (clovers > 0) s.luckyClovers = clovers;
+  if (B.isJackpot(result)) {
+    gainTickets(s, g, 'jackpot', B.JACKPOT_TICKETS);
+    s.spinsLeft = R.spinsAfterBonus(s.spinsLeft, B.JACKPOT_SPINS);
+  }
+}
+
+/**
+ * Черепа сожгли кон. Страховка (INSURANCE_SHARE) возвращает часть сгоревшего на табло — один раз за раунд
+ * (insuranceSaves против числа копий), иначе спасла бы больше раз, чем куплено (RoundScene.burnPot).
+ */
+function burnPot(s, g) {
+  const lost = s.pot;
+  const refund = A.insuranceRefund(lost, ids(s), s.insuranceSaves);
+  s.pot = 0;
+  s.streak = 0;
+  if (refund > 0) {
+    s.insuranceSaves += 1;
+    earn(s, g, refund); // сработка копии: счётчик страховки гасит её до конца раунда; возврат — доход забега
+  }
+}
+
+/** Одна прокрутка (обычная или бесплатная) с итогом — как RoundScene.roll + evaluateSpin. Вернёт, сколько сгорело. */
+function roll(s, st, g, isFree) {
+  g.time += SECONDS.spin;
+  g.spins += 1;
+  g.roundSpins += 1; // сумма прокруток за раунд (для проверки «потолок не ограничивает сумму»)
+  if (!isFree) g.paidSpins += 1;
+  const calm = false; // спокойного режима больше нет: заряд только двигает веса
+  if (!isFree) g.normalSpins += 1;
+  const mult = multiplier(s);
+  const w = weightOf(s, isFree);
+  // В спокойной прокрутке клевер не тратится (выплат нет) и заевший столбец не переносится: в нём могли быть черепа и кубик.
+  let grid;
+  if (!calm && s.luckyClovers > 0) { const clovers = s.luckyClovers; s.luckyClovers = 0; grid = B.luckyGrid(w, clovers); }
+  else grid = R.spinGrid(w);
+  if (calm) s.rustyColumn = null;
+  else if (s.rustyColumn !== null && s.lastGrid) { grid = jamGrid(grid, s.lastGrid, s.rustyColumn); s.rustyColumn = null; }
+  // Окно перемешки и подмены: только на платной прокрутке; в спокойной выплат нет — переделывать сетку незачем.
+  if (!isFree && !calm) grid = rerollGrid(grid, s, w, g);
+  const result = P.evaluateGrid(grid, { ignoreLocks: s.effects.hammer }); // единственный вход в подсчёт итога (молот: замки не блокируют)
+  const isBloody = s.isBloodNext;
+  if (!calm) s.isBloodNext = E.cellsOf(grid, 'blood').length > 0; // в calm кровь следующей прокрутки не ставит
+  if (!calm && result.tickets >= R.TICKET_SCATTER) gainTickets(s, g, 'scatter', 1);
+  let burned = 0;
+  const owned = ids(s);
+  if (!calm && result.kind === 'skull') { // в calm черепов по весам нет — ветка не запускается
+    s.bones += 1;
+    if (s.roundShields > 0) { s.roundShields -= 1; s.streak += 1; }
+    else if (s.effects.shields > 0) { s.effects.shields -= 1; s.streak += 1; }
+    else {
+      burned = s.pot;
+      burnPot(s, g);
+      if (isBloody) s.balance -= E.bloodBurn(s.balance); // кровавая прокрутка: сгорает ещё и часть табло
+    }
+  } else {
+    s.streak += 1; // серия растёт всегда — и в спокойной прокрутке
+    if (!calm) {
+      if (result.kind === 'win') {
+        const win = A.amuletPatternWin(result.hits, owned);
+        const factor = A.winFactor(owned, s.bones) * (isBloody ? E.BLOOD_WIN : 1) * M.machineWinFactor(mach(s)) * (s.effects.risk ? I.RISK_WIN_FACTOR : 1);
+        s.pot += Math.round(win * mult * factor);
+        s.spinsLeft = R.spinsAfterBonus(s.spinsLeft, A.bellSpins(result.hits, owned)); // потолок прокруток за раунд
+      } else s.pot += A.piggyCoins(mult, owned);
+      s.pot -= E.spiderBite(s.pot, E.cellsOf(grid, 'spider').length);
+    }
+  }
+  if (!calm) collectBonuses(s, g, grid, result);
+  s.lastGrid = grid;
+  rustAfterSpin(s);
+  // Риск, молот и фарт — на одну прокрутку; в спокойной заряды ждут обычной.
+  if (!calm) {
+    s.effects.risk = false;
+    s.effects.hammer = false;
+    s.effects.luckSpin = false;
+  }
+  if (!calm && E.cellsOf(grid, 'dice').length > 0) { s.diceDrought = 0; dealer(s, st, g); } else s.diceDrought += 1;
+  return burned;
+}
+
+/**
+ * Решения игрока между прокрутками: предметы и «забрать».
+ * Шаг 63а: бусты символов включаем, пока долг не добит; риск и фарт — перед трудной прокруткой (риск на пустом коне,
+ * фарт — когда кон уже есть), молот — когда на прошлой сетке был замок, свечу — перед «забрать» на длинной серии.
+ * Шаг 63б: перемешка и подмена — на трудную прокрутку. Числа не подбирались: задача — чтобы симуляция считала эффекты.
+ * Столбик у экрана — не больше EFFECT_SLOTS включённых сразу (RoundScene.useItem: пятый отклоняется).
+ */
+function beforeSpin(s, st, g) {
+  const need = s.debt;
+  // Включить предмет — как RoundScene.useItem: уже действующий второй отклоняется, риск с фартом несовместимы,
+  // а шестой по счёту предмет у экрана не включить, пока игрок не освободит место.
+  const blocked = (id) => (id === 'risk' && s.effects.luckSpin) || (id === 'luckSpin' && s.effects.risk);
+  const useSlot = (id) => {
+    if (I.isItemOn(id, s.effects) || blocked(id)) return false;
+    if (I.takesEffectSlot(id) && I.activeSlotEffects(s.effects).length >= I.EFFECT_SLOTS) {
+      g.itemSlotsDenied += 1; // места в столбике нет — в игре ценник отклонён, предмет остаётся на полке
+      return false;
+    }
+    const i = s.shelf.findIndex((it) => it?.id === id);
+    if (i < 0) return false;
+    s.shelf[i] = null;
+    return true;
+  };
+  if (useSlot('garlic')) s.effects.symbolBoost.skull = I.GARLIC_SKULL_FACTOR;
+  // Бусты символов: пока на долг не хватает, лишние фишки на кон не помешают.
+  for (const [item, symbol] of [['cherries', 'cherry'], ['bells', 'bell'], ['diamonds', 'diamond'], ['luck', 'clover']]) {
+    if (s.balance < need && useSlot(item)) {
+      s.effects.symbolBoost[symbol] = I.SYMBOL_BOOST_FACTOR;
+      if (item === 'luck') s.effects.symbolBoost.crown = I.SYMBOL_BOOST_FACTOR; // в игре удача бустит и клевер, и короны
+    }
+  }
+  if (s.balance < need && s.pot === 0 && s.streak <= 1 && useSlot('risk')) s.effects.risk = true; // риск на малом коне и серии
+  if (s.balance + s.pot < need) {
+    if (useSlot('shuffle')) s.effects.shuffle = true;
+    if (useSlot('swap')) s.effects.swap = true;
+  }
+  if (s.balance < need && s.pot > st.shieldShare * need && useSlot('luckSpin')) s.effects.luckSpin = true; // кон бережём
+  const hasLock = !!s.lastGrid && s.lastGrid.some((line) => line.some((cell) => R.isLock(cell)));
+  if (hasLock && useSlot('hammer')) s.effects.hammer = true;
+  if (s.pot >= st.shieldShare * need && s.effects.shields === 0 && useSlot('shield')) s.effects.shields += 1;
+  if (s.pot >= st.boostShare * need && s.effects.tripleTakes === 0 && useSlot('triple')) s.effects.tripleTakes += 1;
+  if (s.spinsLeft === 1 && s.balance + s.pot < need && !I.isItemOn('cigarette', s.effects)
+    && s.spinsLeft < R.MAX_SPINS_PER_ROUND && useSlot('cigarette')) s.spinsLeft = R.spinsAfterBonus(s.spinsLeft, I.CIGARETTE_SPINS);
+  let take = s.balance < need ? s.balance + s.pot >= need : s.pot >= st.takeShare * need;
+  if (s.rustyColumn !== null && s.lastGrid) {
+    const skulls = s.lastGrid.filter((line) => R.isSkull(line[s.rustyColumn])).length;
+    if (skulls >= st.rustSkulls) take = true;
+  }
+  if (take && s.pot > 0 && s.streak >= 2 && !s.effects.candle && useSlot('candle')) s.effects.candle = true; // не режем серию
+  if (take && s.pot > 0) { payPot(s, g); g.time += SECONDS.take; }
+}
+
+// ---------- Кассета (SaveScene) ----------
+
+/** Что попадает на кассету — поля RunSave из save.ts, которые есть в симуляторе. */
+function runSave(s) {
+  return {
+    round: s.round, spinsLeft: s.spinsLeft, pot: s.pot, streak: s.streak, isBloodNext: s.isBloodNext,
+    luckyClovers: s.luckyClovers, roundShields: s.roundShields, debt: s.debt, balance: s.balance, tickets: s.tickets,
+    slots: s.slots, shelf: s.shelf, effects: s.effects, sockets: s.sockets, amulets: s.amulets,
+    amuletCounts: s.amuletCounts, bones: s.bones, machineId: s.machineId,
+    diceDrought: s.diceDrought, secondWindUsed: s.secondWindUsed, insuranceSaves: s.insuranceSaves,
+    // Цель забега тоже на плёнке (RunSave.earned): откат возвращает и набранное, и пик табло, и момент победы.
+    earned: s.earned, peakBalance: s.peakBalance, millionRound: s.millionRound, millionSeconds: s.millionSeconds,
+    recordRound: s.recordRound, recordSeconds: s.recordSeconds,
+  };
+}
+
+/** Записать: снимок забега как есть. Кассета на видеомагнитофоне становится записанной. */
+function record(s, g) {
+  g.tape = 'recorded'; g.record = clone(runSave(s));
+  // Счётчики прокруток вместе со снимком: после отката раунд играется заново, и списанные до отката прокрутки
+  // не должны дважды попадать в «прокруток за забег», «макс. за раунд» и долю раундов сверх потолка.
+  g.recordCounters = { roundSpins: g.roundSpins, spins: g.spins, paidSpins: g.paidSpins, roundPaid: g.roundPaid, firstSpinMult: g.firstSpinMult, firstSpinRounds: g.firstSpinRounds };
+  g.time += SECONDS.rec; g.recs += 1;
+}
+
+/**
+ * Откатиться к записи: автомат съедает кассету. Предусловия — как SaveScene.canRewind: кассета записана, раунд идёт,
+ * впереди нет бесплатных прокруток. Запись может быть из прошлого раунда — loadTape:136-166 восстанавливает круг
+ * из записи, поэтому откат через границу раунда разрешён (tapeState переживает конец раунда, canRewind истинен сразу
+ * после startRound). «Второе дыхание» и страховка откатом не пополняются, страховка — только в том же раунде.
+ * Известное ограничение: freeSpinsGiven не откатывается (в игре сцена после отката перезапускается и счётчик
+ * обнуляется — там откат даёт полный потолок заново; здесь строже, поэтому фриспинов за раунд не больше).
+ */
+function rewind(s, g) {
+  const saved = g.record;
+  // Правило игры (SaveScene.canRewind + loadTape): кассета записана и запись не из будущего.
+  if (g.tape !== 'recorded' || saved === null || saved.round > s.round) {
+    g.illegalRewinds += 1;
+    violate(g, 'правило отката: нет записи или запись из будущего');
+    return s;
+  }
+  // Предохранитель бота: сам он откатывается только между прокрутками (canAct).
+  if (!(s.spinsLeft > 0 && s.freeSpins === 0)) {
+    g.illegalRewinds += 1;
+    guard(g, 'бот откатился не между прокрутками');
+    return s;
+  }
+  const back = clone(saved);
+  back.secondWindUsed = s.secondWindUsed || (saved.secondWindUsed ?? false);
+  // Откат не пополняет страховку: сработки этого раунда и с плёнки берём по большей (как SaveScene.loadTape).
+  back.insuranceSaves = Math.max(saved.round === s.round ? s.insuranceSaves : 0, saved.insuranceSaves ?? 0);
+  g.tape = 'forSale'; g.record = null; g.time += SECONDS.rewind; g.rewinds += 1;
+  Object.assign(s, back);
+  Object.assign(g, g.recordCounters ?? {}); // счётчики прокруток — как на записи
+  g.recordCounters = null;
+  g.ticketsLedger = back.tickets; // билеты вернулись к записи — сверка табло начинается заново
+  s.rustyColumn = null; s.lastGrid = null; s.freeSpins = 0; // заморозок и прошлой сетки в записи нет
+  return s;
+}
+
+function shouldRecord(s, st) {
+  if (st.rec === 'start') return true;
+  if (st.rec === 'pot') return s.pot >= st.recShare * s.debt;
+  if (st.rec === 'danger') return s.spinsLeft <= st.recSpins && s.balance + s.pot < s.debt; // дело плохо — записать сейчас
+  return false;
+}
+
+/**
+ * Раунд с начала (или с середины — после отката к записи посреди раунда): прокрутки до конца.
+ * Вернёт состояние — s может смениться после отката.
+ */
 function playRound(s, st, g) {
   for (;;) {
     while (s.freeSpins > 0) {

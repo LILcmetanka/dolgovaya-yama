@@ -138,6 +138,7 @@ export abstract class SaveScene extends ShopScene {
    * Ржавчина не записывается. Кассету съел автомат: её снова продают.
    */
   protected loadTape(record: RunSave, tapesBought: number): void {
+    this.clearCharge(); // откат вернул раунд — удержание и заряд прошлой сцены не переезжают (панель ещё не создана)
     this.round = record.round;
     this.spinsLeft = record.spinsLeft;
     this.pot = record.pot;

@@ -76,6 +76,7 @@ export abstract class CollectorScene extends SaveScene {
    * Фишек не хватает — сначала тревога и красные огни на GOOD_LUCK_TIME, потом последний шанс.
    */
   protected callCollector(isPaidEarly: boolean): void {
+    this.cancelChargeNow(); // Коллектор едет — замах снят
     // Забег уже кончен (победа по цели или KABOOM): Коллектору за долгом идти незачем.
     // Без этой строки он приезжал бы поверх экрана победы — его вызов стоит в таймере endOfSpins.
     if (this.isGameOver) return;
@@ -93,13 +94,13 @@ export abstract class CollectorScene extends SaveScene {
    */
   private reachOut(isPaidEarly: boolean): void {
     const enough = this.hasEnoughForDebt();
-    this.tooltip.hide(); // подсказка плашки режима не должна висеть над выехавшим банкоматом
-    this.panel.setModeVisible(false); // банкомат встаёт на место переключателя: пока он выехал, режим не выбрать
+    this.tooltip.hide(); // подсказка шкалы замаха не должна висеть над выехавшим банкоматом
+    this.panel.setChargeVisible(false); // банкомат встаёт на место шкалы замаха: пока он выехал, шкалу не видно
     this.sfx.play('hand'); // банкомат выезжает
     this.collector.reachOut(this.debt, enough, () => {
       if (!enough) {
         // Банкомат уехал после GOOD LUCK — переключатель снова виден.
-        this.panel.setModeVisible(true);
+        this.panel.setChargeVisible(true);
         this.startLastChance();
         return;
       }
@@ -133,7 +134,7 @@ export abstract class CollectorScene extends SaveScene {
         });
       },
       () => {
-        this.panel.setModeVisible(true); // банкомат уехал — переключатель режима снова на месте
+        this.panel.setChargeVisible(true); // банкомат уехал — шкала замаха снова на месте
         this.openShop();
       },
     );
@@ -416,6 +417,7 @@ export abstract class CollectorScene extends SaveScene {
    * прокрутки обнуляются (иначе крутились бы за экраном победы), а его колбэк готовности уже не включит магазин.
    */
   private startVictory(): void {
+    this.cancelChargeNow(); // победа — замах снят
     this.isGameOver = true;
     this.freeSpins = 0; // победа забег кончает: бесплатные прокрутки за экраном не крутятся
     this.wasShoppingAtVictory = this.suspendShop(); // панель магазина уезжает без нового раунда

@@ -6,7 +6,7 @@ import { isDevMode } from '../devmode';
 import { CHIP_GOAL } from '../gameConfig';
 import { garlicOn, noEffects, START_SLOTS, type Item, type ItemEffects, type ShopItem } from '../items';
 import { formatChips, t } from '../lang';
-import { lastCharge, resetCharge } from '../levers';
+import { cancelCharge, lastCharge, startCharge, type ChargeSource } from '../levers';
 import { PHASES, type Phase } from '../phases';
 import type { MachineId } from '../machines';
 import type { Pattern } from '../patterns';
@@ -140,6 +140,9 @@ export abstract class BaseScene extends Phaser.Scene {
   private achievementShown: AchievementId | null = null; // какая ачивка сейчас на экране (её тоже нельзя потерять при рестарте)
   private isAchievementShown = false; // окно ачивки занято: следующая ждёт своей очереди
   protected isFreeSpinNow = false; // идёт бесплатная прокрутка за короны: черепов в ней нет, «50 на 50» за неё не даём
+  // Замах рычага: держат ли его сейчас и чем начали (клавишей или мышью). Отпускание «чужого» источника не крутит.
+  protected isCharging = false;
+  protected chargeSource: ChargeSource | null = null;
   protected phase: Phase = PHASES[0]; // какая фаза сейчас (phases.ts) — по числу закрытых долгов
   protected tapeState: TapeState = 'forSale'; // кассета: продаётся, чистая (в REC) или записана (в PLAY)
   protected tapesBought = 0; // сколько кассет куплено за забег — от этого цена; откат этого числа не откатывает
@@ -190,6 +193,33 @@ export abstract class BaseScene extends Phaser.Scene {
   protected achievements!: AchievementWindow; // окно полученной ачивки по центру сетки
   protected reveal: Reveal | null = null; // тьма первого забега; null — обучение пройдено или его нет
 
+  /** Начали замах: шкала с нуля, дальше её двигает update() сцены. Источник запоминаем — по нему и отпускаем. */
+  protected startCharging(source: ChargeSource): void {
+    this.isCharging = true;
+    this.chargeSource = source;
+    startCharge();
+    this.panel?.showCharge(0);
+  }
+
+  /**
+   * Забыть замах: удержание снято, модуль заряда обнулён. Панель не трогаем — так можно звать из loadTape,
+   * где старый планшет уже уничтожен, а новый ещё не создан.
+   */
+  protected clearCharge(): void {
+    this.isCharging = false;
+    this.chargeSource = null;
+    cancelCharge();
+  }
+
+  /**
+   * Отменить замах без прокрутки: пауза, планшет, магазин, Коллектор, конец раунда, победа, откат кассетой.
+   * Гасит удержание и шкалу; отпускание после этого ничего не крутит (endCharge видит isCharging = false).
+   */
+  protected cancelChargeNow(): void {
+    this.clearCharge();
+    this.panel?.showCharge(0);
+  }
+
   /** Начало забега: первый долг, пустое табло, 2 места на полке, ничего не включено, автомат обычный. */
   protected resetState(): void {
     this.round = 1;
@@ -228,6 +258,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.luckyClovers = 0;
     this.freeSpins = 0;
     this.freeSpinsAwarded = 0;
+    this.clearCharge(); // новый забег — замах с нуля, удержание не переезжает
     this.phase = PHASES[0];
     this.tapeState = 'forSale';
     this.tapesBought = 0;
@@ -502,7 +533,7 @@ export abstract class BaseScene extends Phaser.Scene {
    */
   protected restartGame(): void {
     resetCodex(); // новый забег: встреченное забыто
-    resetCharge(); // и замах: шкала снова с нуля
+    this.clearCharge(); // и замах: шкала снова с нуля
     // Недопоказанные ачивки едут в новую сцену: прогресс уже записан, окно и новость должны дойти до игрока.
     this.scene.restart({ achievements: this.pendingAchievements() });
   }
@@ -538,13 +569,13 @@ export abstract class BaseScene extends Phaser.Scene {
     const reveal = this.reveal;
     if (!reveal) return;
     markTutorialDone(); // сразу: сцена может перезапуститься посреди фейда
-    // Пока тьма не погасла, она ещё на экране: ссылку не отпускаем (подсказки и режим под ней запрещены),
-    // а переключатель режима включаем, когда её уже нет.
+    // Пока тьма не погасла, она ещё на экране: ссылку не отпускаем (подсказки и замах под ней запрещены),
+    // а шкалу замаха включаем, когда её уже нет.
     reveal.finish(() => {
       this.reveal = null;
-      // Тьма погасла — переключатель режима снова виден и нажимается. Но если за это время выехал банкомат
-      // Коллектора (он встаёт на его место), плашки вернутся, когда банкомат уедет.
-      if (!this.collector.isAtmOut) this.panel.setModeVisible(true);
+      // Тьма погасла — шкала замаха снова видна. Но если за это время выехал банкомат Коллектора
+      // (он встаёт на её место), шкала вернётся, когда банкомат уедет.
+      if (!this.collector.isAtmOut) this.panel.setChargeVisible(true); // шкала замаха возвращается на место
     });
   }
 

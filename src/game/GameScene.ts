@@ -4,7 +4,7 @@ import { addCopy, AMULETS, countOf, MAX_SOCKETS, symbolPayout, type AmuletId } f
 import { drawMachineBody, drawRoom } from './decor';
 import { DEV_CHIPS, DEV_TICKETS } from './devmode';
 import { lang, toggleLang, type Lang } from './lang';
-import { chargeNow, releaseCharge, startCharge } from './levers';
+import { chargeNow, releaseCharge, type ChargeSource } from './levers';
 import { BODY, LEVER_GLOW, NOTE, WALL_PANEL, ZOOM } from './layout';
 import { amuletKey, itemKey, see } from './codex';
 import { AmuletCase } from './parts/amuletCase';
@@ -59,7 +59,6 @@ const MUSIC_TICK = 100; // как часто музыка планирует у�
 export class GameScene extends CollectorScene {
   private corner!: CornerButtons; // значки в углу: «звук выключен», на телефоне ⚙ (пауза) и во весь экран
   private pauseScreen!: PauseScreen; // экран паузы
-  private isCharging = false; // рычаг держат: шкала замаха растёт
   private settingsPanel!: SettingsPanel; // настройки на экране паузы
   private languageAtPause!: Lang; // язык, какой был, когда встали на паузу: после «▶» записка переворачивается, только если он другой
 
@@ -94,7 +93,7 @@ export class GameScene extends CollectorScene {
     if (!data.tape) this.setPatternsOnGlass(); // после кассеты набор ставит playTape — второй раз не трогаем
     this.brokenScreen = new BrokenScreen(this); // поверх сетки: дыра и трещины после взрыва (KABOOM)
     this.machineBadge = new MachineBadge(this, machineBody, machineSpec(this.machineId), this.tooltip);
-    this.panel = new MachinePanel(this, () => this.beginCharge(), this.tooltip);
+    this.panel = new MachinePanel(this, () => this.beginCharge('lever'), this.tooltip);
     this.payout = new PayoutWindow(this, () => this.take());
     this.itemShelf = new ItemShelf(
       this,
@@ -140,7 +139,7 @@ export class GameScene extends CollectorScene {
     }
     // Тьма первого забега: переключатель режима стоит вне пятна света — его не видно, значит и не нажимать,
     // и подсказку над тьмой не показывать. Покажется, когда тьма погаснет (BaseScene.finishTutorial).
-    if (this.reveal) this.panel.setModeVisible(false);
+    if (this.reveal) this.panel.setChargeVisible(false);
     this.setupKeyboard();
     this.setupSound();
     this.setupPause();
@@ -197,6 +196,7 @@ export class GameScene extends CollectorScene {
    */
   private pauseGame(): void {
     if (this.isPaused || this.isRewinding || this.isGameOver) return;
+    this.cancelChargeNow(); // замах не переживает паузу: отпускание после неё не крутит
     this.isPaused = true;
     this.languageAtPause = lang();
     this.tweens.pauseAll();
@@ -251,22 +251,22 @@ export class GameScene extends CollectorScene {
   /**
    * Нажали рычаг (пробел, Enter или мышь): начинаем замах. Шкала растёт, пока держат, — её обновляет update().
    * Вне игры (пауза, магазин, окно перемешки, у монитора) замах не начинается: там у этих клавиш своё дело.
+   * Источник — клавиша или рычаг: отпускание чужого источника замах не завершает (см. BaseScene.endCharge).
    */
-  private beginCharge(): void {
+  private beginCharge(source: ChargeSource): void {
     if (this.isCharging || !this.canAct()) return;
     if (this.reveal?.isActive) return; // тьма первого забега: рычаг ещё не показан
-    this.isCharging = true;
-    startCharge();
-    this.panel.showCharge(0);
+    this.startCharging(source);
   }
 
   /**
-   * Отпустили рычаг: прокрутка с накопленным зарядом. Короткое нажатие — заряд 0 (спокойная прокрутка),
-   * прокрутка всё равно идёт: игрок не должен «промахиваться» мимо хода.
+   * Отпустили рычаг или клавишу: прокрутка с накопленным зарядом. Завершает только тот источник, которым начали:
+   * клик по «забрать» при взведённом заряде с клавиши автомат не крутит. Короткое нажатие — заряд 0.
    */
-  private endCharge(): void {
-    if (!this.isCharging) return;
+  private endCharge(source: ChargeSource): void {
+    if (!this.isCharging || this.chargeSource !== source) return;
     this.isCharging = false;
+    this.chargeSource = null;
     const charge = releaseCharge();
     this.panel.showCharge(charge, true); // шкала фиксируется и коротко вспыхивает
     this.spin(charge);
@@ -306,6 +306,7 @@ export class GameScene extends CollectorScene {
   private lookAtMonitor(): void {
     if (!this.canAct()) return;
     if (this.reveal?.isActive) return; // тьма первого забега закрывает экран — телевизор не открываем
+    this.cancelChargeNow(); // ушли к планшету — замах снят
     this.isAtMonitor = true;
     this.seeOwned();
     this.tooltip.hide();
@@ -461,16 +462,30 @@ export class GameScene extends CollectorScene {
       if (this.isGameOver) this.restartGame();
     });
     NUMBER_KEYS.forEach((key, index) => this.onKey(key, () => this.onNumber(index)));
-    this.onKey('D', () => this.payEarly()); // отдать долг раньше: фишек на табло хватает — записка светится
+    this.onKey('D', () => {
+      // Пока держат замах, D не отдаёт долг: сначала снимаем замах, клавишу не применяем.
+      if (this.isCharging) {
+        this.cancelChargeNow();
+        return;
+      }
+      this.payEarly(); // отдать долг раньше: фишек на табло хватает — записка светится
+    });
     this.onKey('UP', () => this.onUp());
     this.onKey('DOWN', () => this.onDown());
     this.onKey('PLUS', () => this.guess('equal')); // у Дилера — «=»: в Phaser клавиша «= / +» зовётся PLUS (код 187)
     this.onKey('RIGHT', () => this.toggleMonitor()); // экран на стене — справа
     this.onKey('LEFT', () => this.lookBack());
     // Отпускание клавиши и мыши — конец замаха: заряд уходит в прокрутку (DONTLIKE п. 8).
-    this.input.keyboard?.on('keyup-SPACE', () => this.endCharge());
-    this.input.keyboard?.on('keyup-ENTER', () => this.endCharge());
-    this.input.on('pointerup', () => this.endCharge());
+    // Мышь засчитывается, только если замах начат ею: иначе клик по «забрать» при взведённом заряде крутил бы автомат.
+    this.input.keyboard?.on('keyup-SPACE', () => this.endCharge('key'));
+    this.input.keyboard?.on('keyup-ENTER', () => this.endCharge('key'));
+    this.input.on('pointerup', () => this.endCharge('lever'));
+    // Отпустили вне окна или вкладка потеряла фокус — замах отменяется, а не висит взведённым.
+    this.input.on('pointerupoutside', () => this.cancelChargeNow());
+    // Слушатель окна живёт дольше сцены — снимаем его на перезапуске, иначе они копятся.
+    const onBlur = (): void => this.cancelChargeNow();
+    window.addEventListener('blur', onBlur);
+    this.events.once('shutdown', () => window.removeEventListener('blur', onBlur));
   }
 
   /**
@@ -496,7 +511,7 @@ export class GameScene extends CollectorScene {
     else if (this.isRerolling) this.skipReroll(); // окно открыто: ни прокрутки, ни «забрать» — только пропуск
     else if (this.isAtMonitor) this.lookBack();
     else if (this.isShopping) this.leaveShop();
-    else if (!this.isGameOver) this.beginCharge();
+    else if (!this.isGameOver) this.beginCharge('key');
     else if (this.canRestartWithSpace) this.restartGame();
   }
 
@@ -510,7 +525,7 @@ export class GameScene extends CollectorScene {
     else if (this.isAwaitingPayment) this.payDebt();
     else if (this.isDealing) this.stopDealing();
     // Кон на кону — Enter забирает; пусто — замахивается, как пробел.
-    else if (this.pot === 0 && this.canAct()) this.beginCharge();
+    else if (this.pot === 0 && this.canAct()) this.beginCharge('key');
     else this.take();
   }
 
@@ -519,6 +534,11 @@ export class GameScene extends CollectorScene {
    * в игре 1–8 — включить предмет с полки.
    */
   private onNumber(index: number): void {
+    // Пока держат замах, цифры не трогают игру: замах снимаем, клавишу не применяем.
+    if (this.isCharging) {
+      this.cancelChargeNow();
+      return;
+    }
     if (this.isLastChance) this.onLastChanceKey(index); // в последнем шансе клавиши 1–4 — кнопки полосы
     else if (this.isShopping) this.onShopNumber(index);
     else if (index === TAPE_KEY) this.useTape();
