@@ -105,13 +105,13 @@ const TEXTS = {
   devExit: { ru: 'ВЫЙТИ', en: 'EXIT' },
   whoCollector: { ru: 'Коллектор', en: 'Collector' },
   whoCollectorWhat: {
-    ru: 'Приходит за долгом; не хватает фишек — GOOD LUCK и два действия',
-    en: 'Comes for the debt; short on chips — GOOD LUCK and two actions',
+    ru: 'За долгом; не хватило фишек — последний шанс',
+    en: 'For the debt; short on chips — last chance',
   },
   whoDealer: { ru: 'Дилер', en: 'Dealer' },
   whoDealerWhat: {
-    ru: '🎲: угадай больше, меньше или равно — промах сжигает кон',
-    en: '🎲: guess higher, lower or equal — a miss burns the pot',
+    ru: 'Угадай больше, меньше или равно — промах сжигает кон',
+    en: 'Guess higher, lower or equal — a miss burns the pot',
   },
   // Замах рычага (DONTLIKE п. 8): подсказка к шкале заряда.
   chargeTitle: { ru: 'Замах', en: 'Charge' },
