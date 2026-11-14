@@ -7,7 +7,8 @@ import { BonusScene } from './BonusScene';
 /**
  * Слой автомата (спеки и числа — в machines.ts). Веса и выплаты автомата считает RoundScene;
  * здесь — ржавчина столбца (шанс берётся из спеки; у всех трёх автоматов он 0) и смена автомата:
- * выбранный в магазине встаёт на место перед новым раундом (showNewMachine).
+ * в начале раунда он может смениться сам (RoundScene.startRound → machineAtRoundStart), тогда новый встаёт
+ * на место через showNewMachine.
  * Между BonusScene и RoundScene: RoundScene и так вырос за 440 строк.
  */
 export abstract class MachineScene extends BonusScene {
@@ -45,7 +46,7 @@ export abstract class MachineScene extends BonusScene {
   protected rustAfterSpin(grid: Grid): void {
     this.lastGrid = grid;
     if (this.freeSpins > 0 || this.luckyClovers > 0 || this.spinsLeft === 0) return;
-    const column = rustColumn(machineSpec(this.machineState).rustChance);
+    const column = rustColumn(machineSpec(this.machineId).rustChance);
     if (column === null) return;
     this.rustyColumn = column;
     this.screen.showRust(column);
@@ -59,15 +60,20 @@ export abstract class MachineScene extends BonusScene {
   }
 
   /**
-   * На место встал выбранный в магазине автомат (или тот же, но прокачанный): корпус его цвета, значок,
-   * на стекле — значок и название. Зовёт ShopScene.leaveShop перед startRound.
+   * На место встал новый автомат (в начале раунда он сменился сам): корпус его цвета, значок и UPDATE на мониторе.
+   * Новость на стекле — отдельно, announceMachine: её показывают с задержкой, чтобы она не снесла новость фазы
+   * (на стекле живёт одна новость за раз). Зовёт RoundScene.startRound.
    */
   protected showNewMachine(): void {
-    const machine = machineSpec(this.machineState);
+    const machine = machineSpec(this.machineId);
     this.machineBadge.arrive(machine);
-    see(machineKey(this.machineState.id));
+    see(machineKey(this.machineId));
     this.monitor.notify('update'); // на экране на стене — жёлтое UPDATE, в «Кто есть кто» появился автомат
-    this.screen.announceMachine(machine);
+  }
+
+  /** Новость о новом автомате: на стекле его значок и название. */
+  protected announceMachine(): void {
+    this.screen.announceMachine(machineSpec(this.machineId));
     this.sfx.play('news', 0.3);
   }
 }

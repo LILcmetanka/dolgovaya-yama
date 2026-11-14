@@ -44,7 +44,7 @@ export const AMULET_PRICES: Record<Rarity, number> = { common: 1, rare: 3, legen
 export const CHERRY_PIT_FACTOR = 2; // косточка: паттерны из 🍒 платят во столько раз больше за каждую копию
 export const BELL_SPINS = 2; // колокольчик: столько прокруток за каждый паттерн из 🔔 за каждую копию
 export const PIGGY_COINS = 2; // копилка: прокрутка без выигрыша кладёт на кон столько × множитель (в степени копий)
-export const INSURANCE_SHARE = 0.75; // страховка: такая доля сгоревшего кона всё равно уходит на табло (один раз за раунд)
+export const INSURANCE_SHARE = 0.75; // страховка: такая доля сгоревшего кона всё равно уходит на табло (один раз за копию за раунд)
 export const BOOST_BONUS = 1; // разгон: множитель растёт на столько больше за прокрутку за каждую копию (обычный шаг — MULTIPLIER_STEP)
 export const VEST_SHIELDS = 1; // бронежилет: столько паттернов из черепов за раунд не сжигают кон за каждую копию
 export const CUT_FACTOR = 2; // огранка: 💎 выпадает во столько раз чаще за каждую копию (в степени копий)
@@ -82,11 +82,11 @@ export const AMULETS: Amulet[] = [
     id: 'insurance', sign: '🧾',
     name: { ru: 'Страховка', en: 'Insurance' },
     description: {
-      ru: `Сгоревший кон отдаёт ${Math.round(INSURANCE_SHARE * 100)}% на табло — один раз за раунд, потом сгорает`,
-      en: `A burned pot pays ${Math.round(INSURANCE_SHARE * 100)}% back to your chips — once per round, then it burns out`,
+      ru: `Сгоревший кон отдаёт ${Math.round(INSURANCE_SHARE * 100)}% на табло — по разу за копию в раунде`,
+      en: `A burned pot pays ${Math.round(INSURANCE_SHARE * 100)}% back to your chips — once per copy per round`,
     },
     rarity: 'legendary',
-    maxCopies: 1,
+    maxCopies: 2,
     price: 6, // дорогая: снимает самый частый проигрыш — сгоревший кон
   },
   {
@@ -226,14 +226,26 @@ export function amuletWeight(symbol: SlotSymbol, weight: number, owned: AmuletId
   return weight;
 }
 
+/** Во сколько раз паттерн этого символа платит больше: косточка удваивает вишни (за каждую копию). */
+function symbolPayoutFactor(symbol: SlotSymbol, owned: AmuletId[]): number {
+  if (symbol.id === 'cherry' && owns(owned, 'cherryPit')) return CHERRY_PIT_FACTOR ** copiesOf(owned, 'cherryPit');
+  return 1;
+}
+
 /** Выигрыш паттернов с амулетами (ещё без множителя серии): косточка — паттерны из 🍒 ×2 за копию, две копии — ×4. */
 export function amuletPatternWin(hits: PatternHit[], owned: AmuletId[]): number {
   let win = 0;
-  for (const hit of hits) {
-    const cherryFactor = hit.symbol.id === 'cherry' && owns(owned, 'cherryPit') ? CHERRY_PIT_FACTOR ** copiesOf(owned, 'cherryPit') : 1;
-    win += hit.symbol.price * hit.pattern.multiplier * cherryFactor;
-  }
+  for (const hit of hits) win += hit.symbol.price * hit.pattern.multiplier * symbolPayoutFactor(hit.symbol, owned);
   return win;
+}
+
+/**
+ * Сколько платит выпадение символа в паттерне ×1 с усилениями этого забега: цена × косточка × множитель выигрыша
+ * (амулеты и кости — то же, что в addToPot). Для вкладки «Символы» на планшете (хоч. 9.1): там видно не базовую
+ * цену, а фактическую. Частоту выпадения (бусты предметов) не считает: это шанс, а не выплата.
+ */
+export function symbolPayout(symbol: SlotSymbol, owned: AmuletId[], bones: number): number {
+  return Math.round(symbol.price * symbolPayoutFactor(symbol, owned) * winFactor(owned, bones));
 }
 
 /** Во сколько раз больше все выигрыши: череп в кармане, жадность (в степени копий), коллекционер костей (bones — сколько паттернов из черепов он собрал). */
@@ -277,8 +289,9 @@ export function piggyCoins(multiplier: number, owned: AmuletId[]): number {
 }
 
 /** Сколько сгоревшего кона страховка всё равно отдаёт на табло (доля INSURANCE_SHARE). */
-export function insuranceRefund(lost: number, owned: AmuletId[]): number {
-  return owns(owned, 'insurance') ? Math.floor(lost * INSURANCE_SHARE) : 0;
+/** Сколько вернёт страховка: доля сгоревшего кона, пока сработок в раунде меньше, чем копий (used — сколько уже было). */
+export function insuranceRefund(lost: number, owned: AmuletId[], used = 0): number {
+  return used < copiesOf(owned, 'insurance') ? Math.floor(lost * INSURANCE_SHARE) : 0;
 }
 
 /** Сколько паттернов из черепов в начале раунда не сжигают кон (бронежилет; VEST_SHIELDS за копию). */

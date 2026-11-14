@@ -15,6 +15,7 @@ const LANG_KEY = 'dolgovaya-yama-lang'; // ключ выбранного язы�
 /** Все надписи игры. Текста на экране минимум — поэтому их так мало. */
 const TEXTS = {
   debt: { ru: 'ДОЛГ', en: 'DEBT' }, // на записке
+  goal: { ru: 'ЦЕЛЬ', en: 'GOAL' }, // на второй записке — над экраном на стене
   again: { ru: 'ЗАНОВО', en: 'AGAIN' },
   debtsPaid: { ru: 'Долгов закрыто', en: 'Debts paid' },
   best: { ru: 'Рекорд', en: 'Best' },
@@ -27,21 +28,21 @@ const TEXTS = {
   newSymbol: { ru: 'НОВЫЙ СИМВОЛ', en: 'NEW SYMBOL' },
   warning: { ru: 'ВНИМАНИЕ', en: 'WARNING' },
   phase: { ru: 'ФАЗА', en: 'PHASE' }, // «ФАЗА 2» на стекле
-  // Строка «💀 N%» под окошком множителя и знак ×▲ — что они значат (замечание 19: черепа растут сами, фаза 2 даёт прокрутку).
+  // Экранчик доли черепов слева от сетки — что он значит (замечание 19: черепа растут сами, фаза 2 даёт прокрутку).
   skullShareTitle: { ru: 'Доля черепов', en: 'Skull share' },
   skullShareWhat: {
     ru: 'Столько клеток автомата — 💀. Каждый раунд доля растёт; 🧄 уменьшает её вдвое до конца раунда',
     en: 'That much of the machine is 💀. The share grows every round; 🧄 halves it until the round ends',
   },
   phase2Title: { ru: 'Фаза 2', en: 'Phase 2' },
+  // Подсказка к знаку фазы 2: знак ×▲ автор убрал (DONTLIKE б.1), поэтому сейчас эти две строки нигде не показываются.
+  // Оставлены резервом: вернуть знак в PHASE_SIGNS — и подсказка снова заработает, тексты готовы.
   phase2What: {
     ru: '+1 прокрутка в каждом раунде; доля черепов растёт с каждым раундом сама',
     en: '+1 spin every round; the skull share grows on its own every round',
   },
   debtCovered: { ru: 'ДАЛЬШЕ — ПРИБЫЛЬ', en: "NOW IT'S PROFIT" }, // на стекле: на долг хватает — дальше крутишь себе в плюс
-  // Цель забега: первая строка вкладки «Как играть» и новость на стекле, когда набранное перевалило порог.
-  howToGoalLine: { ru: 'ЦЕЛЬ {0} · набрано {1} ({2}%)', en: 'GOAL {0} · earned {1} ({2}%)' },
-  howToRecord: { ru: '{0} — рекорд после победы', en: '{0} — record after the victory' },
+  // Цель забега: новость на стекле, когда набранное перевалило порог (сама цель — на записке над экраном).
   chipsMilestone: { ru: 'НАБРАНО {0} · {1}% ЦЕЛИ', en: '{0} EARNED · {1}% OF GOAL' },
   patternNew: { ru: 'НОВЫЙ ПАТТЕРН ×{0}', en: 'NEW PATTERN ×{0}' }, // на стекле: паттерн выпал впервые
   patternKnown: { ru: 'ПАТТЕРН ×{0}', en: 'PATTERN ×{0}' }, // он уже открывался раньше (например, до отката кассетой)
@@ -62,47 +63,62 @@ const TEXTS = {
   lcSurrender: { ru: 'Сдаться', en: 'Give up' },
   lcSurrenderWhat: { ru: 'Клавиша 4. Сразу провал последнего шанса', en: 'Key 4. Fail the last chance right away' },
   lcSecondWind: { ru: 'ВТОРОЕ ДЫХАНИЕ', en: 'SECOND WIND' },
+  // Пояснение к попапу: почему забег жив, хотя последний шанс провален (DONTLIKE б.12).
+  lcSecondWindWhat: {
+    ru: 'первый провал за забег прощён: счёт на один долг назад. Второй провал — конец забега',
+    en: 'the first failure of the run is forgiven: the score goes one debt back. The second failure ends the run',
+  },
+  // Плашка у записки долга: есть ли ещё второе дыхание (DONTLIKE б.12).
+  secondWindHave: { ru: '🫁 ДЫХАНИЕ: ЕСТЬ', en: '🫁 SECOND WIND: ON' },
+  secondWindSpent: { ru: '🫁 ДЫХАНИЕ: НЕТ', en: '🫁 SECOND WIND: OFF' },
+  // Последний шанс, входная сетка уже перекрыла цель: долг закроется сам (DONTLIKE б.13).
+  lcAlreadyWin: { ru: 'СЕТКА УЖЕ БЬЁТ ЦЕЛЬ', en: 'THE GRID ALREADY BEATS THE GOAL' },
   pause: { ru: 'ПАУЗА', en: 'PAUSE' }, // над знаком паузы
   // Экран на стене (WallScreen): вкладки и их надписи.
   tabSymbols: { ru: 'СИМВОЛЫ', en: 'SYMBOLS' },
   tabHowTo: { ru: 'КАК ИГРАТЬ', en: 'HOW TO PLAY' },
+  // Подписи под клавишами на вкладке «Как играть» (wallScreen.buildHowTo): одно слово, иначе не влезает.
+  keySpin: { ru: 'крутить', en: 'spin' },
+  keyTake: { ru: 'забрать', en: 'take' },
+  keyDebt: { ru: 'долг', en: 'debt' },
+  keyItems: { ru: 'предметы', en: 'items' },
+  keyPause: { ru: 'пауза', en: 'pause' },
+  keyLanguage: { ru: 'язык', en: 'language' },
+  keySound: { ru: 'звук', en: 'sound' },
+  keyMode: { ru: 'режим', en: 'mode' }, // T переключает режим прокрутки, а не открывает эту вкладку
+  keyShop: { ru: 'магазин', en: 'shop' },
+  keyAmulets: { ru: 'амулеты', en: 'amulets' },
+  keyCassette: { ru: 'кассета', en: 'tape' },
+  keyDrum: { ru: 'барабан', en: 'drum' },
   tabWho: { ru: 'КТО ЕСТЬ КТО', en: "WHO'S WHO" },
   tabItems: { ru: 'ПРЕДМЕТЫ', en: 'ITEMS' },
   tabEmpty: { ru: 'Пока ничего не встретил', en: 'Nothing met yet' },
+  // Режим разработчика: раздел «?» на планшете (строка с кодом) и его вкладка «ТЕСТ».
+  devTab: { ru: 'ТЕСТ', en: 'TEST' },
+  devCodeAsk: { ru: 'КОД', en: 'CODE' },
+  devCodeHint: { ru: 'Enter — подтвердить', en: 'Enter to confirm' },
+  devConfirm: { ru: 'ОК', en: 'OK' },
+  devCodeWrong: { ru: 'НЕВЕРНО', en: 'WRONG' },
+  devItems: { ru: 'ПРЕДМЕТЫ', en: 'ITEMS' },
+  devAmulets: { ru: 'АМУЛЕТЫ', en: 'AMULETS' },
+  devChips: { ru: '+{0} фишек', en: '+{0} chips' },
+  devTickets: { ru: '+{0} билетов', en: '+{0} tickets' },
+  devExit: { ru: 'ВЫЙТИ', en: 'EXIT' },
   whoCollector: { ru: 'Коллектор', en: 'Collector' },
   whoCollectorWhat: {
-    ru: 'Приходит за долгом. Не хватает фишек — GOOD LUCK: одна чистая прокрутка и два действия, чтобы собрать паттерн нужного множителя',
-    en: 'Comes for the debt. Short on chips — GOOD LUCK: one clean spin and two actions to land a pattern of the right multiplier',
+    ru: 'Приходит за долгом; не хватает фишек — GOOD LUCK и два действия',
+    en: 'Comes for the debt; short on chips — GOOD LUCK and two actions',
   },
   whoDealer: { ru: 'Дилер', en: 'Dealer' },
   whoDealerWhat: {
-    ru: 'Выпал 🎲 — угадай: «>», «<» ×1,5, «=» ×8. Не угадал — кон сгорает',
-    en: 'The 🎲 drops — guess: ">", "<" ×1.5, "=" ×8. Wrong — the pot burns',
+    ru: '🎲: угадай больше, меньше или равно — промах сжигает кон',
+    en: '🎲: guess higher, lower or equal — a miss burns the pot',
   },
-  howToGoal: {
-    ru: 'Цель. Отдать долг, пока не кончились прокрутки. Каждый раунд долг больше.\n\nКрути автомат: паттерны из одинаковых символов добавляют фишки в кон. Каждая прокрутка подряд поднимает множитель кона. Череп сжигает кон, пока ты его не забрал.\n\nЗабрать: кон уходит на табло, множитель уменьшается вдвое.\n\nФишек на долг хватает: отдай его записке или банкомату Коллектора, потом магазин. Не хватает: на экране GOOD LUCK, автомат делает одну чистую прокрутку — без черепов и злых символов. У тебя два действия: перекрутить столбец или поставить джокера в клетку, заморозка столбца бесплатная. Цель написана на полосе — это нужный множитель паттерна: собери его, и долг закрыт, фишки целы, счёт на один долг назад. Не добрал или сдался — провал: первый за забег даёт второе дыхание (счёт −1 и магазин), второй — конец забега. Схемы паттернов на стекле над экраном проступают, когда паттерн впервые выпадает.',
-    en: 'Goal. Pay the debt before you run out of spins. The debt grows every round.\n\nSpin the machine: patterns of matching symbols add chips to the pot. Each spin in a row raises the pot multiplier. A skull burns the pot until you take it.\n\nTake: the pot goes to the board, the multiplier is halved.\n\nEnough chips for the debt: hand it to the note or the Collector\'s ATM, then the shop. Not enough: GOOD LUCK on the screen and the machine makes one clean spin — no skulls, no evil symbols. You have two actions: reroll a column or drop a joker into a cell; freezing a column is free. The goal is written on the bar: it is the pattern multiplier you need — land it and the debt is paid, your chips stay, the score goes one debt back. Miss it or give up — you fail: the first failure gives a second wind (score −1 and the shop), the second ends the run. The pattern diagrams on the glass above the screen appear once a pattern has landed for the first time.',
-  },
-  howToKeys: {
-    ru: 'Клавиши\nПробел: крутить, назад из магазина\nEnter: забрать кон, отдать долг\nD: отдать долг раньше\n1–8: предмет с полки\n→ или клик: этот экран\nEsc или P: пауза\nM: звук\nL: язык\nT: режим прокрутки\n\nВ магазине\n1–4: торговый автомат\n5–8: чемодан с амулетами\n9: кассета, 0: барабан',
-    en: 'Keys\nSpace: spin, leave the shop\nEnter: take the pot, pay the debt\nD: pay the debt early\n1–8: shelf item\n→ or click: this screen\nEsc or P: pause\nM: sound\nL: language\nT: spin mode\n\nIn the shop\n1–4: vending machine\n5–8: amulet suitcase\n9: tape, 0: drum',
-  },
-  // Переключатель режима прокрутки у рычага (шаг 70): три плашки.
-  spinModeTitle: { ru: 'Режим прокрутки', en: 'Spin mode' },
-  spinModeNormal: { ru: 'ОБЫЧНО', en: 'NORMAL' },
-  spinModeRisk: { ru: 'РИСК', en: 'RISK' },
-  spinModeCalm: { ru: 'СПОКОЙНО', en: 'CALM' },
-  spinModeNormalWhat: {
-    ru: 'Обычная прокрутка: черепа и выигрыш как есть. Бесплатные прокрутки, смена автомата и последний шанс — по обычным правилам',
-    en: 'Normal spin: skulls and winnings as usual. Free spins, machine change and last chance follow the usual rules',
-  },
-  spinModeRiskWhat: {
-    ru: 'Черепов {0} чаще, выигрыш {1}. Складывается с предметом «Риск». Бесплатные прокрутки, смена автомата и последний шанс — по обычным правилам',
-    en: 'Skulls {0} as often, winnings {1}. Stacks with the "Risk" item. Free spins, machine change and last chance follow the usual rules',
-  },
-  spinModeCalmWhat: {
-    ru: 'Черепов и выигрыша нет — только серия +1. Заряженные предметы и смена автомата их не тратят. Заевший столбец спокойная прокрутка не переносит. Бесплатные прокрутки и последний шанс — по обычным правилам',
-    en: 'No skulls and no winnings — only the streak +1. Charged items and a machine change do not spend them. A calm spin does not carry the jammed column over. Free spins and last chance follow the usual rules',
+  // Замах рычага (DONTLIKE п. 8): подсказка к шкале заряда.
+  chargeTitle: { ru: 'Замах', en: 'Charge' },
+  chargeWhat: {
+    ru: 'Держи рычаг — шкала растёт. Сильный замах: черепа чаще и крупные паттерны тоже, слабый — тихо и безопасно. Выплаты не меняются. Полная шкала за {0} с',
+    en: 'Hold the lever — the gauge fills. A strong pull means more skulls and bigger patterns, a weak one is quiet and safe. Payouts stay the same. Full gauge in {0} s',
   },
   closedSlot: { ru: 'Закрытое место', en: 'Locked slot' },
   closedSlotHow: { ru: 'Открывается за фишки в магазине', en: 'Opens for chips in the shop' },
@@ -125,16 +141,8 @@ const TEXTS = {
   // Включённые предметы у экрана: четыре места, лишний предмет не включается, пока место не освободили кликом.
   effectsFull: { ru: 'Все 4 места заняты — снимите предмет у экрана', en: 'All 4 slots are taken — remove an item from the screen' },
   effectRemove: { ru: 'Нажмите, чтобы убрать', en: 'Click to remove' },
-  // Выбор автомата в магазине: сам выбор бесплатный, прокачка — за билеты.
-  machinePickWhat: { ru: 'Выбрать бесплатно: встанет со следующего раунда', en: 'Pick for free: takes effect next round' },
-  machineUpgrade: { ru: 'Прокачать до ур. {0}', en: 'Upgrade to lvl {0}' },
-  machineUpgradeWhat: { ru: 'Билетов: {0}', en: 'Tickets: {0}' },
-  machineUpgradeBranch: {
-    ru: 'На 3-м уровне ветка по умолчанию — «−10% черепа», потом меняется кнопкой',
-    en: 'At level 3 the branch defaults to −10% skulls; change it with the button',
-  },
-  machineMaxLevel: { ru: 'Последний уровень', en: 'Top level' },
-  machineBranchWhat: { ru: 'Что даёт третий уровень: ветку можно выбрать одну', en: 'What level 3 gives: pick one branch' },
+  // Кнопка выхода в шапке панели магазина (ручка жалюзи внизу осталась вторым выходом).
+  shopLeave: { ru: 'ВЫХОД', en: 'EXIT' },
   // Монитор справа: что делает каждый особый символ. {0}, {1} — числа из правил (их подставляет монитор).
   skullNote: { ru: 'Паттерн из черепов сжигает кон; сейчас {0}% клеток', en: 'A skull pattern burns the pot; {0}% of cells now' },
   ticketNote: { ru: '{0} на экране — билет', en: '{0} on screen — a ticket' },
@@ -149,6 +157,97 @@ const TEXTS = {
   },
   bloodNote: { ru: 'Следующая прокрутка ×{0}, но черепа жгут и табло', en: 'Next spin ×{0}, but skulls burn your chips too' },
   jackpotNote: { ru: 'Джекпот: билеты +{0}, прокрутки +{1}', en: 'Jackpot: tickets +{0}, spins +{1}' },
+  // ---------- Ачивки (achievements.ts): подпись окна, названия и описания. Формулировки автора — в названиях. ----------
+  achievementUnlocked: { ru: 'АЧИВКА', en: 'ACHIEVEMENT' },
+  achievementNews: { ru: '🏆 {0}', en: '🏆 {0}' }, // новость на стекле: только название, как просил автор
+  achNoSmoke: { ru: 'Не кури', en: "Don't smoke" },
+  achNoSmokeWhat: { ru: 'Впервые включил сигарету', en: 'You used a cigarette for the first time' },
+  achProtectedShield: { ru: 'Защищён', en: 'Protected' },
+  achProtectedShieldWhat: { ru: 'Впервые включил щит', en: 'You used a shield for the first time' },
+  achCalm: { ru: 'Спокойствие', en: 'Calm' },
+  achCalmWhat: { ru: 'Впервые включил чеснок', en: 'You used garlic for the first time' },
+  achMuchTriple: { ru: 'Ого как много', en: 'Oh, so much' },
+  achMuchTripleWhat: { ru: 'Впервые включил тройное «забрать»', en: 'You used the triple take for the first time' },
+  achManyBerries: { ru: 'Много ягод', en: 'So many berries' },
+  achManyBerriesWhat: { ru: 'Впервые включил вишни', en: 'You used cherries for the first time' },
+  achDing: { ru: 'Дзынь', en: 'Ding' },
+  achDingWhat: { ru: 'Впервые включил колокольчики', en: 'You used bells for the first time' },
+  achManyDiamonds: { ru: 'Как много алмазов', en: 'So many diamonds' },
+  achManyDiamondsWhat: { ru: 'Впервые включил алмазы', en: 'You used diamonds for the first time' },
+  achLuckyMe: { ru: 'Мне повезёт', en: 'Feeling lucky' },
+  achLuckyMeWhat: { ru: 'Впервые включил удачу', en: 'You used luck for the first time' },
+  achWhatTheHell: { ru: 'Была — не была', en: 'Here goes nothing' },
+  achWhatTheHellWhat: { ru: 'Впервые включил риск', en: 'You used risk for the first time' },
+  achDamnLock: { ru: 'Туда этот замок!', en: 'Damn this lock!' },
+  achDamnLockWhat: { ru: 'Впервые включил молоток', en: 'You used the hammer for the first time' },
+  achNoSkulls: { ru: 'Вы где черепа?', en: 'Any skulls here?' },
+  achNoSkullsWhat: { ru: 'Впервые включил фарт', en: 'You used luck for the first time' },
+  achLuckyShuffle: { ru: 'Хоть бы повезло', en: 'Fingers crossed' },
+  achLuckyShuffleWhat: { ru: 'Впервые включил перемешку', en: 'You used a shuffle for the first time' },
+  achSwapJackpot: { ru: 'Это КиШ!', en: "That's a jackpot!" },
+  achSwapJackpotWhat: { ru: 'Впервые включил подмену', en: 'You used a swap for the first time' },
+  achMoreBerries: { ru: 'Больше ягод', en: 'More berries' },
+  achMoreBerriesWhat: { ru: 'Впервые получил «вишнёвую косточку»', en: 'You got the cherry pit amulet for the first time' },
+  achPseudoInfinity: { ru: 'Псевдо-бесконечность', en: 'Pseudo-infinity' },
+  achPseudoInfinityWhat: { ru: 'Впервые получил амулет «колокольчик»', en: 'You got the bell amulet for the first time' },
+  achSoSo: { ru: 'Толи да толи нет', en: 'Hit or miss' },
+  achSoSoWhat: { ru: 'Впервые получил копилку', en: 'You got the piggy bank for the first time' },
+  achInsured: { ru: 'Застрахован', en: 'Insured' },
+  achInsuredWhat: { ru: 'Впервые получил страховку', en: 'You got the insurance amulet for the first time' },
+  achBoostSpeed: { ru: 'Разгон', en: 'Boost' },
+  achBoostSpeedWhat: { ru: 'Впервые получил разгон', en: 'You got the boost amulet for the first time' },
+  achVestOn: { ru: 'На мне бронежилет', en: 'I wear a vest' },
+  achVestOnWhat: { ru: 'Впервые получил бронежилет', en: 'You got the vest amulet for the first time' },
+  achMoreDiamonds: { ru: 'БОЛЬШЕ АЛМАЗОВ', en: 'MORE DIAMONDS' },
+  achMoreDiamondsWhat: { ru: 'Впервые получил «огранку»', en: 'You got the cut amulet for the first time' },
+  achStrangeSchemes: { ru: 'Странные схемы', en: 'Strange schemes' },
+  achStrangeSchemesWhat: { ru: 'Впервые получил «проценты»', en: 'You got the interest amulet for the first time' },
+  achImmoral: { ru: 'Аморальный', en: 'Immoral' },
+  achImmoralWhat: { ru: 'Впервые получил «коллекционера костей»', en: 'You got the bone collector for the first time' },
+  achSkeletonPack: { ru: 'Пачка скелетов в кармане', en: 'A pack of skeletons in the pocket' },
+  achSkeletonPackWhat: { ru: 'Впервые получил «череп в кармане»', en: 'You got the skull-in-pocket amulet for the first time' },
+  achGreedyWins: { ru: 'Скупой выигрывает дважды', en: 'The greedy one wins twice' },
+  achGreedyWinsWhat: { ru: 'Впервые получил «жадность»', en: 'You got the greed amulet for the first time' },
+  achOccupied: { ru: 'ЗАНЯТО!', en: 'OCCUPIED!' },
+  achOccupiedWhat: { ru: 'Все шесть гнёзд заняты амулетами', en: 'All six sockets are taken by amulets' },
+  achFreebie: { ru: 'Халява', en: 'Freebie' },
+  achFreebieWhat: { ru: 'Впервые включил свечку', en: 'You used a candle for the first time' },
+  achWrongGame: { ru: 'Я играю не туда', en: 'Playing the wrong game' },
+  achWrongGameWhat: { ru: 'Режим «риск» и «череп в кармане» одновременно', en: 'Risk mode and the skull-in-pocket amulet at the same time' },
+  achInfinity: { ru: 'Бесконечность', en: 'Infinity' },
+  achInfinityWhat: { ru: 'Колокольчики и амулет «колокольчик» одновременно', en: 'Bells item and the bell amulet at the same time' },
+  achSkeletonKing: { ru: 'Король скелетов', en: 'Skeleton King' },
+  achSkeletonKingWhat: { ru: '«Коллекционер костей» и «череп в кармане» одновременно', en: 'Bones collector and skull-in-pocket at the same time' },
+  achCheapAndAngry: { ru: 'Дешёво и сердито', en: 'Cheap and cheerful' },
+  achCheapAndAngryWhat: { ru: '«Вишнёвая косточка» и вишни одновременно', en: 'Cherry pit amulet and cherries at the same time' },
+  achWhereAreSkulls: { ru: 'А где черепа?', en: 'Where are the skulls?' },
+  achWhereAreSkullsWhat: { ru: 'Чеснок и амулет, удваивающий выпадение', en: 'Garlic and an amulet that doubles a symbol' },
+  achSkullsAreSoLastCentury: { ru: 'Черепа это прошлый век!', en: 'Skulls are so last century!' },
+  achSkullsAreSoLastCenturyWhat: { ru: 'Чеснок, алмазы и «огранка» одновременно', en: 'Garlic, diamonds and the cut amulet at the same time' },
+  achBank: { ru: 'Банк', en: 'Bank' },
+  achBankWhat: { ru: '«Страховка» и «проценты» одновременно', en: 'Insurance and interest at the same time' },
+  achSmoker: { ru: 'Курильщик', en: 'Smoker' },
+  achSmokerWhat: { ru: 'Три сигареты за один раунд', en: 'Three cigarettes in one round' },
+  achLuckyOne: { ru: 'Везунчик', en: 'Lucky one' },
+  achLuckyOneWhat: { ru: 'Риск, «череп в кармане» и тройное «забрать» в выигрышном раунде', en: 'Risk, skull-in-pocket and a triple take in a winning round' },
+  achNope: { ru: 'Неа', en: 'Nope' },
+  achNopeWhat: { ru: 'Режим «риск» и фарт одновременно', en: 'Risk mode and luck at the same time' },
+  achFiftyFifty: { ru: '50 на 50', en: '50/50' },
+  achFiftyFiftyWhat: { ru: 'Паттерн выиграл, когда доля черепов была 50% или выше', en: 'A pattern won when the skull share was 50% or higher' },
+  achMyGold: { ru: 'Моё золото', en: 'My gold' },
+  achMyGoldWhat: { ru: 'Все слоты полки забиты одним предметом', en: 'Every shelf slot holds the same item' },
+  achDuplicate: { ru: 'Дубликат', en: 'Duplicate' },
+  achDuplicateWhat: { ru: 'Две копии одного амулета', en: 'Two copies of the same amulet' },
+  achTheEnd: { ru: 'Конец?', en: 'The end?' },
+  achTheEndWhat: { ru: 'Набрано 1 000 000 фишек', en: '1 000 000 chips earned' },
+  achNotTheEnd: { ru: 'Это не конец...', en: 'This is not the end...' },
+  achNotTheEndWhat: { ru: 'Набрано 10 000 000 фишек', en: '10 000 000 chips earned' },
+  achYourTicket: { ru: 'Ваш билетик!', en: 'Your ticket!' },
+  achYourTicketWhat: { ru: '20 билетов на табло', en: '20 tickets on the board' },
+  achIAmSpeed: { ru: 'Я скорость', en: 'I am speed' },
+  achIAmSpeedWhat: { ru: 'Множитель серии ×50', en: 'Streak multiplier ×50' },
+  achBloodSpill: { ru: 'Я пролью много крови', en: 'I will spill much blood' },
+  achBloodSpillWhat: { ru: '«Жадность», и до конца раунда две прокрутки', en: 'Greed amulet, two spins left in the round' },
 } satisfies Record<string, Words>;
 
 export type TextKey = keyof typeof TEXTS;
@@ -191,10 +290,10 @@ export function t(text: TextKey | Words, ...values: (string | number)[]): string
 }
 
 /**
- * Число фишек с пробелами между тысячами: 1234567 → «1 234 567». Так цель «1 000 000» читается как на табло,
- * а не «1000000». Округляем: дробных фишек в игре нет.
+ * Число фишек с разделителями между тысячами: 1234567 → «1 234 567». Так цель «1 000 000» читается как на табло,
+ * а не «1000000». Округляем: дробных фишек в игре нет. separator — чем разделять («.» — на записке цели).
  */
-export function formatChips(value: number): string {
-  return String(Math.round(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+export function formatChips(value: number, separator = ' '): string {
+  return String(Math.round(value)).replace(/\B(?=(\d{3})+(?!\d))/g, separator);
 }
 

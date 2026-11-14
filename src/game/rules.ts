@@ -194,6 +194,16 @@ export function spinGrid(weightOf: WeightOf = BASE_WEIGHT): Grid {
   return grid;
 }
 
+/**
+ * На сколько уменьшается счёт раундов перед магазином, когда долг НЕ закрыли (провал последнего шанса,
+ * «второе дыхание»). Счёт не двигаем: магазин прибавит единицу — следующий долг будет тем же, без роста
+ * (решение автора: незакрытый долг переносится таким же, никаких бафов и штрафов за проигрыш).
+ * Выигранный последний шанс — другое дело: там долг закрыт чемоданом и счёт идёт на один назад (ROUND_STEP_AFTER_WIN).
+ */
+export const FAILED_DEBT_ROUND_STEP = 1;
+/** На сколько уменьшается счёт, когда последний шанс выигран: магазин прибавит единицу — счёт на один долг назад. */
+export const WON_DEBT_ROUND_STEP = 2;
+
 /** Долг раунда N = DEBT_START × DEBT_GROWTH^(N−1), округлённый до DEBT_ROUND_TO: 30, 50, 100, 170, 310… */
 export function debtForRound(round: number): number {
   const exact = DEBT_START * DEBT_GROWTH ** (round - 1);

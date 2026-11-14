@@ -5,14 +5,17 @@
  */
 
 import { PATTERNS } from './patterns';
+import { achievementsOf, isAchievementId, type AchievementId } from './achievements';
+import { isDevMode } from './devmode';
 
 export interface Progress {
   tutorialDone: boolean; // первый забег с тьмой пройден — больше её не показываем
   patterns: string[]; // какие паттерны уже выпадали: на стекле видно только их (кассета возвращает набор с записи)
+  achievements: string[]; // какие ачивки получены: копятся навсегда, «Заново» и конец забега их не сбрасывают
 }
 
 const PROGRESS_KEY = 'dolgovaya-yama-progress'; // ключ прогресса в localStorage
-const DEFAULT_PROGRESS: Progress = { tutorialDone: false, patterns: [] }; // новый игрок: тьма в первом забеге, стекло пустое
+const DEFAULT_PROGRESS: Progress = { tutorialDone: false, patterns: [], achievements: [] }; // новый игрок: тьма в первом забеге, стекло пустое, ачивок нет
 
 let progress: Progress = loadProgress();
 
@@ -36,14 +39,15 @@ function patternsOf(value: unknown): string[] {
 function loadProgress(): Progress {
   try {
     const saved: unknown = JSON.parse(localStorage.getItem(PROGRESS_KEY) ?? 'null');
-    if (typeof saved !== 'object' || saved === null) return { ...DEFAULT_PROGRESS, patterns: [] };
-    const { tutorialDone, patterns } = saved as { tutorialDone?: unknown; patterns?: unknown };
+    if (typeof saved !== 'object' || saved === null) return { ...DEFAULT_PROGRESS, patterns: [], achievements: [] };
+    const { tutorialDone, patterns, achievements } = saved as { tutorialDone?: unknown; patterns?: unknown; achievements?: unknown };
     return {
       tutorialDone: typeof tutorialDone === 'boolean' ? tutorialDone : DEFAULT_PROGRESS.tutorialDone,
       patterns: patternsOf(patterns),
+      achievements: achievementsOf(achievements),
     };
   } catch {
-    return { ...DEFAULT_PROGRESS, patterns: [] }; // хранилище запрещено или в нём не JSON
+    return { ...DEFAULT_PROGRESS, patterns: [], achievements: [] }; // хранилище запрещено или в нём не JSON
   }
 }
 
@@ -84,4 +88,26 @@ export function markPatternOpen(id: string): void {
   if (!isPatternId(id) || progress.patterns.includes(id)) return;
   progress.patterns.push(id);
   saveProgress();
+}
+
+/** Какие ачивки уже получены: их не сбрасывает ни «Заново», ни конец забега. Копия — менять набор снаружи нельзя. */
+export function obtainedAchievements(): readonly string[] {
+  return [...progress.achievements];
+}
+
+/** Эта ачивка получена раньше (в любом забеге)? */
+export function hasAchievement(id: AchievementId): boolean {
+  return progress.achievements.includes(id);
+}
+
+/**
+ * Выдать ачивку навсегда. Уже была — false: повторно её не показываем. Режим разработчика — тоже false:
+ * при нём ачивки не выдаются и не пишутся, иначе тестовые кнопки «+1» раздавали бы их пачками.
+ * true — ачивка новая, сцена показывает её игроку.
+ */
+export function grantAchievement(id: AchievementId): boolean {
+  if (isDevMode() || !isAchievementId(id) || hasAchievement(id)) return false;
+  progress.achievements.push(id);
+  saveProgress();
+  return true;
 }

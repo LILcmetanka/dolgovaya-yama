@@ -2,22 +2,10 @@ import { addCopy, amuletPrice, countOf, randomAmuletOffer, socketPrice } from '.
 import { amuletKey, itemKey, see, WHO_COLLECTOR } from '../codex';
 import { canWin, DRUM_SECTORS, drumChips, drumPrice, prizeItem, randomSector, type DrumPrize } from '../drum';
 import { itemPrice, MAX_SLOTS, offerReplacement, randomOffer, slotPrice, type ShopItem } from '../items';
-import {
-  copyMachineState,
-  isSameMachine,
-  machineItemAllowed,
-  machineUpgradePrice,
-  newMachineState,
-  upgradedMachine,
-  MACHINES,
-  type MachineBranch,
-  type MachineId,
-  type MachineState,
-} from '../machines';
+import { machineItemAllowed } from '../machines';
 import { debtForRound } from '../rules';
 import type { SoundName } from '../sound';
 import { GOLD_TEXT } from '../theme';
-import type { MachineRow } from '../parts/machinePicker';
 import { SLOT_ROW, SOCKET_ROW } from '../parts/miniShop';
 import { DealerScene } from './DealerScene';
 
@@ -32,34 +20,26 @@ function prizeSound(prize: DrumPrize): SoundName {
 /**
  * Слой магазина: после расплаты сверху съезжает панель магазина (как жалюзи) и закрывает комнату. В торговом автомате —
  * предметы за фишки, в маленьком автомате рядом — место на полке за фишки и гнездо за билеты, в витрине над торговым —
- * амулеты за билеты, справа на панели — «барабан» за фишки, кассета и выбор автомата с прокачкой.
+ * амулеты за билеты, справа на панели — «барабан» за фишки и кассета.
  * Что открыто, решают закрытые долги (amuletsUnlocked и остальные): части показывают себя через setAvailable.
- * Ушёл из магазина — панель уезжает наверх, выбранный автомат встаёт на место, и новый раунд.
+ * Ушёл из магазина — панель уезжает наверх, и новый раунд: автомат к этому моменту мог смениться сам.
  */
 export abstract class ShopScene extends DealerScene {
-  // Какой автомат выбран в этом магазине и встанет на место в leaveShop — со следующего раунда.
-  // Сами уровни всех трёх — в записи забега (BaseScene.machineStates): их не теряет ни примерка, ни выход из магазина.
-  private machineNextId: MachineId = 'classic';
-  // Каким автомат был на входе в магазин: по нему видно, показывать ли новый автомат после выхода.
-  private machineAtEntry: MachineState = newMachineState();
   // Панель уезжает после leaveShop, и колбэк её хода ещё не сработал: раунд начнётся, только когда она уедет.
   private isLeavingShop = false;
 
   /**
    * Долг отдан (или пропущен): на записке следующий долг (записка переворачивается), сверху съезжает панель магазина.
-   * Выбор автомата начинается с того, что стоит сейчас; другой автомат приходит с первого уровня.
    */
   protected openShop(): void {
     this.round += 1;
     this.debt = debtForRound(this.round);
     this.isShopOpen = true; // панель на экране — и пока едет, и когда уже стоит
     this.isLeavingShop = false; // забег мог перезапуститься посреди выхода: панель снова на месте
-    this.machineNextId = this.machineId; // начинаем с того, что стоит
-    this.machineAtEntry = copyMachineState(this.machineState);
     this.updateRecord();
-    this.collector.flipNote(this.debt, this.hasEnoughForDebt());
-    // Оффер — под автомат, который будет играть этот раунд: «Удача» у «Тихого» бесполезна (клевера нет).
-    const offer = randomOffer(this.round, (item) => machineItemAllowed(this.machineStates[this.machineNextId], item));
+    this.collector.flipNote(this.debt);
+    // Оффер — под автомат, который стоит: «Удача» у «Тихого» бесполезна (клевера нет).
+    const offer = randomOffer(this.round, (item) => machineItemAllowed(this.machineId, item));
     this.offer = offer;
     // Чемодан открыт — витрина амулетов новая; закрыт — в магазине амулетов нет вовсе.
     const isAmulets = this.amuletsUnlocked();
@@ -109,6 +89,8 @@ export abstract class ShopScene extends DealerScene {
 
   /** Купить предмет: фишки уходят с табло, предмет падает в лоток и летит на свободное место полки. */
   private buyItem(row: number): void {
+    // Своя проверка: двойной клик до landed не должен продать уже заменённый предмет второй раз.
+    if (!this.isShopping) return;
     const item = this.offer[row];
     if (!item) return;
     const price = itemPrice(item, this.debt);
@@ -126,23 +108,25 @@ export abstract class ShopScene extends DealerScene {
     this.balance -= price;
     this.offer[row] = null;
     this.shelf[slot] = item;
+    // Замена считается сразу, а не через ~1,1 с в колбэке падения покупки: уход из магазина в этот момент
+    // не должен оставить ряд пустым (DONTLIKE б.5). Следующий openShop всё равно строит оффер заново.
+    const replacement = offerReplacement([...this.offer, item], this.round, (next) => machineItemAllowed(this.machineId, next));
+    this.offer[row] = replacement;
     this.shop.sell(row, (x, y) => {
       this.itemShelf.putItem(slot, item, x, y);
-      this.refillRow(row, item);
+      this.refillRow(row, replacement);
     });
     this.afterPurchase();
   }
 
   /**
    * Купили предмет — в его ряду появляется другой из пула (не тот, что купили, и не тот, что стоит в других рядах):
-   * витрина не пустеет за заход. Появляется, когда покупка уже упала в лоток, с той же анимацией появления;
-   * остальные ряды не трогаются.
+   * витрина не пустеет за заход. Здесь только показ: какой предмет встанет, уже решено в buyItem — поэтому
+   * вышедший из магазина игрок не оставит ряд пустым. Появляется, когда покупка упала в лоток, с подскоком;
+   * остальные ряды не трогаются. item === null — в пуле больше нет предметов, ряд остаётся пустым.
    */
-  private refillRow(row: number, bought: ShopItem): void {
-    if (!this.isShopping) return; // ушли из магазина, пока покупка падала
-    const item = offerReplacement([...this.offer, bought], this.round, (next) => machineItemAllowed(this.machineStates[this.machineNextId], next));
+  private refillRow(row: number, item: ShopItem | null): void {
     if (!item) return; // в пуле больше нет предметов — ряд остаётся пустым
-    this.offer[row] = item;
     this.shop.refill(row, item, itemPrice(item, this.debt));
     see(itemKey(item.id)); // новый предмет уже встречен — во вкладке «Предметы» он не «???»
     this.refreshShop();
@@ -292,7 +276,7 @@ export abstract class ShopScene extends DealerScene {
   private afterPurchase(sound: SoundName = 'buy'): void {
     this.sfx.play(sound);
     this.tooltip.hide();
-    this.collector.markNote(this.debt, this.hasEnoughForDebt());
+    this.collector.markNote(this.debt);
     this.refreshHud();
     this.refreshShop();
   }
@@ -310,84 +294,11 @@ export abstract class ShopScene extends DealerScene {
     const drumCost = drumPrice(this.drumSpins, this.debt);
     this.drum.showPrice(drumCost, drumCost <= this.balance);
     this.drum.showAvailable(this.drumSectors());
-    this.machinePicker.show(this.machineRows(), this.tickets);
-  }
-
-  // ---------- Автомат: выбор и прокачка ----------
-
-  /** Строки выбора: у каждого автомата свой уровень и ветка из записи забега. */
-  private machineRows(): MachineRow[] {
-    return MACHINES.map((spec) => {
-      const state = this.machineStates[spec.id];
-      return {
-        id: spec.id,
-        level: state.level,
-        branch: state.branch,
-        price: machineUpgradePrice(state),
-        selected: spec.id === this.machineNextId,
-      };
-    });
   }
 
   /**
-   * Выбрали автомат: это бесплатно, уровни всех трёх остаются в записи забега — прокачал, примерил другой,
-   * вернулся, уровень цел. Встанет на место со следующего раунда (leaveShop).
-   */
-  protected pickMachine(id: MachineId): void {
-    if (!this.isShopping || id === this.machineNextId) return;
-    this.machineNextId = id;
-    this.sfx.play('item');
-    this.swapBannedOffers(); // у нового автомата витрина без того, что ему не подходит
-    this.refreshShop();
-  }
-
-  /**
-   * Сменили автомат: предметы, которые ему бесполезны («Удача» у «Тихого» — клевера там нет), заменяются другими
-   * в своих рядах, как после покупки. Ряд не трогаем, только если в пуле совсем ничего не осталось.
-   */
-  private swapBannedOffers(): void {
-    const state = this.machineStates[this.machineNextId];
-    this.offer.forEach((item, row) => {
-      if (!item || machineItemAllowed(state, item)) return;
-      const replacement = offerReplacement(this.offer, this.round, (next) => machineItemAllowed(state, next));
-      if (!replacement) return; // других предметов в пуле нет — ряд остаётся как есть
-      this.offer[row] = replacement;
-      this.shop.refill(row, replacement, itemPrice(replacement, this.debt));
-      see(itemKey(replacement.id)); // новый предмет уже встречен — во вкладке «Предметы» он не «???»
-    });
-  }
-
-  /** Прокачать выбранный автомат за билеты: ур.1→2 — 1 билет, ур.2→3 — 3. Не хватает — тряска его строки. */
-  protected upgradeMachine(id: MachineId): void {
-    if (!this.isShopping) return;
-    if (id !== this.machineNextId) return; // ценник — только у выбранной строки
-    const state = this.machineStates[id];
-    const price = machineUpgradePrice(state);
-    if (price === null) return; // последний уровень: прокачивать некуда
-    if (price > this.tickets) {
-      this.sfx.play('deny');
-      this.machinePicker.deny(id);
-      return;
-    }
-    this.tickets -= price;
-    const upgraded = upgradedMachine(state);
-    // Третий уровень без ветки — это покупка без бонуса: ставим ветку черепа, другую игрок выберет кнопкой.
-    this.machineStates[id] = upgraded.level === 3 && upgraded.branch === null ? { ...upgraded, branch: 'skull' } : upgraded;
-    this.afterPurchase(); // билеты ушли: табло, ценники, строки выбора
-  }
-
-  /** Ветка третьего уровня: что автомат даёт сверх выплат. Выбор бесплатный, можно менять до ухода из магазина. */
-  protected chooseMachineBranch(branch: MachineBranch): void {
-    const state = this.machineStates[this.machineNextId];
-    if (!this.isShopping || state.level < 3 || state.branch === branch) return;
-    state.branch = branch;
-    this.sfx.play('item');
-    this.refreshShop();
-  }
-
-  /**
-   * Из магазина — назад к игровому автомату: панель уезжает наверх, выбранный автомат встаёт на место
-   * (эффекты его уровня — со следующего раунда), и начинается новый раунд.
+   * Из магазина — назад к игровому автомату: панель уезжает наверх, и начинается новый раунд
+   * (в нём автомат может смениться сам — RoundScene.startRound).
    * Панель едет ~480 мс: пока она едет, раунд не начат (isLeavingShop) — победа в этом окне начнёт его сама (continueRun).
    */
   protected leaveShop(): void {
@@ -421,21 +332,17 @@ export abstract class ShopScene extends DealerScene {
     return true;
   }
 
-  /** «ДАЛЬШЕ» после победы: магазин, который она прервала, доигрывается — выбранный автомат встаёт на место и новый раунд. */
+  /** «ДАЛЬШЕ» после победы: магазин, который она прервала, доигрывается — и новый раунд. */
   protected resumeAfterShop(): void {
     this.isShopOpen = false;
     this.enterNextRound();
   }
 
-  /** Панель уехала: выбранный автомат встаёт на место, и начинается новый раунд (leaveShop и «ДАЛЬШЕ» после победы). */
+  /** Панель уехала: начинается новый раунд (leaveShop и «ДАЛЬШЕ» после победы). Автомат мог смениться сам — это в startRound. */
   private enterNextRound(): void {
     // Победа пришла, пока панель ехала: раунд за экраном не начинаем — его начнёт «ДАЛЬШЕ» (continueRun).
     if (this.isGameOver) return;
     this.panel.setPhaseSignsVisible(true); // панели больше нет — знаки фазы 2 снова видны
-    const next = this.machineStates[this.machineNextId];
-    const isChanged = !isSameMachine(this.machineAtEntry, next); // уровень мог смениться у того же автомата
-    this.machineId = this.machineNextId; // запись забега общая: уровень уже в ней, копировать нечего
-    if (isChanged) this.showNewMachine(); // корпус, значок и новость на стекле — новый автомат или новый уровень
     this.startRound();
   }
 }

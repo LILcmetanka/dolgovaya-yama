@@ -51,9 +51,10 @@ export class Effects {
     this.popupAt(CENTER_X, GRID_Y - 30, text, color);
   }
 
-  /** Надпись всплывает в точке (x, y): поднимается и тает. */
-  popupAt(x: number, y: number, text: string, color: string): void {
-    const label = addText(this.scene, x, y, text, { ...POPUP_STYLE, color })
+  /** Надпись всплывает в точке (x, y): поднимается и тает. fontSize — кегль (по умолчанию как у попапа). */
+  popupAt(x: number, y: number, text: string, color: string, fontSize?: number): void {
+    const style = fontSize === undefined ? { ...POPUP_STYLE, color } : { ...POPUP_STYLE, fontSize: `${fontSize}px`, color };
+    const label = addText(this.scene, x, y, text, style)
       .setOrigin(0.5)
       .setDepth(POPUP_DEPTH);
     this.scene.tweens.add({

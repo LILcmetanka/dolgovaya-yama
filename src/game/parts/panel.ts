@@ -26,17 +26,16 @@ import {
   MODE_SWITCH,
   MULTIPLIER_WINDOW,
   PHASE_SIGNS_Y,
+  SKULL_SCREEN,
   SPIN_LAMPS_Y,
 } from '../layout';
-import { times } from '../characters';
-import { GAME_CONFIG } from '../gameConfig';
-import { t, type TextKey } from '../lang';
-import { spinMode, SPIN_MODES, type SpinMode } from '../levers';
+import { t } from '../lang';
+import { CHARGE_FULL_TIME } from '../levers';
 import { SPINS_PER_ROUND } from '../rules';
 import {
   addText,
+  GOLD_TEXT,
   LAMP_GOLD,
-  LAMP_GREEN,
   LAMP_OFF,
   LAMP_RED,
   LED_COLOR,
@@ -67,25 +66,26 @@ const TICKET_FLY_STAGGER = 120;
 // Окошко множителя.
 const MULTIPLIER_FLASH_TIME = 600; // сколько окошко горит красным после черепов, мс
 const MULTIPLIER_DROP_SCALE = 0.7; // «забрать» уменьшило множитель — число сжимается до такого размера и возвращается
-// Знак фазы 2 — что изменилось: одна прокрутка в раунде прибавилась. Он один (×▲): черепов фаза 2 больше не множит
-// (замечание 19), их долю показывает своя строка «💀 N%» слева. Сначала знак крупно на стекле под «ФАЗА 2»,
-// потом улетает под окошко множителя и остаётся там до конца забега.
+// Знак фазы 2 — что изменилось: одна прокрутка в раунде прибавилась. Автор попросил убрать его графически
+// («× и жёлтый треугольник», DONTLIKE б.1): черепов фаза 2 и так не множит (замечание 19), а лишнюю прокрутку видно
+// по лампочкам. Набор пуст — flyPhaseSigns ничего не ставит, но механику оставляем: вернуть знак — одна строка.
 const PHASE_SIGN_FONT = 26; // шрифт знака на стекле
 const PHASE_SIGN_FONT_SIZE = `${PHASE_SIGN_FONT}px`;
 const PHASE_SIGN_STEP = 90; // на стекле: от знака до знака
 const PHASE_SIGN_SMALL = 0.5; // под окошком множителя знак во столько раз меньше…
 const PHASE_SIGN_SMALL_STEP = 44; // …и стоят теснее
 const PHASE_SIGNS_HOME_Y = MULTIPLIER_WINDOW.y + MULTIPLIER_WINDOW.height / 2 + 13; // под окошком множителя
-const PHASE_SIGN_HOME_X = MULTIPLIER_WINDOW.x + PHASE_SIGN_SMALL_STEP / 2; // справа: слева стоит строка доли черепов
-const PHASE_SIGNS = [{ text: '×▲', style: LED_STYLE }]; // светится, как «×N» в окошке множителя
-// Строка доли клеток-черепов «💀 N%» — слева под окошком множителя, видна всегда: игрок должен видеть, как доля растёт.
-// Шрифт тот же, что у уменьшенного знака фазы 2 (26 × 0,5 = 13 px) — новой вёрстки не заводим.
-// Подсказку вешаем на невидимый прямоугольник: текст меняется, и мерить его ширину для наведения не надо.
-const SHARE_FONT_SIZE = `${PHASE_SIGN_FONT * PHASE_SIGN_SMALL}px`;
-const SHARE_X = MULTIPLIER_WINDOW.x - PHASE_SIGN_SMALL_STEP / 2;
-const SHARE_WARN = 0.27; // с такой доли клеток-черепов строка красная — предупреждение
-const SHARE_HINT_WIDTH = 60;
-const SHARE_HINT_HEIGHT = 22;
+const PHASE_SIGN_HOME_X = MULTIPLIER_WINDOW.x + PHASE_SIGN_SMALL_STEP / 2; // чуть правее середины окошка
+const PHASE_SIGNS: { text: string; style: Phaser.Types.GameObjects.Text.TextStyle }[] = [];
+// Строка доли клеток-черепов — теперь на своём экранчике слева от сетки (SKULL_SCREEN, layout.ts): значок 💀 сверху,
+// процент под ним. Экранчик узкий, поэтому в две строки. Долю считает сцена, здесь только показ.
+// Подсказку вешаем на пустую зону во весь экранчик: текст меняется, и мерить его ширину для наведения не надо.
+const SHARE_FONT_SIZE = '15px';
+const SHARE_ICON_Y = SKULL_SCREEN.y - 14; // 💀 — в верхней половине экранчика…
+const SHARE_PERCENT_Y = SKULL_SCREEN.y + 13; // …процент — в нижней
+const SHARE_WARN = 0.27; // с такой доли клеток-черепов процент красный — предупреждение
+const SHARE_HINT_WIDTH = SKULL_SCREEN.width; // подсказка — по всему экранчику
+const SHARE_HINT_HEIGHT = SKULL_SCREEN.height;
 const PHASE_SIGNS_HOLD = 2200; // столько мс знаки видны на стекле
 const PHASE_SIGNS_FLY_TIME = 700;
 // Знаки — поверх полосы новости «ФАЗА 2» (она на POPUP_DEPTH). Над панелью магазина их не видно: пока магазин
@@ -100,19 +100,21 @@ const LEVER_CALL_RADIUS = 34; // кольцо вокруг шарика, пок�
 const LEVER_CALL_GROW = 1.25; // кольцо расходится до такого размера и гаснет
 const LEVER_CALL_TIME = 900; // один «вздох» кольца, мс
 const LEVER_BALL_GROW = 0.15; // внизу шарик ближе к игроку — на столько крупнее (на каждую единицу укорочения штанги)
-// Переключатель режима прокрутки (шаг 70) у рычага: три плашки столбиком в рамке MODE_SWITCH.
-const MODE_PLATE = { width: 96, height: 30 }; // плашка режима
-const MODE_PLATE_GAP = 4; // просвет между плашками
-const MODE_PLATE_STEP = MODE_PLATE.height + MODE_PLATE_GAP; // от середины плашки до середины соседней
-const MODE_FONT_SIZE = '13px';
-const MODE_FILL = 0x1c1917; // тёмная заливка рамки и плашек — как у кнопок в настройках
-const MODE_BRONZE = 0xb45309; // бронзовая окантовка автомата
-const MODE_GRAY = 0x6b7280; // рамка невыбранной плашки — как у языка в настройках
-const MODE_ALPHA_OFF = 0.6; // невыбранная плашка бледная
-const MODE_LABEL_ALPHA_OFF = 0.7;
-const MODE_COLORS: Record<SpinMode, number> = { normal: LAMP_GOLD, risk: LAMP_RED, calm: LAMP_GREEN };
-const MODE_NAMES: Record<SpinMode, TextKey> = { normal: 'spinModeNormal', risk: 'spinModeRisk', calm: 'spinModeCalm' };
-const MODE_HINTS: Record<SpinMode, TextKey> = { normal: 'spinModeNormalWhat', risk: 'spinModeRiskWhat', calm: 'spinModeCalmWhat' };
+// Шкала замаха у рычага (DONTLIKE п. 8): рамка на месте прежнего переключателя режимов и полоска внутри.
+const CHARGE_FRAME = { width: 108, height: 114 }; // рамка шкалы (место MODE_SWITCH, чтобы ничего не двигать)
+const CHARGE_TRACK = { width: 20, height: 78 }; // жёлоб шкалы
+const CHARGE_FILL_INSET = 4; // зазор между жёлобом и заливкой
+const CHARGE_FILL = 0x1c1917; // тёмная заливка рамки — как у кнопок в настройках
+const CHARGE_BRONZE = 0xb45309; // бронзовая окантовка автомата
+const CHARGE_TRACK_COLOR = 0x0b0f19; // жёлоб — почти чёрный
+const CHARGE_TEXT_Y = 42; // процент под шкалой
+const CHARGE_FONT_SIZE = '13px';
+const CHARGE_LOW = 0x4ade80; // слабый замах — зелёный
+const CHARGE_MID = 0xfde047; // середина — жёлтый
+const CHARGE_HIGH = 0xef4444; // сильный — красный
+const CHARGE_MID_AT = 0.5; // с какого заряда заливка жёлтая
+const CHARGE_HIGH_AT = 0.8; // и с какого — красная
+const CHARGE_LOCK_TIME = 260; // на отпускании шкала коротко вспыхивает, мс
 
 /** Число на табло: шрифт BOARD_FONT_SIZE, а длинное число — мельче, чтобы не вылезло шире maxWidth. Тем же набирают шапку панели магазина. */
 export function fitBoardNumber(text: Phaser.GameObjects.Text, value: number, maxWidth: number): void {
@@ -133,24 +135,25 @@ function spinLampColor(spinsLeft: number): number {
 /** Приборы на корпусе автомата: табло с фишками, окошко множителя серии, лампочки прокруток и рычаг справа. */
 export class MachinePanel {
   private readonly scene: Phaser.Scene;
-  private readonly hint: Hint; // подсказки приборов: строка доли черепов и знак фазы 2
+  private readonly hint: Hint; // подсказки приборов: экранчик доли черепов и знак фазы 2
   private readonly boardText: Phaser.GameObjects.Text; // табло: сколько у тебя фишек
   private readonly ticketsText: Phaser.GameObjects.Text; // табло: сколько у тебя билетов
   private readonly ticketScale: number; // билет на табло во столько раз больше своей картинки — туда долетают билеты
   private readonly multiplierText: Phaser.GameObjects.Text; // окошко множителя серии
-  private readonly skullShareText: Phaser.GameObjects.Text; // строка «💀 N%»: доля клеток-черепов в прокрутке
+  private readonly skullShareText: Phaser.GameObjects.Text; // процент доли клеток-черепов на экранчике слева от сетки
   private readonly spinLamps: Phaser.GameObjects.Arc[] = []; // лампочки прокруток: одна на прокрутку
   private freeLamps: Phaser.GameObjects.Image[] = []; // бесплатные прокрутки за короны — короны в конце ряда лампочек
   private readonly leverRod: Phaser.GameObjects.Image; // штанга рычага, низ — точка вращения
   private readonly leverBall: Phaser.GameObjects.Image; // шарик на конце штанги
   private leverCall: Phaser.GameObjects.Arc | null = null; // кольцо вокруг шарика: рычаг зовёт, пока не крутили
   private phaseSigns: Phaser.GameObjects.Text[] = []; // знаки фазы 2 под окошком множителя; в фазе 1 их нет
-  private modeFrame!: Phaser.GameObjects.Rectangle; // рамка переключателя режима прокрутки у рычага
-  private readonly modePlates = new Map<SpinMode, Phaser.GameObjects.Rectangle>(); // плашки режима прокрутки у рычага
-  private readonly modeLabels = new Map<SpinMode, Phaser.GameObjects.Text>(); // их подписи (для смены языка)
+  private chargeFrame!: Phaser.GameObjects.Rectangle; // рамка шкалы замаха у рычага
+  private chargeTrack!: Phaser.GameObjects.Rectangle; // жёлоб шкалы
+  private chargeFill!: Phaser.GameObjects.Rectangle; // заливка: высота = заряд
+  private chargeText!: Phaser.GameObjects.Text; // процент заряда под шкалой
 
-  /** pullLever — что делать, когда рычаг дёрнули кликом (Пробел сцена ловит сама); chooseMode — выбрали режим прокрутки. */
-  constructor(scene: Phaser.Scene, pullLever: () => void, hint: Hint, chooseMode: (mode: SpinMode) => void) {
+  /** pressLever — нажали рычаг (сцена начинает замах; Пробел и Enter она ловит сама). */
+  constructor(scene: Phaser.Scene, pressLever: () => void, hint: Hint) {
     this.scene = scene;
     this.hint = hint;
     createChipTextures(scene);
@@ -171,9 +174,11 @@ export class MachinePanel {
     this.addSpinLamps(SPINS_PER_ROUND);
     // Окошко множителя серии: «×3» — с таким множителем пойдёт следующая прокрутка.
     this.multiplierText = addText(scene, MULTIPLIER_WINDOW.x, MULTIPLIER_WINDOW.y, '', LED_STYLE).setOrigin(0.5);
-    // Доля клеток-черепов — всегда на виду под окошком множителя. Зона подсказки невидима и постоянного размера.
-    this.skullShareText = addText(scene, SHARE_X, PHASE_SIGNS_HOME_Y, '', { fontSize: SHARE_FONT_SIZE }).setOrigin(0.5);
-    const shareZone = scene.add.rectangle(SHARE_X, PHASE_SIGNS_HOME_Y, SHARE_HINT_WIDTH, SHARE_HINT_HEIGHT).setAlpha(0);
+    // Доля клеток-черепов — всегда на виду на экранчике слева от сетки: 💀 сверху, процент под ним.
+    addText(scene, SKULL_SCREEN.x, SHARE_ICON_Y, '💀', { fontSize: SHARE_FONT_SIZE }).setOrigin(0.5);
+    this.skullShareText = addText(scene, SKULL_SCREEN.x, SHARE_PERCENT_Y, '', { fontSize: SHARE_FONT_SIZE }).setOrigin(0.5);
+    // Зона подсказки — пустая Zone: у неё нет картинки, но она ловит наведение (у прозрачного прямоугольника — нет).
+    const shareZone = scene.add.zone(SKULL_SCREEN.x, SKULL_SCREEN.y, SHARE_HINT_WIDTH, SHARE_HINT_HEIGHT);
     shareZone.setInteractive();
     attachHint(shareZone, hint, () => [t('skullShareTitle'), t('skullShareWhat')]);
 
@@ -183,72 +188,55 @@ export class MachinePanel {
     this.placeLeverBall();
     for (const part of [this.leverRod, this.leverBall]) {
       part.setInteractive({ useHandCursor: true });
-      part.on('pointerdown', pullLever);
+      part.on('pointerdown', pressLever);
     }
 
-    // Переключатель режима прокрутки — рядом с рычагом.
-    this.addModeSwitch(hint, chooseMode);
+    // Шкала замаха — рядом с рычагом, там же, где раньше стояли плашки режимов.
+    this.addChargeBar(hint);
   }
 
   /**
-   * Переключатель режима платной прокрутки (шаг 70): рамка на стене справа от рычага и три плашки столбиком —
-   * обычно / риск / спокойно. Выбранный режим запоминается (levers.ts) и виден сразу — showMode.
+   * Шкала замаха: рамка у рычага, внутри жёлоб и заливка снизу вверх. Пока рычаг держат — заливка растёт
+   * от 0 до 100% (сцена зовёт showCharge каждый кадр), на отпускании коротко вспыхивает и остаётся на заряде
+   * прошлой прокрутки. Цвет: зелёный → жёлтый → красный. Подписи нет — процент и цвет понятны без языка.
    */
-  private addModeSwitch(hint: Hint, chooseMode: (mode: SpinMode) => void): void {
-    this.modeFrame = this.scene.add
-      .rectangle(MODE_SWITCH.x, MODE_SWITCH.y, MODE_SWITCH.width, MODE_SWITCH.height, MODE_FILL, 0.9)
-      .setStrokeStyle(2, MODE_BRONZE)
+  private addChargeBar(hint: Hint): void {
+    this.chargeFrame = this.scene.add
+      .rectangle(MODE_SWITCH.x, MODE_SWITCH.y, CHARGE_FRAME.width, CHARGE_FRAME.height, CHARGE_FILL, 0.9)
+      .setStrokeStyle(2, CHARGE_BRONZE)
       .setRounded(8);
-    SPIN_MODES.forEach((mode, index) => {
-      const y = MODE_SWITCH.y + (index - 1) * MODE_PLATE_STEP;
-      const plate = this.scene.add
-        .rectangle(MODE_SWITCH.x, y, MODE_PLATE.width, MODE_PLATE.height, MODE_FILL)
-        .setStrokeStyle(2, MODE_GRAY)
-        .setRounded(6);
-      plate.setInteractive({ useHandCursor: true });
-      const label = addText(this.scene, MODE_SWITCH.x, y, t(MODE_NAMES[mode]), { fontSize: MODE_FONT_SIZE, fontStyle: 'bold' }).setOrigin(0.5);
-      attachHint(
-        plate,
-        hint,
-        () => [
-          t('spinModeTitle'),
-          // Множители — готовой строкой «×1,5»: точка вместо запятой в русском тексте выглядела бы опечаткой.
-          t(MODE_HINTS[mode], t(times(GAME_CONFIG.modeSkullFactor)), t(times(GAME_CONFIG.modeWinFactor))),
-        ],
-        () => chooseMode(mode),
-      );
-      this.modePlates.set(mode, plate);
-      this.modeLabels.set(mode, label);
-    });
-    this.showMode(spinMode()); // в игру заходим с тем режимом, что выбран в прошлый раз
+    this.chargeTrack = this.scene.add
+      .rectangle(MODE_SWITCH.x, MODE_SWITCH.y - 8, CHARGE_TRACK.width, CHARGE_TRACK.height, CHARGE_TRACK_COLOR)
+      .setStrokeStyle(0)
+      .setRounded(6);
+    this.chargeFill = this.scene.add.rectangle(MODE_SWITCH.x, MODE_SWITCH.y - 8, CHARGE_TRACK.width - 2 * CHARGE_FILL_INSET, 1, CHARGE_LOW).setOrigin(0.5, 1).setRounded(4);
+    this.chargeText = addText(this.scene, MODE_SWITCH.x, MODE_SWITCH.y + CHARGE_TEXT_Y, '0%', {
+      fontSize: CHARGE_FONT_SIZE,
+      fontStyle: 'bold',
+      color: GOLD_TEXT,
+    }).setOrigin(0.5);
+    attachHint(this.chargeFrame, hint, () => [t('chargeTitle'), t('chargeWhat', (CHARGE_FULL_TIME / 1000).toFixed(1))]);
+    this.showCharge(0);
   }
 
-  /**
-   * Показать или спрятать переключатель режима: банкомат Коллектора выезжает как раз на его место,
-   * и спрятанный переключатель не должен ловить клики. Выбранный режим showMode не трогает — он сохранится.
-   */
+  /** Заряд на шкале: value 0…1. Высота заливки, её цвет и процент. locked — короткая вспышка на отпускании. */
+  showCharge(value: number, locked = false): void {
+    const charge = Math.max(0, Math.min(1, value));
+    const height = Math.max(1, (CHARGE_TRACK.height - 2 * CHARGE_FILL_INSET) * charge);
+    const color = charge >= CHARGE_HIGH_AT ? CHARGE_HIGH : charge >= CHARGE_MID_AT ? CHARGE_MID : CHARGE_LOW;
+    this.chargeFill.setSize(CHARGE_TRACK.width - 2 * CHARGE_FILL_INSET, height).setFillStyle(color);
+    this.chargeText.setText(`${Math.round(charge * 100)}%`);
+    if (!locked) return;
+    this.scene.tweens.killTweensOf(this.chargeFrame);
+    this.scene.tweens.add({ targets: this.chargeFrame, scale: { from: 1, to: 1.08 }, duration: CHARGE_LOCK_TIME / 2, yoyo: true });
+  }
+
+  /** Спрятать шкалу: банкомат Коллектора выезжает как раз на её место. */
   setModeVisible(visible: boolean): void {
-    this.modeFrame.setVisible(visible);
-    this.modeLabels.forEach((label) => label.setVisible(visible));
-    this.modePlates.forEach((plate) => {
-      plate.setVisible(visible);
-      if (visible) plate.setInteractive({ useHandCursor: true });
-      else plate.disableInteractive();
-    });
-  }
-
-  /** Выбранная плашка — в цвете режима и рамкой потолще, остальные серые и бледные. */
-  showMode(mode: SpinMode): void {
-    this.modePlates.forEach((plate, key) => {
-      const isChosen = key === mode;
-      plate.setStrokeStyle(isChosen ? 3 : 2, isChosen ? MODE_COLORS[key] : MODE_GRAY).setAlpha(isChosen ? 1 : MODE_ALPHA_OFF);
-      this.modeLabels.get(key)?.setAlpha(isChosen ? 1 : MODE_LABEL_ALPHA_OFF);
-    });
-  }
-
-  /** Сменили язык: подписи плашек режима — заново. */
-  relabel(): void {
-    this.modeLabels.forEach((label, mode) => label.setText(t(MODE_NAMES[mode])));
+    this.chargeFrame.setVisible(visible);
+    this.chargeTrack.setVisible(visible);
+    this.chargeFill.setVisible(visible);
+    this.chargeText.setVisible(visible);
   }
 
   /** Ещё count лампочек прокруток в конец ряда; весь ряд снова по центру. pop — новые появляются с подскоком. */
@@ -339,11 +327,12 @@ export class MachinePanel {
   }
 
   /**
-   * Строка «💀 N%»: доля клеток-черепов в следующей платной прокрутке. Долю считает сцена (RoundScene.skullShareNext —
-   * по тем же весам, что и прокрутка), здесь только показ: с SHARE_WARN и выше — красным, как предупреждение.
+   * Экранчик доли черепов: процент клеток-черепов в следующей платной прокрутке — доля растёт, и игрок это видит.
+   * Долю считает сцена (RoundScene.skullShareNext — по тем же весам, что и прокрутка), здесь только показ:
+   * с SHARE_WARN и выше — красным, как предупреждение.
    */
   showSkullShare(share: number): void {
-    this.skullShareText.setText(`💀 ${Math.round(share * 100)}%`);
+    this.skullShareText.setText(`${Math.round(share * 100)}%`);
     this.skullShareText.setColor(share >= SHARE_WARN ? RED_TEXT : LED_COLOR);
   }
 
@@ -353,8 +342,10 @@ export class MachinePanel {
   }
 
   /**
-   * Началась фаза 2: знак ×▲ крупно на стекле под «ФАЗА 2», через PHASE_SIGNS_HOLD он улетает под окошко множителя,
-   * уменьшается и остаётся там до конца забега; окошко подпрыгивает. Наведение на знак — что даёт фаза 2.
+   * Началась фаза 2. Раньше на стекле под «ФАЗА 2» появлялся знак ×▲ и улетал под окошко множителя; автор попросил
+   * убрать его графически (DONTLIKE б.1), поэтому набор знаков пуст и ставить нечего. Окошко множителя всё равно
+   * подпрыгивает — это и есть отметка, что фаза началась. Механика знаков осталась целой: вернуть знак — добавить
+   * его в PHASE_SIGNS, и он снова полетит, а подсказка (phase2Title/phase2What) заработает.
    */
   flyPhaseSigns(): void {
     for (const sign of this.phaseSigns) sign.destroy();
@@ -364,7 +355,7 @@ export class MachinePanel {
       const text = addText(this.scene, GLASS.x + offset * PHASE_SIGN_STEP, PHASE_SIGNS_Y, sign.text, style);
       text.setOrigin(0.5).setDepth(PHASE_SIGN_DEPTH); // поверх тёмной полосы новости на стекле
       text.setInteractive();
-      attachHint(text, this.hint, () => [t('phase2Title'), t('phase2What')]);
+      attachHint(text, this.hint, () => [t('phase2Title'), t('phase2What')]); // резерв: знаков нет — подсказки нет
       this.scene.tweens.add({
         targets: text,
         x: PHASE_SIGN_HOME_X,
@@ -373,12 +364,11 @@ export class MachinePanel {
         delay: PHASE_SIGNS_HOLD,
         duration: PHASE_SIGNS_FLY_TIME,
         ease: 'Cubic.easeInOut',
-        onComplete: () => {
-          if (index === 0) pulse(this.scene, this.multiplierText); // знак долетел — окошко подпрыгивает (один раз)
-        },
       });
       return text;
     });
+    // Знаков может не быть вовсе (их убрал автор) — окошко множителя всё равно подпрыгивает, отмечая начало фазы.
+    pulse(this.scene, this.multiplierText);
   }
 
   /** Пока магазин открыт, знаков фазы 2 не видно: они не должны торчать поверх витрины. Закрыли — снова на месте. */

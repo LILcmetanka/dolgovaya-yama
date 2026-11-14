@@ -1,10 +1,18 @@
 import Phaser from 'phaser';
-import { createChipTextures, createNoteGlowTexture, drawNoteTexture, NOTE_GLOW_TEXTURE, NOTE_TEXTURE } from '../decor';
-import { formatChips, t } from '../lang';
+import {
+  createChipTextures,
+  createNoteGlowTexture,
+  drawNoteTexture,
+  GOAL_NOTE_TEXTURE,
+  NOTE_GLOW_TEXTURE,
+  NOTE_TEXTURE,
+} from '../decor';
+import { formatChips, lang, t } from '../lang';
 import { Atm } from './atm';
-import { CENTER_X, CENTER_Y, NOTE, NOTE_ANGLE, SCREEN, VIEW_WIDTH } from '../layout';
+import { CENTER_X, CENTER_Y, GOAL_NOTE, GOAL_NOTE_ANGLE, NOTE, NOTE_ANGLE, SCREEN, VIEW_WIDTH } from '../layout';
+import { CHIP_GOAL } from '../gameConfig';
 import { GOOD_LUCK_TIME } from '../lastChance';
-import { addText, GAME_OVER_DEPTH, GOLD_TEXT, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT } from '../theme';
+import { addText, fitTextWidth, GAME_OVER_DEPTH, GOLD_TEXT, GREEN_TEXT, LED_STYLE, POPUP_DEPTH, RED_TEXT } from '../theme';
 
 // Записка светится, когда долг можно отдать раньше: клик по ней или D.
 const NOTE_GLOW_MIN = 0.3; // свечение пульсирует: гаснет до такой яркости и разгорается снова
@@ -39,6 +47,18 @@ const BLACKOUT_TIME = 700; // экран гаснет и загорается с
 const TITLE_BLINK_TIME = 500; // DEATH и KABOOM мигают
 const GOOD_LUCK_FADE_TIME = 400; // заголовок на экране автомата гаснет — экран снова горит
 
+// Второе дыхание (DONTLIKE б.12): маленькая плашка под запиской долга — есть оно ещё или потрачено.
+// Чуть шире записки (NOTE.width = 150): английская надпись длиннее, и на 150 px она ужималась до 9 px.
+// Слева и справа от плашки — пустая стена до края вида и до значка автомата (он от x = 288), полки начинаются ниже.
+const SECOND_WIND_PLATE = { width: 168, height: 24 };
+const SECOND_WIND_GAP = 14; // от низа записки до плашки: выше полки с предметами
+const SECOND_WIND_FONT = 11;
+const SECOND_WIND_FONT_SIZE = `${SECOND_WIND_FONT}px`;
+const SECOND_WIND_MIN_FONT = 8; // запас: на 168 px обе надписи влезают кеглем 11, ужимать не приходится
+const SECOND_WIND_HAVE = 0x4ade80; // есть — зелёная рамка, как у полоски долга, когда он собран
+const SECOND_WIND_SPENT = 0x6b7280; // потрачено — серая, как невыбранная плашка режима
+const SECOND_WIND_SPENT_TEXT = '#94a3b8';
+
 /** Кнопка: тень стоит на месте, а «лицо» — контейнер с корпусом, бликом и надписями. */
 interface Button {
   shadow: Phaser.GameObjects.Rectangle;
@@ -54,12 +74,16 @@ export class Collector {
   private readonly scene: Phaser.Scene;
   private readonly note: Phaser.GameObjects.Image; // записка с долгом: бумажка с надписями одной картинкой
   private readonly noteGlow: Phaser.GameObjects.Image; // свечение вокруг записки: долг можно отдать раньше
+  private goalEarned = 0; // сколько набрано за забег — что нарисовано на записке цели
+  private goalTarget = CHIP_GOAL; // ступень цели: 1 000 000, после «ДАЛЬШЕ» — 10 000 000
   private readonly atm: Atm; // банкомат: долг платят в него, GOOD LUCK в последнем шансе горит на его экране
-  private isNoteChecked = false; // на записке галочка: фишек на табло хватает на долг
   private noteDebt = 0; // что нарисовано на записке: долг, фишки на табло и на кону — для полоски долга
   private noteBalance = 0;
   private notePot = 0;
   private isPayable = false; // записка светится: по ней можно кликнуть и отдать долг раньше
+  private readonly secondWindPlate: Phaser.GameObjects.Rectangle; // плашка «второе дыхание» под запиской долга
+  private readonly secondWindText: Phaser.GameObjects.Text;
+  private isSecondWindUsed: boolean | null = null; // что на плашке: null — ещё не рисовали
   private goodLuck: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = []; // KABOOM на экране автомата, пока идёт взрыв
 
   /**
@@ -76,21 +100,32 @@ export class Collector {
     // Под запиской — свечение: его видно, когда долг можно отдать раньше; тогда по записке можно кликнуть.
     this.noteGlow = scene.add.image(NOTE.x, NOTE.y, NOTE_GLOW_TEXTURE).setAngle(NOTE_ANGLE).setVisible(false);
     this.noteDebt = debt;
-    this.redrawNote(false);
+    this.redrawNote();
     this.note = scene.add.image(NOTE.x, NOTE.y, NOTE_TEXTURE).setAngle(NOTE_ANGLE);
     this.note.setInteractive({ useHandCursor: true }).disableInteractive();
     this.note.on('pointerdown', payEarly);
 
+    // Плашка «второе дыхание» — сразу под запиской долга: игроку видно, простится ли ещё один провал (DONTLIKE б.12).
+    const windY = NOTE.y + NOTE.height / 2 + SECOND_WIND_GAP;
+    this.secondWindPlate = scene.add
+      .rectangle(NOTE.x, windY, SECOND_WIND_PLATE.width, SECOND_WIND_PLATE.height, 0x1c1917, 0.85)
+      .setRounded(6)
+      .setStrokeStyle(2, SECOND_WIND_HAVE);
+    this.secondWindText = addText(scene, NOTE.x, windY, '', { fontSize: SECOND_WIND_FONT_SIZE, fontStyle: 'bold', color: GREEN_TEXT }).setOrigin(0.5);
+    this.showSecondWind(false); // новый забег: дыхание ещё есть
+
+    // Вторая записка — цель забега: на стене над экраном, чуть в другую сторону. Сумма ступени и процент до десятых.
+    this.redrawGoalNote();
+    scene.add.image(GOAL_NOTE.x, GOAL_NOTE.y, GOAL_NOTE_TEXTURE).setAngle(GOAL_NOTE_ANGLE);
+
     this.atm = new Atm(scene, pay);
   }
 
-  /** Галочка на записке появляется, как только фишек на табло хватает на долг. Записка при этом подпрыгивает. */
-  markNote(debt: number, isEnough: boolean): void {
-    if (isEnough === this.isNoteChecked) return;
-    this.isNoteChecked = isEnough;
+  /** Сменился долг — перерисовываем записку. Галочки «фишек хватает» больше нет (просьба автора, хоч. 4). */
+  markNote(debt: number): void {
+    if (debt === this.noteDebt) return;
     this.noteDebt = debt;
-    this.redrawNote(isEnough);
-    pulse(this.scene, this.note, 1.12);
+    this.redrawNote();
   }
 
   /**
@@ -102,14 +137,70 @@ export class Collector {
     this.noteBalance = balance;
     this.notePot = pot;
     // Долг на записке меняет только переворот (flipNote): до него число не трогаем, переворот сам нарисует полоску.
-    if (debt === this.noteDebt) this.redrawNote(this.isNoteChecked);
+    if (debt === this.noteDebt) this.redrawNote();
   }
 
   /** Нарисовать записку заново по запомненным числам. */
-  private redrawNote(isEnough: boolean): void {
+  private redrawNote(): void {
     const paid = Math.min(1, this.noteBalance / this.noteDebt);
     const pending = Math.min(1 - paid, this.notePot / this.noteDebt);
-    drawNoteTexture(this.scene, NOTE.width, NOTE.height, this.noteDebt, isEnough, paid, pending);
+    drawNoteTexture(
+      this.scene,
+      NOTE.width,
+      NOTE.height,
+      { texture: NOTE_TEXTURE, title: t('debt'), amount: String(this.noteDebt) },
+      paid,
+      pending,
+    );
+  }
+
+  /**
+   * Цель забега на записке: сумма текущей ступени (1 000 000, после «ДАЛЬШЕ» — 10 000 000) и процент
+   * заполнения до десятых. Зовёт refreshHud при любом изменении — перерисовываем, только если числа сменились.
+   */
+  showGoal(earned: number, goal: number): void {
+    if (earned === this.goalEarned && goal === this.goalTarget) return;
+    this.goalEarned = earned;
+    this.goalTarget = goal;
+    this.redrawGoalNote();
+  }
+
+  /** Нарисовать записку цели заново: сумма ступени, процент к ней и зелёная полоска заполнения (DONTLIKE з.2). */
+  private redrawGoalNote(): void {
+    const share = this.goalTarget > 0 ? Math.min(1, this.goalEarned / this.goalTarget) : 0;
+    drawNoteTexture(
+      this.scene,
+      GOAL_NOTE.width,
+      GOAL_NOTE.height,
+      {
+        texture: GOAL_NOTE_TEXTURE,
+        title: t('goal'),
+        amount: formatChips(this.goalTarget, '.'),
+        caption: `${formatShare(share)}%`,
+      },
+      0,
+      0,
+      share, // зелёная полоска — тот же процент, что подписью
+    );
+  }
+
+  /**
+   * Второе дыхание: есть или потрачено — плашка под запиской долга (DONTLIKE б.12). Зовёт refreshHud:
+   * флаг secondWindUsed меняется только на провале последнего шанса.
+   */
+  showSecondWind(used: boolean): void {
+    if (used === this.isSecondWindUsed) return;
+    this.isSecondWindUsed = used;
+    this.paintSecondWind();
+  }
+
+  /** Обновить плашку второго дыхания: надпись по текущему языку и цвет по состоянию. */
+  private paintSecondWind(): void {
+    const used = this.isSecondWindUsed ?? false;
+    // Вписываем надпись в плашку: кегль 11 у обоих языков, MIN_FONT — только страховка от чужого шрифта.
+    fitTextWidth(this.secondWindText, t(used ? 'secondWindSpent' : 'secondWindHave'), SECOND_WIND_PLATE.width - 8, SECOND_WIND_FONT, SECOND_WIND_MIN_FONT);
+    this.secondWindText.setColor(used ? SECOND_WIND_SPENT_TEXT : GREEN_TEXT);
+    this.secondWindPlate.setStrokeStyle(2, used ? SECOND_WIND_SPENT : SECOND_WIND_HAVE);
   }
 
   /**
@@ -136,8 +227,8 @@ export class Collector {
     });
   }
 
-  /** Новый долг: записка переворачивается, и на обороте — новая сумма (и галочка, если фишек уже хватает). */
-  flipNote(debt: number, isEnough: boolean): void {
+  /** Новый долг: записка переворачивается, и на обороте — новая сумма. */
+  flipNote(debt: number): void {
     this.scene.tweens.killTweensOf(this.note);
     this.note.setScale(1);
     this.scene.tweens.add({
@@ -147,9 +238,10 @@ export class Collector {
       yoyo: true,
       ease: 'Quad.easeIn',
       onYoyo: () => {
-        this.isNoteChecked = isEnough;
         this.noteDebt = debt;
-        this.redrawNote(isEnough);
+        this.redrawNote();
+        this.redrawGoalNote(); // язык мог смениться — на записке цели другие «ДОЛГ»/«ЦЕЛЬ» и разделитель процента
+        this.paintSecondWind(); // язык мог смениться и у плашки второго дыхания
       },
     });
   }
@@ -330,4 +422,10 @@ export class Collector {
     const face = this.scene.add.container(x, y, [box, gloss, label]);
     return { shadow, face };
   }
+}
+
+/** Процент цели до десятых: «18,4%» по-русски и «18.4%» по-английски — так число на записке не выглядит опечаткой. */
+function formatShare(share: number): string {
+  const value = (share * 100).toFixed(1);
+  return lang() === 'ru' ? value.replace('.', ',') : value;
 }

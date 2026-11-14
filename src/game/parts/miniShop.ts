@@ -5,6 +5,7 @@ import {
   createShelfTextures,
   createSocketCapTexture,
   createTicketTexture,
+  drawGlassPane,
   SHELF_CELL_TEXTURE,
   SOCKET_CAP_TEXTURE,
   TICKET_TEXTURE,
@@ -21,17 +22,23 @@ import {
   SHOP_HUD,
   SOCKET_RADIUS,
 } from '../layout';
-import { addText, LED_COLOR, LED_STYLE, POPUP_DEPTH, RED_TEXT, SHOP_FLY_DEPTH } from '../theme';
+import { addText, fitTextWidth, LED_COLOR, LED_STYLE, POPUP_DEPTH, RED_TEXT, SHOP_FLY_DEPTH } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
 /** Ряды маленького автомата: 0 — место на полке за фишки, 1 — гнездо амулета за билеты. */
 export const SLOT_ROW = 0;
 export const SOCKET_ROW = 1;
 const ROWS = 2;
-// Что где в ряду: клетка полки или заглушка гнезда — слева, ценник — справа.
-const GOOD_SCALES = [0.72, 1.15];
-const PRICE_ICON_SCALE = 0.65;
-const PRICE_TEXT_OFFSET = 14; // «× 20» — правее значка ценника
+// Что где в ряду: клетка полки или заглушка гнезда — слева, ценник — справа. Плашки товаров одного размера (≈43 px):
+// ряд читается как витрина, а не как наклейки в разных углах.
+const GOOD_SCALES = [0.62, 1.03];
+const PRICE_ICON_SCALE = 0.6;
+const PRICE_TEXT_OFFSET = 11; // «× 20» — правее значка ценника
+const PRICE_FONT_SIZE = 14; // цена в ряду…
+const PRICE_MIN_FONT_SIZE = 10; // …длинная уменьшается, чтобы не вылезти за тёмную табличку и стекло…
+const PRICE_MAX_WIDTH = 46; // …а если и этого мало — ужимается по ширине: шире таблички ценник не бывает
+const PLATE_INSET = 12; // табличка ценника шире значка на столько с каждой стороны
+const PLATE_GAP = 5; // и не доходит до края витрины на столько
 // Анимации, мс.
 const PAY_FLYING = 4; // столько значков оплаты летит из шапки панели в щель (для красоты: цена может быть любой)
 const PAY_FLY_TIME = 400;
@@ -62,19 +69,24 @@ export class MiniShop {
     createShelfTextures(scene, SHELF_CELL);
     createSocketCapTexture(scene, SOCKET_RADIUS);
     this.buildMachine();
+    // Порядок в витрине: корпус (с табличками) → товар → стекло → ценники. Товар лежит за стеклом, ценники читаются поверх.
     for (let row = 0; row < ROWS; row++) {
-      const y = MINI_SHOP_ROW_Y[row];
-      const good = scene.add.image(MINI_SHOP_GOOD_X, y, this.textureFor(row)).setScale(GOOD_SCALES[row]).setVisible(false);
+      const good = scene.add.image(MINI_SHOP_GOOD_X, MINI_SHOP_ROW_Y[row], this.textureFor(row)).setScale(GOOD_SCALES[row]).setVisible(false);
       good.setInteractive({ useHandCursor: true });
       attachHint(good, hint, () => this.hintFor(row), () => buy(row));
       this.goods.push(good);
+      this.layer.add(good);
+    }
+    this.layer.add(this.buildGlass());
+    for (let row = 0; row < ROWS; row++) {
+      const y = MINI_SHOP_ROW_Y[row];
       const priceIcon = scene.add.image(MINI_SHOP_PRICE_X, y, this.priceTexture(row)).setScale(PRICE_ICON_SCALE).setVisible(false);
       this.priceIcons.push(priceIcon);
-      const priceText = addText(scene, MINI_SHOP_PRICE_X + PRICE_TEXT_OFFSET, y, '', { ...LED_STYLE, fontSize: '16px' })
+      const priceText = addText(scene, MINI_SHOP_PRICE_X + PRICE_TEXT_OFFSET, y, '', { ...LED_STYLE, fontSize: `${PRICE_FONT_SIZE}px` })
         .setOrigin(0, 0.5)
         .setVisible(false);
       this.priceTexts.push(priceText);
-      this.layer.add([good, priceIcon, priceText]);
+      this.layer.add([priceIcon, priceText]);
     }
     this.clear();
   }
@@ -101,14 +113,14 @@ export class MiniShop {
     g.fillRoundedRect(glassLeft - 5, glassTop - 5, MINI_SHOP_GLASS.width + 10, MINI_SHOP_GLASS.height + 10, 10); // хромированная рамка
     g.fillStyle(0x071a24);
     g.fillRoundedRect(glassLeft, glassTop, MINI_SHOP_GLASS.width, MINI_SHOP_GLASS.height, 6); // стекло витрины
+    const plateLeft = MINI_SHOP_PRICE_X - PLATE_INSET;
+    const plateWidth = glassLeft + MINI_SHOP_GLASS.width - PLATE_GAP - plateLeft; // табличка — до края витрины
     for (const y of MINI_SHOP_ROW_Y) {
       g.fillStyle(0x334155);
       g.fillRect(glassLeft + 5, y + 24, MINI_SHOP_GLASS.width - 10, 4); // полка ряда
       g.fillStyle(0x020617);
-      g.fillRoundedRect(MINI_SHOP_PRICE_X - 14, y - 12, glassLeft + MINI_SHOP_GLASS.width - MINI_SHOP_PRICE_X + 8, 24, 5); // табличка ценника
+      g.fillRoundedRect(plateLeft, y - 12, plateWidth, 24, 5); // табличка ценника
     }
-    g.fillStyle(0xffffff, 0.04);
-    g.fillTriangle(glassLeft, glassTop + 44, glassLeft + 70, glassTop, glassLeft + 104, glassTop); // блик на стекле
 
     // Правая панель: щель для оплаты и лампочка.
     g.fillStyle(0x94a3b8);
@@ -119,6 +131,13 @@ export class MiniShop {
     g.fillCircle(MINI_SHOP_COIN_SLOT.x, MINI_SHOP_COIN_SLOT.y + 64, 4); // холодная лампочка, как вывеска торгового
 
     this.layer.add(g);
+  }
+
+  /** Стекло витрины: та же плёнка с бликом, что у торгового автомата, — товар читается за стеклом. */
+  private buildGlass(): Phaser.GameObjects.Graphics {
+    const g = this.scene.add.graphics();
+    drawGlassPane(g, MINI_SHOP_GLASS);
+    return g;
   }
 
   /** Картинка ряда: клетка полки или заглушка гнезда. */
@@ -155,7 +174,19 @@ export class MiniShop {
     const isShown = price !== null && this.isOpen;
     this.goods[row].setPosition(MINI_SHOP_GOOD_X, MINI_SHOP_ROW_Y[row]).setScale(GOOD_SCALES[row]).setVisible(isShown);
     this.priceIcons[row].setVisible(isShown);
-    this.priceTexts[row].setX(MINI_SHOP_PRICE_X + PRICE_TEXT_OFFSET).setText(price === null ? '' : `× ${price}`).setVisible(isShown);
+    this.priceTexts[row].setX(MINI_SHOP_PRICE_X + PRICE_TEXT_OFFSET).setVisible(isShown);
+    this.paintPrice(row);
+  }
+
+  /** Цена в ряду: «× 170». Длинная цена мельче, а если и этого мало — ужимается по ширине: за тёмную табличку и стекло витрины не выходит. */
+  private paintPrice(row: number): void {
+    const price = this.prices[row];
+    const text = this.priceTexts[row];
+    if (price === null) {
+      text.setText('');
+      return;
+    }
+    fitTextWidth(text, `× ${price}`, PRICE_MAX_WIDTH, PRICE_FONT_SIZE, PRICE_MIN_FONT_SIZE);
   }
 
   /**

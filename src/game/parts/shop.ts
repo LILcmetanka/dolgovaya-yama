@@ -13,20 +13,20 @@ import { t } from '../lang';
 import {
   ITEM_SIZE,
   SHOP_CLOSED_Y,
-  SHOP_CROSS,
   SHOP_HANDLE,
   SHOP_HUD,
   SHOP_HUD_CHIPS_MAX_WIDTH,
   SHOP_HUD_CHIP_HEIGHT,
   SHOP_HUD_TICKETS_MAX_WIDTH,
   SHOP_HUD_TICKET_HEIGHT,
+  SHOP_LEAVE,
   VENDING_BIN,
   VENDING_COIN_SLOT,
   VENDING_GOOD_X,
   VENDING_PRICE_X,
   vendingRowY,
 } from '../layout';
-import { addText, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT, SHOP_FLY_DEPTH, SHOP_PANEL_DEPTH } from '../theme';
+import { addText, fitTextWidth, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT, SHOP_FLY_DEPTH, SHOP_PANEL_DEPTH } from '../theme';
 import { fitBoardNumber } from './panel';
 import { attachHint, type Hint } from './tooltip';
 
@@ -34,7 +34,15 @@ const ROWS = OFFER_SIZE; // ряды торгового автомата: все
 // Что где в ряду: предмет слева, ценник справа.
 const GOOD_SCALE = 0.9; // предмет в спирали
 const PRICE_TEXT_OFFSET = 14; // «× 20» — правее фишки ценника
+const PRICE_FONT_SIZE = 19; // цена в ряду…
+const PRICE_MIN_FONT_SIZE = 13; // …длинная уменьшается, чтобы не вылезти за тёмную табличку и стекло…
+const PRICE_MAX_WIDTH = 77; // …а если и этого мало — ужимается по ширине: от подписи до края стекла витрины (табличка шире на 8)
 const DIM_ALPHA = 0.4; // предмет некуда положить — он тусклый
+// Предмет стоит в ряду ниже середины: виток спирали (decor.ts, drawVendingSpirals) проходит по его низу и перекрывает
+// его, как настоящая пружина держит товар. Ценники остаются на середине ряда.
+const GOOD_DROP = 13;
+const EXIT_BORDER = 0xc9a227; // рамка кнопки выхода в шапке панели — золото, как у кнопок победы
+const EXIT_INK = '#fde047';
 // Анимации, мс.
 const SLIDE_TIME = 480; // панель съезжает сверху и уезжает обратно, как рольставня
 const PAY_CHIPS = 5; // столько фишек летит с табло в щель (для красоты: цена может быть любой)
@@ -68,7 +76,7 @@ export class Shop {
     return this.shopLayer;
   }
 
-  /** buy(row) — кликнули по ряду, leave — по ручке жалюзи или крестику: назад к автомату. */
+  /** buy(row) — кликнули по ряду, leave — по ручке жалюзи или кнопке выхода: назад к автомату. */
   constructor(scene: Phaser.Scene, buy: (row: number) => void, leave: () => void, hint: Hint) {
     this.scene = scene;
     // Панель — первым: AmuletCase, Drum и Cassette создаются после Shop и кладут свои вещи в этот слой.
@@ -83,13 +91,13 @@ export class Shop {
     // Порядок в витрине: корпус → товар → спираль → стекло. Предмет лежит за спиралью и стеклом, а не поверх корпуса.
     for (let row = 0; row < ROWS; row++) {
       const y = vendingRowY(row, ROWS);
-      const good = scene.add.image(VENDING_GOOD_X, y, itemTexture(ITEMS[0])).setScale(GOOD_SCALE).setVisible(false);
+      const good = scene.add.image(VENDING_GOOD_X, goodY(row), itemTexture(ITEMS[0])).setScale(GOOD_SCALE).setVisible(false);
       good.setInteractive({ useHandCursor: true });
       attachHint(good, hint, () => this.hintFor(row), () => buy(row));
       this.goods.push(good);
       const priceChip = scene.add.image(VENDING_PRICE_X, y, CHIP_TEXTURE).setScale(0.75).setVisible(false);
       this.priceChips.push(priceChip);
-      const priceStyle = { ...LED_STYLE, fontSize: '19px' };
+      const priceStyle = { ...LED_STYLE, fontSize: `${PRICE_FONT_SIZE}px` };
       const priceText = addText(scene, VENDING_PRICE_X + PRICE_TEXT_OFFSET, y, '', priceStyle).setOrigin(0, 0.5);
       this.priceTexts.push(priceText);
       this.shopLayer.add(good); // только товар: спираль и стекло лягут поверх него
@@ -108,7 +116,7 @@ export class Shop {
     this.shopLayer.add([hudChip, hudTicket, this.hudChipsText, this.hudTicketsText]);
 
     this.buildHandle(leave); // ручка-язычок жалюзи внизу панели…
-    this.buildCross(leave); // …и крестик в её правом верхнем углу
+    this.buildExit(leave); // …и кнопка выхода в шапке, правее чемодана с амулетами
   }
 
   /**
@@ -135,15 +143,25 @@ export class Shop {
     this.shopLayer.add(this.buildLeaveZone(x, y, width, height + 12, leave));
   }
 
-  /** Тонкий крестик в правом верхнем углу панели: второй, привычный способ уйти из магазина. */
-  private buildCross(leave: () => void): void {
-    const { x, y, width, height } = SHOP_CROSS;
-    const arm = width / 2 - 4;
+  /**
+   * Кнопка выхода в шапке панели — правее чемодана с амулетами: тёмная плашка в золотой рамке с надписью «ВЫХОД ✕».
+   * Кнопку видно сразу, и она не похожа на случайную линию в углу. Клик — уход из магазина; зона нажатия — своя,
+   * потому что у Graphics нет размера для попадания.
+   */
+  private buildExit(leave: () => void): void {
+    const { x, y, width, height } = SHOP_LEAVE;
+    const left = x - width / 2;
+    const top = y - height / 2;
     const g = this.scene.add.graphics();
-    g.lineStyle(2, 0xf5f5f4, 0.8);
-    g.lineBetween(x - arm, y - arm, x + arm, y + arm);
-    g.lineBetween(x - arm, y + arm, x + arm, y - arm);
+    g.fillStyle(0x000000, 0.5);
+    g.fillRoundedRect(left + 3, top + 4, width, height, 8); // тень на панели
+    g.fillStyle(0x2a1608);
+    g.fillRoundedRect(left, top, width, height, 8); // плашка кнопки
+    g.lineStyle(3, EXIT_BORDER);
+    g.strokeRoundedRect(left + 2, top + 2, width - 4, height - 4, 7); // золотая рамка — как у других кнопок игры
     this.shopLayer.add(g);
+    const label = addText(this.scene, x, y, `${t('shopLeave')} ✕`, { fontSize: '20px', fontStyle: 'bold', color: EXIT_INK }).setOrigin(0.5);
+    this.shopLayer.add(label);
     this.shopLayer.add(this.buildLeaveZone(x, y, width, height, leave));
   }
 
@@ -179,9 +197,19 @@ export class Shop {
   private showRow(row: number): void {
     const price = this.prices[row];
     const isEmpty = price === null;
-    this.goods[row].setPosition(VENDING_GOOD_X, vendingRowY(row, ROWS)).setAlpha(1).setVisible(!isEmpty);
+    this.goods[row].setPosition(VENDING_GOOD_X, goodY(row)).setAlpha(1).setVisible(!isEmpty);
     this.priceChips[row].setVisible(!isEmpty);
-    this.priceTexts[row].setText(isEmpty ? '' : `× ${price}`);
+    this.setPriceText(row, price);
+  }
+
+  /** Цена в ряду: «× 170». Длинная цена мельче, а если и этого мало — ужимается по ширине: за табличку и стекло не выходит. */
+  private setPriceText(row: number, price: number | null): void {
+    const text = this.priceTexts[row];
+    if (price === null) {
+      text.setText('');
+      return;
+    }
+    fitTextWidth(text, `× ${price}`, PRICE_MAX_WIDTH, PRICE_FONT_SIZE, PRICE_MIN_FONT_SIZE);
   }
 
   /** Ценники по фишкам на табло: хватает — жёлтые, нет — красные. Некуда положить предмет — предметы тусклые. */
@@ -221,9 +249,9 @@ export class Shop {
     this.items[row] = item;
     this.prices[row] = price;
     const good = this.goods[row];
-    good.setTexture(itemTexture(item)).setPosition(VENDING_GOOD_X, vendingRowY(row, ROWS)).setAlpha(1).setVisible(true).setScale(0);
+    good.setTexture(itemTexture(item)).setPosition(VENDING_GOOD_X, goodY(row)).setAlpha(1).setVisible(true).setScale(0);
     this.priceChips[row].setVisible(true);
-    this.priceTexts[row].setText(`× ${price}`);
+    this.setPriceText(row, price);
     this.scene.tweens.add({ targets: good, scale: GOOD_SCALE, duration: REFILL_TIME, ease: 'Back.easeOut' });
   }
 
@@ -310,4 +338,9 @@ export class Shop {
       },
     });
   }
+}
+
+/** Где стоит предмет ряда row: середина ряда и GOOD_DROP вниз — тогда виток спирали идёт по его низу. */
+function goodY(row: number): number {
+  return vendingRowY(row, ROWS) + GOOD_DROP;
 }

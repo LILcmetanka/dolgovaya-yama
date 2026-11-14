@@ -49,7 +49,7 @@ export class MachineBadge {
     if (hasBadge) this.badge.setTexture(characterTexture(machine));
   }
 
-  /** Новый автомат (или новый уровень): корпус проступает из темноты своим цветом, значок выскакивает. */
+  /** В начале раунда автомат сменился: корпус проступает из темноты своим цветом, значок выскакивает. */
   arrive(machine: MachineSpec): void {
     this.show(machine);
     const light = { share: ARRIVE_FROM };

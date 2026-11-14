@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { CHIP_TEXTURE, createChipTextures, createTicketTexture, TICKET_TEXTURE } from '../decor';
 import { DISPLAY, VIEW_WIDTH } from '../layout';
-import { addText, LAMP_GOLD, LED_COLOR, LED_STYLE, RED_TEXT } from '../theme';
+import { addText, LED_COLOR, LED_STYLE, RED_TEXT } from '../theme';
 import { fitBoardNumber } from './panel';
 
 // Банкомат Коллектора: в него закидывают фишки в уплату долга, он печатает купон (тот же билет 🎟).
@@ -21,20 +21,20 @@ const DEMAND_MAX_WIDTH = 136; // шире число не бывает: даль
 const CHIP_Y = SCREEN_Y - 24; // фишка над числом
 const CHIP_SCALE = 0.62;
 const GOOD_LUCK_FONT = '24px'; // GOOD LUCK — по центру экрана, крупнее прежнего
-// Монетоприёмник: вертикальная накладка справа на корпусе, в её щель летят фишки.
+// Монетоприёмник: вертикальная накладка справа на корпусе, в её щель летят фишки. Щель — вровень с блоком
+// псевдокнопок и длиной с него (два ряда): приёмник больше не торчит ниже кнопок.
 const COIN_SLOT_DX = 58; // от середины банкомата
-const COIN_SLOT_DY = 40;
-const COIN_BODY = { width: 36, height: 120 }; // корпус приёмника
-const COIN_SLIT = { width: 16, height: 92 }; // внутренняя щель
-const COIN_BOLT_DX = 11; // болты — по углам накладки над щелью…
-const COIN_BOLT_DY = 52;
+const COIN_SLOT_DY = -10; // середина блока псевдокнопок (ряды -22 и +2)
+const COIN_BODY = { width: 36, height: 56 }; // корпус приёмника
+const COIN_SLIT = { width: 16, height: 40 }; // внутренняя щель — как весь блок кнопок
+const COIN_BOLT_DX = 11; // болты — по углам накладки рядом со щелью…
+const COIN_BOLT_DY = 23;
 const COIN_BOLT_RADIUS = 2.5;
 const COIN_LED_RADIUS = 3; // …светодиод — под щелью
-const CHROME = 0x94a3b8;
+const CHROME = 0x5b6675; // металл приёмника ближе к корпусу: не выбивается из банкомата
 const CHROME_DARK = 0x334155;
 const COUPON_SLOT_Y = 104; // щель, из которой выходит купон
 const COUPON_OUT = 40; // купон выезжает вниз на столько px
-const SLOT_GLOW_MIN = 0.35;
 // Анимации, мс.
 const SLIDE_TIME = 450;
 const CHIPS_COUNT = 6; // сколько фишек летит в щель (для красоты: сумма может быть любой)
@@ -43,12 +43,11 @@ const CHIP_STAGGER = 70;
 const PRINT_TIME = 450; // купон выезжает из щели
 const PRINT_HOLD = 250; // и задерживается, пока вылетают билеты
 
-/** Банкомат: корпус, экран с суммой долга, вертикальный монетоприёмник (щель светится: «бросай сюда») и принтер купона. */
+/** Банкомат: корпус, экран с суммой долга, монетоприёмник с тёмной щелью (вровень с кнопками) и принтер купона. */
 export class Atm {
   private readonly scene: Phaser.Scene;
   private readonly box: Phaser.GameObjects.Container;
   private readonly body: Phaser.GameObjects.Rectangle;
-  private readonly slot: Phaser.GameObjects.Rectangle; // щель монетоприёмника: она пульсирует
   private readonly demand: Phaser.GameObjects.Text;
   private readonly chip: Phaser.GameObjects.Image; // фишка над суммой на экране
 
@@ -80,16 +79,17 @@ export class Atm {
       .rectangle(COIN_SLOT_DX, COIN_SLOT_DY, COIN_BODY.width, COIN_BODY.height, CHROME)
       .setStrokeStyle(3, CHROME_DARK)
       .setRounded(7);
-    this.slot = scene.add
+    // Щель не светится: приёмник читается тёмным провалом, горит только маленький светодиод.
+    const slot = scene.add
       .rectangle(COIN_SLOT_DX, COIN_SLOT_DY, COIN_SLIT.width, COIN_SLIT.height, 0x000000)
-      .setStrokeStyle(3, LAMP_GOLD)
+      .setStrokeStyle(3, CHROME_DARK)
       .setRounded(8);
-    const bolts = [-1, 1].map((side) => scene.add.circle(COIN_SLOT_DX + side * COIN_BOLT_DX, COIN_SLOT_DY - COIN_BOLT_DY, COIN_BOLT_RADIUS, 0xcbd5e1));
+    const bolts = [-1, 1].map((side) => scene.add.circle(COIN_SLOT_DX + side * COIN_BOLT_DX, COIN_SLOT_DY - COIN_BOLT_DY, COIN_BOLT_RADIUS, 0x94a3b8));
     const led = scene.add.circle(COIN_SLOT_DX, COIN_SLOT_DY + COIN_BOLT_DY, COIN_LED_RADIUS, 0x22d3ee);
     const couponSlot = scene.add.rectangle(0, COUPON_SLOT_Y, 110, 10, 0x000000).setStrokeStyle(2, 0x475569).setRounded(4);
 
     this.box = scene.add.container(ATM_IN_X, ATM_Y, [
-      this.body, topLamp, screenFrame, this.chip, this.demand, ...keys, coinPlate, this.slot, ...bolts, led, couponSlot,
+      this.body, topLamp, screenFrame, this.chip, this.demand, ...keys, coinPlate, slot, ...bolts, led, couponSlot,
     ]);
     this.box.setVisible(false);
   }
@@ -113,13 +113,11 @@ export class Atm {
       this.scene.tweens.add({ targets: this.demand, alpha: 0.3, duration: 500, yoyo: true, repeat: -1 });
     }
     this.scene.tweens.add({ targets: this.box, x: ATM_OUT_X, duration: SLIDE_TIME, ease: 'Cubic.easeOut', onComplete: ready });
-    this.glowSlot();
   }
 
   /** Уехать обратно в темноту — потом done(). */
   slideOut(done: () => void): void {
-    this.scene.tweens.killTweensOf([this.slot, this.demand]);
-    this.slot.setAlpha(1);
+    this.scene.tweens.killTweensOf(this.demand);
     this.scene.tweens.add({
       targets: this.box,
       x: ATM_IN_X,
@@ -134,8 +132,7 @@ export class Atm {
 
   /** Спрятать мгновенно (конец забега). */
   hide(): void {
-    this.scene.tweens.killTweensOf([this.box, this.slot, this.demand]);
-    this.slot.setAlpha(1);
+    this.scene.tweens.killTweensOf([this.box, this.demand]);
     this.box.setX(ATM_IN_X).setVisible(false);
   }
 
@@ -175,8 +172,7 @@ export class Atm {
   }
 
   /** Купон выезжает из щели вниз; когда он вышел — paid(x, y), потом он тает. */
-  private printCoupon(paid: (x: number, y: number) => void, done: () => void): void {
-    const x = this.box.x;
+  private printCoupon(paid: (x: number, y: number) => void, done: () => void): void {    const x = this.box.x;
     const y = this.box.y + COUPON_SLOT_Y;
     const coupon = this.scene.add.image(x, y, TICKET_TEXTURE).setScale(0.9).setAlpha(0);
     this.scene.tweens.add({
@@ -191,10 +187,5 @@ export class Atm {
         this.scene.time.delayedCall(PRINT_HOLD, done);
       },
     });
-  }
-
-  /** Щель мигает золотым: «бросай сюда». */
-  private glowSlot(): void {
-    this.scene.tweens.add({ targets: this.slot, alpha: SLOT_GLOW_MIN, duration: 600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
   }
 }

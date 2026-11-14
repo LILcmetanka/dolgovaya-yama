@@ -1,4 +1,4 @@
-import { countCrowns, freeSpinsFor, isJackpot, JACKPOT_SPINS, JACKPOT_TICKETS, luckyGrid, MAX_FREE_SPINS_PER_ROUND } from '../bonus';
+import { freeSpinsFor, isJackpot, JACKPOT_SPINS, JACKPOT_TICKETS, luckyGrid } from '../bonus';
 import { cellsOf } from '../evil';
 import { t } from '../lang';
 import { CENTER_X, cellX, cellY, GRID_Y, SPIN_LAMPS_Y } from '../layout';
@@ -7,7 +7,7 @@ import { spinGrid, spinsAfterBonus, type Grid, type WeightOf } from '../rules';
 import { GOLD_TEXT, GREEN_TEXT, LAMP_GOLD } from '../theme';
 import { PhaseScene } from './PhaseScene';
 
-const CROWN_BORDER = 0xfbbf24; // рамки на коронах, которые дали бесплатные прокрутки
+const CROWN_BORDER = 0xfbbf24; // рамки на коронах: дали прокрутки — рамка золотая
 const CLOVER_BORDER = 0x22c55e; // рамка на клевере
 const CROWN_LAMPS_TIME = 1500; // короны: огни бегут золотом, мс
 const POPUP_ABOVE_CELL = 30; // «👑 +5» и «🍀» всплывают над клеткой символа
@@ -37,19 +37,22 @@ export abstract class BonusScene extends PhaseScene {
     if (isJackpot(result)) this.collectJackpot();
   }
 
-  /** Короны на экране: хватило — бесплатные прокрутки (не больше потолка за раунд). Короны в рамках, огни бегут золотом. */
+  /**
+   * Короны на экране: хватило — бесплатные прокрутки, все, что положены за выпавшие короны (игрового потолка за раунд
+   * нет). Короны в рамках, огни бегут золотом. Бесплатная прокрутка тоже может дать короны: цепочка разрешена,
+   * её останавливает только технический предохранитель FREE_SPINS_GUARD — считать его выпадает на RoundScene.afterSpin.
+   */
   private collectCrowns(grid: Grid): void {
-    // Потолок — из-за удачи: без него цепочка бесплатных прокруток не кончается (MAX_FREE_SPINS_PER_ROUND).
-    const free = Math.min(freeSpinsFor(countCrowns(grid)), MAX_FREE_SPINS_PER_ROUND - this.freeSpinsGiven);
-    if (free <= 0) return;
-    this.freeSpins += free;
-    this.freeSpinsGiven += free;
-    this.sfx.play('crown');
     const crowns = cellsOf(grid, 'crown');
+    const wanted = freeSpinsFor(crowns.length);
+    if (wanted === 0) return;
+    this.freeSpins += wanted;
+    this.freeSpinsAwarded += wanted;
+    this.sfx.play('crown');
     this.screen.highlightCells(crowns, CROWN_BORDER);
     this.screen.flashLamps(LAMP_GOLD, CROWN_LAMPS_TIME);
     const [row, col] = crowns[0];
-    this.effects.popupAt(cellX(col), cellY(row) - POPUP_ABOVE_CELL, `👑 +${free}`, GOLD_TEXT);
+    this.effects.popupAt(cellX(col), cellY(row) - POPUP_ABOVE_CELL, `👑 +${wanted}`, GOLD_TEXT);
   }
 
   /** Клевер на экране: следующая прокрутка — с паттерном. Клевер в рамке, огни в покое зелёные (calmLampColor), пока она не прошла. */

@@ -11,10 +11,10 @@ import {
   lastChanceGoal,
 } from '../lastChance';
 import { t } from '../lang';
-import { DISPLAY } from '../layout';
+import { CENTER_X, DISPLAY, GRID_Y } from '../layout';
 import { machineWinFactor } from '../machines';
 import { evaluateGrid } from '../patterns';
-import { GRID_ROWS, randomSymbol, weightsForRound, JOKER, type Grid, type SlotSymbol, type WeightOf } from '../rules';
+import { FAILED_DEBT_ROUND_STEP, GRID_ROWS, JOKER, randomSymbol, weightsForRound, WON_DEBT_ROUND_STEP, type Grid, type SlotSymbol, type WeightOf } from '../rules';
 import { GOLD_TEXT, GREEN_TEXT, LAMP_OFF, LAMP_RED } from '../theme';
 import type { LastChanceAction } from '../parts/lastChanceBar';
 import { SaveScene } from './SaveScene';
@@ -27,6 +27,8 @@ const KABOOM_SHAKE_TIME = 700;
 const KABOOM_SHAKE = 0.03;
 const LAST_CHANCE_TENSION = 1; // в последнем шансе сердце в музыке бьётся быстрее всего
 const SECOND_WIND_PAUSE = 1200; // провал с «вторым дыханием»: столько видно, что случилось, потом магазин
+const SECOND_WIND_WHY_FONT = 20; // пояснение под «ВТОРОЕ ДЫХАНИЕ»: обычный кегль попапа его растянул бы на весь вид
+const INSTANT_WIN_PAUSE = 1200; // входная сетка уже бьёт цель: столько видно полосу и новость, потом долг закрывается
 // Победа (набрано CHIP_GOAL).
 const VICTORY_SETTLE_TIME = 400; // после прибавки фишек столько ждём: текущее действие успевает доиграть
 const VICTORY_PAUSE = 1400; // лампы погасли, новое число на табло видно — пауза, потом затемнение
@@ -47,6 +49,7 @@ export abstract class CollectorScene extends SaveScene {
   private lastChanceActions = 0;
   private readonly frozenColumns = new Set<number>(); // замороженные столбцы: перекрут их не трогает
   private isFreezeMode = false; // кнопка «лёд» включена: клик по столбцу морозит, а не перекручивает
+  private isLastChanceWinPending = false; // входная сетка уже бьёт цель: полоса показана, через мгновение долг закроется
   private wasShoppingAtVictory = false; // победа застала магазин на экране: «ДАЛЬШЕ» доиграет его выход
   private endScreenCleanup: (() => void) | null = null; // уборка экрана победы: её зовёт «ДАЛЬШЕ»
 
@@ -58,6 +61,7 @@ export abstract class CollectorScene extends SaveScene {
     this.lastChanceActions = 0;
     this.frozenColumns.clear();
     this.isFreezeMode = false;
+    this.isLastChanceWinPending = false;
     this.wasShoppingAtVictory = false;
     this.endScreenCleanup = null;
   }
@@ -142,7 +146,7 @@ export abstract class CollectorScene extends SaveScene {
    * Цель — не побить свою же сетку, а закрыть долю нехватки фишек (lastChanceGoal): она считается от
    * debt − balance, цены символа раунда, множителя серии и множителей выигрыша — тех же чисел, что в addToPot,
    * и падает на полосу уже множителем паттерна: суммы фишек там нет, победа проверяет только множитель.
-   * Входная сетка уже бьёт цель — действия ни к чему.
+   * Входная сетка уже бьёт цель — полоса и новость на 1,2 с, потом долг закрывается сам (DONTLIKE б.13).
    */
   private startLastChance(): void {
     this.isLastChance = true;
@@ -160,8 +164,16 @@ export abstract class CollectorScene extends SaveScene {
       this.lastChanceActions = LAST_CHANCE_ACTIONS;
       this.refreshHud();
       if (isLastChanceGoalMet(bestMultiplier(evaluateGrid(grid)), goal)) {
-        // Чистая сетка уже перекрыла цель — полоса действий не нужна.
-        this.winLastChance();
+        // Чистая сетка уже перекрыла цель — действий не нужно. Но и молча закрывать долг нельзя: игрок не видел
+        // ни цели, ни причины, почему выжил (DONTLIKE б.13). Показываем полосу с целью и новость, ждём и закрываем.
+        this.isLastChanceWinPending = true;
+        this.screen.announceNews(t('lcAlreadyWin'));
+        this.lastChanceBar.open(goal, this.lastChanceActions);
+        // Страховка от «победы без причины»: за эти 1,2 с шанс могли закрыть (перезапуск сцены, откат),
+        // и тогда таймер не должен ни платить долг, ни открывать магазин со счётом −2.
+        this.time.delayedCall(INSTANT_WIN_PAUSE, () => {
+          if (this.isLastChanceWinPending) this.winLastChance();
+        });
         return;
       }
       this.sfx.play('news', 0.3);
@@ -172,11 +184,11 @@ export abstract class CollectorScene extends SaveScene {
   /**
    * Множители выигрыша амулетов и автомата — как в addToPot (RoundScene): во сколько раз паттерн на кону
    * больше своей цены. Кровавая прокрутка и предмет риска сюда не входят: их флаги к приходу Коллектора сняты.
-   * Режим прокрутки (spinModeNow и winModeFactor в levers.ts) в формулу не входит тоже — но по другой причине:
-   * последний шанс не кладёт выигрыш в кон, поэтому множитель режима там нечему умножать. Симулятор считает так же.
+   * Замах рычага в формулу не входит тоже: он двигает только веса символов, выплаты не множит (DONTLIKE п. 8).
+   * Симулятор считает так же.
    */
   private chanceWinFactor(): number {
-    return winFactor(this.amuletIds(), this.bones) * machineWinFactor(this.machineState);
+    return winFactor(this.amuletIds(), this.bones) * machineWinFactor(this.machineId);
   }
 
   /** Одна прокрутка последнего шанса: обычные веса раунда, но без черепов и злых символов. */
@@ -206,6 +218,7 @@ export abstract class CollectorScene extends SaveScene {
    */
   protected onLastChanceButton(action: LastChanceAction): void {
     if (!this.isLastChance || !this.lastChanceGrid || this.isSpinning) return; // пока столбец крутится, кнопки ждут
+    if (this.isLastChanceWinPending) return; // сетка уже бьёт цель: долг закроется сам, кнопки не нужны
     if (action === 'surrender') {
       this.failLastChance();
       return;
@@ -224,7 +237,7 @@ export abstract class CollectorScene extends SaveScene {
 
   /** Клик по сетке в последнем шансе: морозим столбец, перекручиваем столбец или ставим джокера. */
   private onLastChancePick(action: 'freeze' | 'reroll' | 'joker', row: number, col: number): void {
-    if (!this.isLastChance || !this.lastChanceGrid) return;
+    if (!this.isLastChance || !this.lastChanceGrid || this.isLastChanceWinPending) return;
     if (action === 'freeze') {
       this.toggleFreeze(col);
       return;
@@ -303,11 +316,12 @@ export abstract class CollectorScene extends SaveScene {
 
   /** Победил: чемодан закрывает долг, фишки целы, билета нет, счёт на один долг назад — и магазин. */
   private winLastChance(): void {
+    this.isLastChanceWinPending = false;
     this.closeLastChance();
     this.sfx.play('payment');
     this.collector.clearGoodLuck();
     this.chipCase.open(() => {
-      this.round = Math.max(0, this.round - 2); // магазин прибавит единицу: раунд N − 1, а не N + 1
+      this.round = Math.max(0, this.round - WON_DEBT_ROUND_STEP); // магазин прибавит единицу: раунд N − 1, а не N + 1
       this.openShop();
     });
   }
@@ -324,9 +338,16 @@ export abstract class CollectorScene extends SaveScene {
     }
     this.secondWindUsed = true;
     this.sfx.play('warning');
+    // Попап — не только название: игрок должен понять, почему выжил и что будет дальше (DONTLIKE б.12).
     this.effects.popup(t('lcSecondWind'), GOLD_TEXT);
+    this.effects.popupAt(CENTER_X, GRID_Y + 24, t('lcSecondWindWhat'), GOLD_TEXT, SECOND_WIND_WHY_FONT);
     this.time.delayedCall(SECOND_WIND_PAUSE, () => {
-      this.round = Math.max(0, this.round - 2); // счёт на один долг назад, как после выигранного шанса
+      // За 1,2 с забег мог кончиться или магазин уже встать (ввод в это время закрыт isRoundOver):
+      // второй раз счёт не двигаем и второй магазин не открываем.
+      if (this.isGameOver || this.isShopOpen) return;
+      // Долг не закрыт — счёт не двигаем (FAILED_DEBT_ROUND_STEP = 1): магазин прибавит единицу, и следующий
+      // долг будет тем же, без роста. Раньше счёт шёл на один долг назад — проигрыш выходил бафом.
+      this.round = Math.max(0, this.round - FAILED_DEBT_ROUND_STEP);
       this.openShop();
     });
   }
@@ -339,6 +360,7 @@ export abstract class CollectorScene extends SaveScene {
     this.collector.clearGoodLuck(); // GOOD LUCK с экрана уходит и после провала
     this.frozenColumns.clear();
     this.isFreezeMode = false;
+    this.isLastChanceWinPending = false;
     this.lastChanceGrid = null;
     this.isLastChance = false;
     this.isSpinning = false;

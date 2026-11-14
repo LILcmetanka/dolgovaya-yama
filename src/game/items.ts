@@ -122,7 +122,7 @@ export const ITEMS: ShopItem[] = [
   {
     id: 'swap', sign: '🃏',
     name: { ru: 'Подмена', en: 'Swap' },
-    description: { ru: 'Следующая прокрутка: заменить клетку на джокера', en: 'Next spin: turn one cell into a joker' },
+    description: { ru: 'Заменить клетку на джокера; висит, пока не применишь', en: 'Turn a cell into a joker; stays charged until used' },
     color: 0xe879f9, priceShare: 0.5,
   },
 ];

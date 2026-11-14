@@ -3,6 +3,7 @@ import {
   amuletTexture,
   createAmuletTextures,
   createTicketTexture,
+  drawGlassPane,
   TICKET_TEXTURE,
 } from '../decor';
 import { AMULETS, type Amulet } from '../amulets';
@@ -59,6 +60,7 @@ export class AmuletCase {
   private readonly priceIcons: Phaser.GameObjects.Image[] = []; // ценник: билет…
   private readonly priceTexts: Phaser.GameObjects.Text[] = []; // …и «× 2»
   private readonly marks: Phaser.GameObjects.Graphics[]; // тень под вещью и плашка для ценника каждого места — гаснут вместе с товаром
+  private readonly glass: Phaser.GameObjects.Graphics; // плёнка с бликом над бархатом и вещами — как у торгового автомата
   private prices: (number | null)[] = []; // цена места; null — место пустое
   private amulets: (Amulet | null)[] = []; // какой амулет на каком месте
   private readonly suitcase: Phaser.GameObjects.Container; // корпус и обе крышки — выезжают вместе
@@ -81,22 +83,29 @@ export class AmuletCase {
     this.layer = layer;
     createTicketTexture(scene);
     createAmuletTextures(scene, AMULETS, AMULET_SIZE);
-    const { suitcase, lidFront, lidBack, marks } = this.buildSuitcase();
+    const { suitcase, lidFront, lidBack, marks, glass } = this.buildSuitcase();
     this.suitcase = suitcase;
     this.lidFront = lidFront;
     this.lidBack = lidBack;
     this.marks = marks;
+    this.glass = glass;
+    // Порядок слоёв: корпус → вещи → стекло → ценники. Амулеты лежат под стеклом, их цены читаются поверх.
     for (let place = 0; place < AMULET_CASE_PLACES; place++) {
       const x = amuletCaseX(place, AMULET_CASE_PLACES);
       const good = scene.add.image(x, AMULET_CASE_ICON_Y, this.textureFor(place)).setScale(AMULET_SCALE).setVisible(false);
       good.setInteractive({ useHandCursor: true }).setDepth(GOODS_DEPTH);
       attachHint(good, hint, () => (this.open ? this.hintFor(place) : null), () => buy(place));
       this.goods.push(good);
+      this.layer.add(good);
+    }
+    this.layer.add(glass);
+    for (let place = 0; place < AMULET_CASE_PLACES; place++) {
+      const x = amuletCaseX(place, AMULET_CASE_PLACES);
       const priceIcon = scene.add.image(x - 18, AMULET_CASE_PRICE_Y, TICKET_TEXTURE).setScale(PRICE_ICON_SCALE).setDepth(GOODS_DEPTH).setVisible(false);
       this.priceIcons.push(priceIcon);
       const priceText = addText(scene, x + PRICE_TEXT_DX, AMULET_CASE_PRICE_Y, '', { ...LED_STYLE, fontSize: '16px' }).setOrigin(0, 0.5).setDepth(GOODS_DEPTH);
       this.priceTexts.push(priceText);
-      this.layer.add([good, priceIcon, priceText]);
+      this.layer.add([priceIcon, priceText]);
     }
     this.setAvailable(isAvailable);
   }
@@ -109,7 +118,7 @@ export class AmuletCase {
     this.available = isAvailable;
     if (!isAvailable) this.open = false;
     for (const part of [this.suitcase, this.lidFront, this.lidBack]) part.setVisible(isAvailable);
-    for (const part of [...this.goods, ...this.priceIcons, ...this.priceTexts, ...this.marks]) part.setVisible(false);
+    for (const part of [this.glass, ...this.goods, ...this.priceIcons, ...this.priceTexts, ...this.marks]) part.setVisible(false);
     for (const good of this.goods) {
       if (isAvailable) good.setInteractive({ useHandCursor: true });
       else good.disableInteractive();
@@ -125,6 +134,7 @@ export class AmuletCase {
     lidFront: Phaser.GameObjects.Container;
     lidBack: Phaser.GameObjects.Container;
     marks: Phaser.GameObjects.Graphics[];
+    glass: Phaser.GameObjects.Graphics;
   } {
     const scene = this.scene;
     const { x, y, width, height } = AMULET_CASE;
@@ -178,7 +188,13 @@ export class AmuletCase {
     for (const mark of marks) suitcase.add(mark); // тени и плашки — поверх корпуса, но под закрытой крышкой
     suitcase.add(lidFront); // едет вместе с корпусом, закрытая крышка рисуется поверх корпуса
     this.layer.add(suitcase); // чемодан — на панели магазина: уезжает и приезжает вместе с ней
-    return { suitcase, lidFront, lidBack, marks };
+
+    // Стекло — над красным бархатом (не над кожаным корпусом): плёнка и блик, как у витрины торгового автомата.
+    // В слой оно попадает после вещей (конструктор), а ценники — после стекла.
+    const glass = scene.add.graphics();
+    drawGlassPane(glass, { x, y, width: width - 20, height: height - 16 }, 6);
+    glass.setVisible(false);
+    return { suitcase, lidFront, lidBack, marks, glass };
   }
 
   /** Картинка места: амулет. */
@@ -202,12 +218,13 @@ export class AmuletCase {
     this.open = false;
     this.amulets = [];
     this.prices = new Array<number | null>(AMULET_CASE_PLACES).fill(null);
-    for (const target of [this.suitcase, this.lidFront, this.lidBack, ...this.goods, ...this.marks, ...this.priceIcons, ...this.priceTexts]) {
+    for (const target of [this.suitcase, this.lidFront, this.lidBack, this.glass, ...this.goods, ...this.marks, ...this.priceIcons, ...this.priceTexts]) {
       this.scene.tweens.killTweensOf(target);
     }
     this.suitcase.setY(0); // чемодан на своём месте на панели
     this.lidFront.setScale(1, 1);
     this.lidBack.setScale(1, 0);
+    this.glass.setVisible(false); // стекло появляется вместе с вещами (popGoods)
     for (let place = 0; place < AMULET_CASE_PLACES; place++) {
       this.goods[place].setVisible(false);
       this.priceIcons[place].setVisible(false);
@@ -257,6 +274,7 @@ export class AmuletCase {
         this.scene.tweens.add({ targets: tag, alpha: 1, delay, duration: POP_TIME });
       }
     });
+    this.glass.setVisible(shown > 0); // пустой чемодан: стекла над бархатом нет
   }
 
   /** Место как есть: товар, его тень, плашка и ценник; пустое место — ничего. */

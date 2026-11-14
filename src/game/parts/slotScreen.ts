@@ -17,14 +17,17 @@ import { GRID_COLUMNS, GRID_ROWS, isPaying, randomSymbol, SYMBOLS, type Grid, ty
 import type { Sfx } from '../sound';
 import { addText, GOLD_TEXT, GREEN_TEXT, LAMP_GOLD, LAMP_OFF, LAMP_RED, LED_STYLE, POPUP_DEPTH, POPUP_STYLE, RED_TEXT } from '../theme';
 
-// Стекло с паттернами: схемы рядами по 7.
+// Стекло с паттернами: схемы рядами по 7 — 14 паттернов ложатся в два ровных ряда.
 const PATTERN_COLUMNS = 7;
 const PATTERN_STEP_X = 70; // от центра схемы до центра соседней
-const PATTERN_STEP_Y = 36;
+const PATTERN_STEP_Y = 34; // рядов два: 7×2 — и оба ряда влезают в стекло с полем, ничего не выходит за обводку
 const PATTERN_TEXT_GAP = 3; // от схемы до «×N»; схема и «×N» вместе стоят посередине места
 // «×N» — узким шрифтом цифр табло: так и «×10» влезает в рамку, и ширина одна на любом компьютере.
 const PATTERN_TEXT_STYLE = { fontFamily: LED_STYLE.fontFamily, fontSize: '13px', fontStyle: 'bold', color: GOLD_TEXT };
-const PATTERN_FRAME = { width: 64, height: 28 }; // рамка схемы — вокруг схемы и «×N»; от соседней — зазор
+const PATTERN_TEXT_FONT = 13; // кегль «×N»…
+const PATTERN_TEXT_MIN_FONT = 10; // …а «×100» мельче: три знака в узкую рамку иначе не влезают
+const PATTERN_FRAME = { width: 66, height: 26 }; // рамка схемы — вокруг схемы и «×N»; от соседней — зазор
+const PATTERN_FRAME_PADDING = 6; // столько рамка оставляет по бокам: шире этого схема и «×N» не бывают
 const PATTERN_FRAME_LINE = 2; // толщина рамки
 const PATTERN_FRAME_DIM = 0x8a7440; // тусклая обводка открытого паттерна: он есть на стекле, но сейчас не выпал
 // Новый паттерн выпал впервые: схема проступает на стекле, рамка на миг вспыхивает золотом.
@@ -40,6 +43,8 @@ const GLASS_BLINK_TIME = 200; // мигает трижды
 const PHASE_FONT_SIZE = '40px'; // под надписью — знаки фазы, поэтому она в верхней половине стекла
 const DEBT_FONT_SIZE = '36px'; // надпись длиннее — мельче, чтобы влезла на стекло
 const MACHINE_FONT_SIZE = '36px'; // новый автомат: его значок и название
+const NEWS_MIN_FONT_SIZE = 16; // длинная новость мельче этого не становится — только ужимается по ширине
+const NEWS_SIDE_PADDING = 20; // поле по бокам новости: надпись не должна касаться края стекла
 const NEWS_ICON_SCALE = 1.5; // значок автомата в новости — крупнее, чем на корпусе
 const NEWS_ICON_GAP = 12; // между значком и названием
 const LOCK_SHADE = 0.5; // столбец с замком темнеет: прозрачность тени
@@ -156,7 +161,7 @@ export class SlotScreen {
   }
 
   /**
-   * Стекло с паттернами над экраном: схема каждого паттерна и его ×, рядами по семь.
+   * Стекло с паттернами над экраном: схема каждого паттерна и его ×, 7 в ряд — двумя рядами.
    * Цен символов на экране нет — игрок узнаёт их по опыту. Пока паттерн не выпадал, его места на стекле нет:
    * там пусто, ни рамки, ни схемы, ни «×N». Позиции схем не сдвигаются — стекло всегда одной сетки.
    */
@@ -172,9 +177,19 @@ export class SlotScreen {
         .setRounded(6)
         .setStrokeStyle(PATTERN_FRAME_LINE, PATTERN_FRAME_DIM)
         .setVisible(false);
-      // Схема слева, «×N» справа — вместе посередине рамки.
+      // Схема слева, «×N» справа — вместе посередине рамки. «×100» шире остальных: кегль подбираем, пока пара
+      // не влезет в рамку с полем, — иначе подпись джекпота выходила за обводку (DONTLIKE б.4).
       const icon = this.scene.add.image(0, y, patternTexture(pattern)).setOrigin(0, 0.5).setVisible(false);
       const label = addText(this.scene, 0, y, `×${pattern.multiplier}`, PATTERN_TEXT_STYLE).setOrigin(0, 0.5).setVisible(false);
+      const maxWidth = PATTERN_FRAME.width - PATTERN_FRAME_PADDING;
+      let fontSize = PATTERN_TEXT_FONT;
+      label.setFontSize(fontSize);
+      label.updateText(); // ширина — от свежих букв, иначе ужим решает по старой ширине
+      while (icon.width + PATTERN_TEXT_GAP + label.width > maxWidth && fontSize > PATTERN_TEXT_MIN_FONT) {
+        fontSize -= 1;
+        label.setFontSize(fontSize);
+        label.updateText();
+      }
       const left = Math.round(x - (icon.width + PATTERN_TEXT_GAP + label.width) / 2);
       icon.setX(left);
       label.setX(left + icon.width + PATTERN_TEXT_GAP);
@@ -546,12 +561,21 @@ export class SlotScreen {
     const strip = this.scene.add.rectangle(GLASS.x, GLASS.y, GLASS.width, GLASS.height, 0x000000, 0.85).setRounded(10);
     const style = { ...POPUP_STYLE, fontSize, color };
     const label = addText(this.scene, GLASS.x, y, text, style).setOrigin(0.5);
+    // Длинная новость (джекпот, порог набранного) мельче — иначе она вылезает за стекло (DONTLIKE б.3).
+    let size = parseInt(fontSize, 10);
+    label.updateText(); // ширина — от свежих букв, иначе ужим решает по старой ширине
+    while (label.width > GLASS.width - NEWS_SIDE_PADDING && size > NEWS_MIN_FONT_SIZE) {
+      size -= 2;
+      label.setFontSize(size);
+      label.updateText();
+    }
+    if (label.width > GLASS.width - NEWS_SIDE_PADDING) label.setScale((GLASS.width - NEWS_SIDE_PADDING) / label.width);
     const parts: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Image)[] = [strip, label];
     if (icon) {
       const image = this.scene.add.image(0, y, icon).setScale(NEWS_ICON_SCALE);
-      const width = image.displayWidth + NEWS_ICON_GAP + label.width; // значок и надпись вместе — по середине стекла
+      const width = image.displayWidth + NEWS_ICON_GAP + label.displayWidth; // значок и надпись вместе — по середине стекла
       image.setX(GLASS.x - width / 2 + image.displayWidth / 2);
-      label.setX(GLASS.x + width / 2 - label.width / 2);
+      label.setX(GLASS.x + width / 2 - label.displayWidth / 2);
       parts.push(image);
     }
     for (const part of parts) part.setDepth(POPUP_DEPTH);

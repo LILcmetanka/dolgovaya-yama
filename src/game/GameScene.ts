@@ -1,8 +1,11 @@
 import Phaser from 'phaser';
+import type { AchievementId } from './achievements';
+import { addCopy, AMULETS, countOf, MAX_SOCKETS, symbolPayout, type AmuletId } from './amulets';
 import { drawMachineBody, drawRoom } from './decor';
+import { DEV_CHIPS, DEV_TICKETS } from './devmode';
 import { lang, toggleLang, type Lang } from './lang';
-import { nextSpinMode, setSpinMode, spinMode, type SpinMode } from './levers';
-import { BODY, LEVER_GLOW, NOTE, ZOOM } from './layout';
+import { chargeNow, releaseCharge, startCharge } from './levers';
+import { BODY, LEVER_GLOW, NOTE, WALL_PANEL, ZOOM } from './layout';
 import { amuletKey, itemKey, see } from './codex';
 import { AmuletCase } from './parts/amuletCase';
 import { AmuletRack } from './parts/amuletRack';
@@ -15,11 +18,11 @@ import { CornerButtons } from './parts/cornerButtons';
 import { DealerTable } from './parts/dealerTable';
 import { Drum } from './parts/drum';
 import { Effects } from './parts/effects';
+import { AchievementWindow } from './parts/achievementWindow';
 import { ItemShelf } from './parts/itemShelf';
-import { machineSpec } from './machines';
+import { machineSpec, machineWinFactor, type MachineId } from './machines';
 import { MachineBadge } from './parts/machineBadge';
 import { LastChanceBar, type LastChanceAction } from './parts/lastChanceBar';
-import { MachinePicker } from './parts/machinePicker';
 import { MiniShop } from './parts/miniShop';
 import { MachinePanel } from './parts/panel';
 import { PauseScreen } from './parts/pauseScreen';
@@ -30,10 +33,10 @@ import { addRotateHint } from './parts/rotateHint';
 import { SettingsPanel } from './parts/settingsPanel';
 import { Shop } from './parts/shop';
 import { SlotScreen } from './parts/slotScreen';
-import { WallScreen } from './parts/wallScreen';
+import { WallScreen, type DevActions } from './parts/wallScreen';
 import { Tooltip } from './parts/tooltip';
 import { CollectorScene } from './scene/CollectorScene';
-import { MAX_SLOTS } from './items';
+import { ITEMS, MAX_SLOTS, type ItemId } from './items';
 import { isTutorialDone, markTutorialDone } from './progress';
 import type { RunSave } from './save';
 import { getVolumes, isSilent, setVolume, toggleSound, volumeShare, type VolumeKind } from './settings';
@@ -56,6 +59,7 @@ const MUSIC_TICK = 100; // как часто музыка планирует у�
 export class GameScene extends CollectorScene {
   private corner!: CornerButtons; // значки в углу: «звук выключен», на телефоне ⚙ (пауза) и во весь экран
   private pauseScreen!: PauseScreen; // экран паузы
+  private isCharging = false; // рычаг держат: шкала замаха растёт
   private settingsPanel!: SettingsPanel; // настройки на экране паузы
   private languageAtPause!: Lang; // язык, какой был, когда встали на паузу: после «▶» записка переворачивается, только если он другой
 
@@ -63,22 +67,34 @@ export class GameScene extends CollectorScene {
     super('GameScene');
   }
 
-  /** data.tape — запись кассеты: сцену перезапустили после отката (SaveScene.insertTape); data.tapesBought — сколько кассет куплено. */
-  create(data: { tape?: RunSave; tapesBought?: number } = {}): void {
+  /**
+   * data.tape — запись кассеты: сцену перезапустили после отката (SaveScene.insertTape); data.tapesBought — сколько
+   * кассет куплено; data.devUsed — трогали ли забег в «ТЕСТ» до отката; data.achievements — ачивки, которых игрок
+   * ещё не увидел (прогресс записан, а окно и новость ждут показа в новой сцене).
+   */
+  create(data: { tape?: RunSave; tapesBought?: number; devUsed?: boolean; achievements?: AchievementId[] } = {}): void {
     this.resetState();
+    // resetState() обнуляет след «ТЕСТ», а откат его не снимает: он приходит отдельным полем, помимо записи кассеты.
+    if (data.devUsed) this.devUsedThisRun = true;
+    if (data.achievements) this.restoreAchievements(data.achievements); // очередь показа пережила рестарт
     if (data.tape) this.loadTape(data.tape, data.tapesBought ?? 0); // откат — забег с кассеты (до частей: они строятся по состоянию)
     this.setupCamera();
     drawRoom(this);
     const machineBody = drawMachineBody(this); // тело корпуса — его красит MachineBadge в цвет автомата
-    this.monitor = new WallScreen(this, this.round, () => this.toggleMonitor(), () => this.openSettings()); // мебель комнаты: под рычагом и рукой Коллектора
+    this.monitor = new WallScreen(this, this.round, () => this.toggleMonitor(), () => this.openSettings(), this.devActions());
+    // «Символы» на планшете: фактическая цена — амулеты, кости и автомат; буст предмета — зелёной пометкой (хоч. 9.1).
+    this.monitor.setSymbolReward((symbol) => ({
+      payout: Math.round(symbolPayout(symbol, this.amuletIds(), this.bones) * machineWinFactor(this.machineId)),
+      boost: this.itemEffects.symbolBoost[symbol.id] ?? 1,
+    })); // мебель комнаты: под рычагом и рукой Коллектора
     this.tooltip = new Tooltip(this);
     this.screen = new SlotScreen(this, this.sfx);
     // Паттерн выпал — сцена решает, открывать ли его (BaseScene.openPattern); на стекле сразу набор этого забега.
     this.screen.onPatternLanded = (pattern) => this.openPattern(pattern);
     if (!data.tape) this.setPatternsOnGlass(); // после кассеты набор ставит playTape — второй раз не трогаем
     this.brokenScreen = new BrokenScreen(this); // поверх сетки: дыра и трещины после взрыва (KABOOM)
-    this.machineBadge = new MachineBadge(this, machineBody, machineSpec(this.machineState), this.tooltip);
-    this.panel = new MachinePanel(this, () => this.spin(), this.tooltip, (mode) => this.chooseSpinMode(mode));
+    this.machineBadge = new MachineBadge(this, machineBody, machineSpec(this.machineId), this.tooltip);
+    this.panel = new MachinePanel(this, () => this.beginCharge(), this.tooltip);
     this.payout = new PayoutWindow(this, () => this.take());
     this.itemShelf = new ItemShelf(
       this,
@@ -99,14 +115,6 @@ export class GameScene extends CollectorScene {
     this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip);
     // Что из магазина открыто — по закрытым долгам: после отката кассетой раунд уже загружен (loadTape), и части строятся сразу видимыми.
     this.miniShop = new MiniShop(this, (row) => this.buyMini(row), this.tooltip, this.shop.layer);
-    this.machinePicker = new MachinePicker(
-      this,
-      (id) => this.pickMachine(id),
-      (id) => this.upgradeMachine(id),
-      (branch) => this.chooseMachineBranch(branch),
-      this.tooltip,
-      this.shop.layer,
-    );
     this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip, this.amuletsUnlocked(), this.shop.layer);
     // Кассета «продаётся» — это состояние забега (после отката её съел автомат, и она снова продаётся);
     // видно её на панели только вместе с открытой механикой (первый аргумент).
@@ -114,6 +122,8 @@ export class GameScene extends CollectorScene {
     this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx, this.drumUnlocked(), this.shop.layer);
     this.dealerTable = new DealerTable(this, (dir) => this.guess(dir), () => this.stopDealing(), this.sfx);
     this.effects = new Effects(this);
+    this.achievements = new AchievementWindow(this); // окно ачивки — после эффектов: оно ложится поверх сетки
+    this.pumpAchievements(); // то, что выдано до постройки окна (или до рестарта), показываем теперь
     this.atmosphere = new Atmosphere(this);
     this.corner = new CornerButtons(this, () => this.togglePause(), () => this.toggleMute());
     this.pauseScreen = new PauseScreen(this, () => this.resumeGame());
@@ -206,7 +216,7 @@ export class GameScene extends CollectorScene {
     this.sfx.setPaused(false);
     this.time.paused = false;
     this.tweens.resumeAll();
-    if (lang() !== this.languageAtPause) this.collector.flipNote(this.debt, this.hasEnoughForDebt());
+    if (lang() !== this.languageAtPause) this.collector.flipNote(this.debt);
     this.refreshHud(); // на паузе приборы могли выключиться (телевизор закрыли, кнопки не нажимались) — снова включить
   }
 
@@ -236,29 +246,36 @@ export class GameScene extends CollectorScene {
     if (language !== lang()) this.toggleLanguage();
   }
 
-  // ---------- Режим прокрутки (шаг 70) ----------
+  // ---------- Замах рычага (DONTLIKE п. 8) ----------
 
-  /** Плашка у рычага или T: режим следующей платной прокрутки. Только между прокрутками и не во тьме первого забега. */
-  private chooseSpinMode(mode: SpinMode): void {
-    if (!this.canAct()) {
-      this.sfx.play('deny');
-      return;
-    }
-    // Тьма обучения: плашки стоят вне пятна света, их не видно — режим под ней не меняем (иначе менялся бы вслепую).
-    if (this.reveal?.isActive) {
-      this.sfx.play('deny');
-      return;
-    }
-    if (mode === spinMode()) return;
-    setSpinMode(mode);
-    this.panel.showMode(mode);
-    this.refreshHud(); // режим меняет долю черепов в следующей прокрутке — строка «💀 N%» обновляется сразу
-    this.sfx.play('item');
+  /**
+   * Нажали рычаг (пробел, Enter или мышь): начинаем замах. Шкала растёт, пока держат, — её обновляет update().
+   * Вне игры (пауза, магазин, окно перемешки, у монитора) замах не начинается: там у этих клавиш своё дело.
+   */
+  private beginCharge(): void {
+    if (this.isCharging || !this.canAct()) return;
+    if (this.reveal?.isActive) return; // тьма первого забега: рычаг ещё не показан
+    this.isCharging = true;
+    startCharge();
+    this.panel.showCharge(0);
   }
 
-  /** T: следующий режим по кругу — обычно → риск → спокойно → обычно. */
-  private cycleSpinMode(): void {
-    this.chooseSpinMode(nextSpinMode());
+  /**
+   * Отпустили рычаг: прокрутка с накопленным зарядом. Короткое нажатие — заряд 0 (спокойная прокрутка),
+   * прокрутка всё равно идёт: игрок не должен «промахиваться» мимо хода.
+   */
+  private endCharge(): void {
+    if (!this.isCharging) return;
+    this.isCharging = false;
+    const charge = releaseCharge();
+    this.panel.showCharge(charge, true); // шкала фиксируется и коротко вспыхивает
+    this.spin(charge);
+  }
+
+  /** Кадр: пока рычаг держат, шкала ползёт от 0 к 100%. */
+  override update(): void {
+    if (!this.isCharging) return;
+    this.panel.showCharge(chargeNow());
   }
 
   /**
@@ -274,8 +291,7 @@ export class GameScene extends CollectorScene {
     this.pauseScreen.relabel();
     this.monitor.relabel();
     this.rerollMenu.relabel(); // окно перемешки: заголовок по текущему режиму
-    this.panel.relabel(); // плашки режима прокрутки у рычага
-    if (!this.isPaused) this.collector.flipNote(this.debt, this.hasEnoughForDebt());
+    if (!this.isPaused) this.collector.flipNote(this.debt);
   }
 
   // ---------- Экран на стене ----------
@@ -320,6 +336,118 @@ export class GameScene extends CollectorScene {
     this.pauseGame();
   }
 
+  // ---------- Режим разработчика (devmode.ts) ----------
+
+  /** Действия вкладки «ТЕСТ» на планшете: выдача идёт тем же путём, что из магазина, — полка, гнёзда, earn(). */
+  private devActions(): DevActions {
+    return {
+      giveItem: (id) => {
+        this.devTouch();
+        return this.devGiveItem(id);
+      },
+      giveAmulet: (id) => {
+        this.devTouch();
+        return this.devGiveAmulet(id);
+      },
+      addChips: () => {
+        this.devTouch();
+        this.earn(DEV_CHIPS); // доход забега: табло и цель считают его как обычный
+        this.sfx.play('chips');
+        this.refreshHud();
+      },
+      addTickets: () => {
+        this.devTouch();
+        this.tickets += DEV_TICKETS;
+        this.sfx.play('ticket');
+        this.refreshHud();
+      },
+      setMachine: (id) => {
+        this.devTouch();
+        this.devSetMachine(id);
+      },
+      currentMachine: () => this.machineId,
+    };
+  }
+
+  /**
+   * Любое действие вкладки «ТЕСТ» помечает забег: его рекорд в localStorage не пойдёт (BaseScene.updateChipRecord).
+   * Одного isDevMode() не хватает: накрутить фишек, нажать «ВЫЙТИ» и доиграть забег — режим уже выключен,
+   * а накрученное на табло. Поэтому след остаётся на весь забег, а resetState его снимает.
+   */
+  private devTouch(): void {
+    this.devUsedThisRun = true;
+  }
+
+  /**
+   * Разработка: предмет на полку, как купленный в магазине. Мест не хватает — открывается следующее (до MAX_SLOTS),
+   * все заняты — false (кнопка «+1» на планшете трясётся). Дальше предмет включается обычным путём, правила не обходятся.
+   */
+  private devGiveItem(id: ItemId): boolean {
+    const item = ITEMS.find((candidate) => candidate.id === id);
+    if (!item) return false;
+    let slot = this.shelf.indexOf(null);
+    if (slot < 0) {
+      if (this.slots >= MAX_SLOTS) {
+        this.sfx.play('deny');
+        return false;
+      }
+      this.slots += 1;
+      this.shelf.push(null);
+      slot = this.slots - 1;
+      this.itemShelf.openSlot(slot); // дверца нового отсека открывается, как за фишки в магазине
+    }
+    this.shelf[slot] = item;
+    // Полёт начинается с планшета: пока он открыт, его всё равно не видно, а на полке предмет появляется сразу.
+    this.itemShelf.putItem(slot, item, WALL_PANEL.x, WALL_PANEL.y);
+    see(itemKey(item.id));
+    this.sfx.play('item');
+    return true;
+  }
+
+  /**
+   * Разработка: амулет в гнездо, как купленный в витрине, — включая копии сверх maxCopies (потолок копий проверяет только
+   * магазин). Новому амулету при нехватке гнёзд открывается следующее; гнёзд уже шесть (MAX_SOCKETS) — ставить некуда:
+   * false, кнопка «+1» трясётся со звуком отказа, как у предмета при полной полке, и счётчик копий не меняется вовсе
+   * (иначе невидимые копии копились бы и считались в amuletIds(), пока кнопка отказывает). Копия уже стоящего амулета
+   * работает всегда и maxCopies игнорирует — это задумано.
+   */
+  private devGiveAmulet(id: AmuletId): boolean {
+    const amulet = AMULETS.find((candidate) => candidate.id === id);
+    if (!amulet) return false;
+    const socket = this.amulets.findIndex((owned) => owned.id === amulet.id);
+    // Вместимость проверяем до addCopy: отказ не должен оставлять след в amuletCounts.
+    if (socket < 0 && this.amulets.length >= MAX_SOCKETS) {
+      this.sfx.play('deny');
+      return false;
+    }
+    addCopy(this.amuletCounts, amulet.id);
+    const count = countOf(this.amuletCounts, amulet.id);
+    if (socket >= 0) {
+      this.amuletRack.putCopy(socket, amulet, count, WALL_PANEL.x, WALL_PANEL.y);
+    } else {
+      const index = this.amulets.length;
+      if (index >= this.sockets) {
+        this.sockets = index + 1;
+        this.amuletRack.openSocket(index); // новое гнездо — без покупки, как в витрине
+      }
+      this.amulets.push(amulet);
+      this.amuletRack.putAmulet(index, amulet, count, WALL_PANEL.x, WALL_PANEL.y);
+    }
+    see(amuletKey(amulet.id));
+    this.showBones();
+    this.sfx.play('item');
+    return true;
+  }
+
+  /** Разработка: поставить любой из трёх автоматов — тем же путём, что смена в начале раунда (showNewMachine). */
+  private devSetMachine(id: MachineId): void {
+    if (id === this.machineId) return;
+    this.machineId = id;
+    this.showNewMachine();
+    this.refreshHud();
+    this.sfx.play('roundStart');
+  }
+
   // ---------- Ввод ----------
 
   private setupKeyboard(): void {
@@ -329,7 +457,6 @@ export class GameScene extends CollectorScene {
     this.onKey('P', () => this.togglePause(), true);
     this.onKey('M', () => this.toggleMute(), true);
     this.onKey('L', () => this.toggleLanguage(), true);
-    this.onKey('T', () => this.cycleSpinMode()); // режим следующей платной прокрутки
     this.onKey('R', () => {
       if (this.isGameOver) this.restartGame();
     });
@@ -340,6 +467,10 @@ export class GameScene extends CollectorScene {
     this.onKey('PLUS', () => this.guess('equal')); // у Дилера — «=»: в Phaser клавиша «= / +» зовётся PLUS (код 187)
     this.onKey('RIGHT', () => this.toggleMonitor()); // экран на стене — справа
     this.onKey('LEFT', () => this.lookBack());
+    // Отпускание клавиши и мыши — конец замаха: заряд уходит в прокрутку (DONTLIKE п. 8).
+    this.input.keyboard?.on('keyup-SPACE', () => this.endCharge());
+    this.input.keyboard?.on('keyup-ENTER', () => this.endCharge());
+    this.input.on('pointerup', () => this.endCharge());
   }
 
   /**
@@ -349,6 +480,8 @@ export class GameScene extends CollectorScene {
   private onKey(key: string, action: () => void, worksInPause = false): void {
     this.input.keyboard?.on(`keydown-${key}`, (event: KeyboardEvent) => {
       if (event.repeat || (this.isPaused && !worksInPause)) return;
+      // В строке кода на планшете клавиша — буква, а не действие игры. Esc — исключение: им планшет закрывается.
+      if (key !== 'ESC' && this.monitor.isTyping()) return;
       action();
     });
   }
@@ -363,7 +496,7 @@ export class GameScene extends CollectorScene {
     else if (this.isRerolling) this.skipReroll(); // окно открыто: ни прокрутки, ни «забрать» — только пропуск
     else if (this.isAtMonitor) this.lookBack();
     else if (this.isShopping) this.leaveShop();
-    else if (!this.isGameOver) this.spin();
+    else if (!this.isGameOver) this.beginCharge();
     else if (this.canRestartWithSpace) this.restartGame();
   }
 
@@ -376,6 +509,8 @@ export class GameScene extends CollectorScene {
     else if (this.isRerolling) this.skipReroll();
     else if (this.isAwaitingPayment) this.payDebt();
     else if (this.isDealing) this.stopDealing();
+    // Кон на кону — Enter забирает; пусто — замахивается, как пробел.
+    else if (this.pot === 0 && this.canAct()) this.beginCharge();
     else this.take();
   }
 

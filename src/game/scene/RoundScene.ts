@@ -1,7 +1,6 @@
 import {
   amuletPatternWin,
   amuletsOnWin,
-  amuletWeight,
   bellSpins,
   BONES_BONUS,
   earlyPayTickets,
@@ -12,18 +11,17 @@ import {
   vestShields,
   winFactor,
 } from '../amulets';
-import { freeSpinWeight } from '../bonus';
+import { CIGARETTES_FOR_ACHIEVEMENT, isBloodSpill, ITEM_ACHIEVEMENTS } from '../achievements';
+import { FREE_SPINS_GUARD } from '../bonus';
 import { bloodBurn, BLOOD_WIN, cellsOf, diceWeight, spiderBite } from '../evil';
 import {
   activeSlotEffects,
-  boostWeight,
   CIGARETTE_SPINS,
   clearEffect,
   clearRoundEffects,
   EFFECT_SLOTS,
   GARLIC_SKULL_FACTOR,
   isItemOn,
-  RISK_SKULL_FACTOR,
   RISK_WIN_FACTOR,
   SYMBOL_BOOST_FACTOR,
   takesEffectSlot,
@@ -35,22 +33,19 @@ import {
   type SlotEffectId,
 } from '../items';
 import { t } from '../lang';
-import { machineBonusSpins, machineSkullFactor, machineSymbolAllowed, machineWinFactor } from '../machines';
-import { modeWeight, spinMode, winModeFactor, type SpinMode } from '../levers';
+import { machineAtRoundStart, machineWinFactor } from '../machines';
 import { phaseAt } from '../phases';
+import { symbolWeightOf } from '../skullShare';
 import { CENTER_X, cellX, cellY, DISPLAY, GRID_Y, PAYOUT_WINDOW, SPIN_LAMPS_Y } from '../layout';
 import { evaluateGrid, lockedColumns, ticketCells, type SpinResult } from '../patterns';
 import {
   GRID_ROWS,
-  isDice,
-  isSkull,
   JOKER,
   MAX_SPINS_PER_ROUND,
   randomSymbol,
   spinsAfterBonus,
   SPINS_PER_ROUND,
   streakAfterTake,
-  SYMBOLS,
   symbolsUnlockedAt,
   TICKET_SCATTER,
   weightsForRound,
@@ -63,6 +58,7 @@ import { BLUE_TEXT, GOLD_TEXT, LAMP_BLUE, LAMP_GOLD, LAMP_GREEN, LAMP_RED, PURPL
 import { MachineScene } from './MachineScene';
 
 const COLLECT_DELAY = 1300; // после последней прокрутки: пусть фишки долетят до табло, потом расплата, мс
+const MACHINE_NEWS_DELAY = 1500; // новость о смене автомата: после «ФАЗЫ 2» на стекле — оно держит одну новость, мс
 const FREE_SPIN_PAUSE = 900; // бесплатные прокрутки идут сами: между ними — столько, чтобы разглядеть итог, мс
 // Сколько бегущие огни горят другим цветом, мс.
 const WIN_LAMPS_TIME = 900; // выигрыш — золотом
@@ -106,8 +102,8 @@ export abstract class RoundScene extends MachineScene {
   // Сетка, которая ждёт решения в окне перемешки и подмены (шаг 63б): итог ещё не посчитан. null — окно закрыто.
   private pendingReroll: { grid: Grid; weightOf: WeightOf; multiplier: number } | null = null;
   private rerollTimer?: Phaser.Time.TimerEvent; // через REROLL_WINDOW_TIME окно закроется само — пропуск
-  // Режим текущей прокрутки, снимается в roll(); бесплатные прокрутки идут обычными.
-  private spinModeNow: SpinMode = 'normal';
+  // Заряд текущей прокрутки (замах рычага 0…1), снимается в roll(); бесплатные прокрутки идут с нулём.
+  private spinCharge = 0;
   /** Раунд закрыт ранней оплатой: Коллектор забирает долг сам (и после «ДАЛЬШЕ» с экрана победы — тоже). */
   protected isPaidEarly = false;
 
@@ -117,18 +113,22 @@ export abstract class RoundScene extends MachineScene {
     this.spinsThisRun = 0;
     this.pendingReroll = null;
     this.rerollTimer = undefined;
-    this.spinModeNow = 'normal';
+    this.spinCharge = 0;
     this.isPaidEarly = false;
   }
 
   // ---------- Прокрутка ----------
 
-  /** Прокрутка (Пробел или рычаг): гаснет одна лампочка, столбцы встают. */
-  protected spin(): void {
+  /** Прокрутка (отпустили рычаг): charge — замах 0…1, от него зависят веса черепов и крупных символов. */
+  protected spin(charge: number): void {
     if (!this.canAct()) return;
+    this.spinCharge = charge;
     this.spinsThisRun += 1;
     if (this.spinsThisRun === REVEAL_NOTE_SPIN) this.openRevealNote(); // записка впервые видна не с начала
+    const spinsBefore = this.spinsLeft;
     this.spinsLeft -= 1;
+    // «Я пролью много крови»: именно переход счётчика вниз до двух, а не «сейчас два» (иначе ловился бы и подъём).
+    if (isBloodSpill(spinsBefore, this.spinsLeft, this.amuletIds())) this.unlockAchievement('bloodSpill');
     this.panel.blinkSpinLamp(this.spinsLeft);
     this.roll(false);
   }
@@ -147,8 +147,8 @@ export abstract class RoundScene extends MachineScene {
     this.sfx.play('lever');
     this.sfx.play('roll', 0.1);
     this.isSpinning = true;
-    this.spinModeNow = isFree ? 'normal' : spinMode(); // бесплатные прокрутки идут обычными
-    const calm = this.spinModeNow === 'calm'; // спокойная: клевер и заевший столбец ждут обычной прокрутки
+    this.isFreeSpinNow = isFree; // ачивкам важно: черепов в бесплатной прокрутке нет, «50 на 50» за неё не дают
+    if (isFree) this.spinCharge = 0; // бесплатные прокрутки идут без замаха: черепов в них нет всегда
     const multiplier = this.multiplier(); // множитель запоминаем до прокрутки
     this.screen.clearHighlights();
     this.refreshHud();
@@ -156,48 +156,32 @@ export abstract class RoundScene extends MachineScene {
     const base = weightsForRound(this.round, diceWeight(this.diceDrought)); // какие символы сейчас в автомате и с какими весами
     const weightOf = (symbol: SlotSymbol): number => this.symbolWeight(symbol, base, isFree);
     // Результат известен сразу (после клевера — с паттерном), анимация только показывает его.
-    // В спокойной прокрутке ни черепов, ни кубика нет: старую сетку после клевера и ржавый столбец в неё не пускаем.
-    const grid = this.rollGrid(weightOf, !calm, !calm);
+    // Клевер на сетку и ржавый столбец работают всегда: спокойного режима больше нет.
+    const grid = this.rollGrid(weightOf, true, true);
     this.screen.spin(grid, weightOf, () => this.finishSpin(grid, weightOf, multiplier, isFree));
   }
 
   /**
    * Вес символа в этой прокрутке: обычный вес раунда, его меняют амулеты (огранка, череп в кармане), автомат,
-   * бусты предметов (чеснок, вишни…), риск и фарт и режим прокрутки (шаг 70). Долю черепов фаза больше не множит
-   * (замечание 19): она растёт по раундам в rules.ts, а фаза 2 даёт лишнюю прокрутку (startRound).
+   * бусты предметов (чеснок, вишни…), риск, фарт и замах рычага. Долю черепов фаза не множит (замечание 19):
+   * она растёт по раундам в rules.ts, а фаза 2 даёт лишнюю прокрутку (startRound).
    * В бесплатной прокрутке нет черепов, кубика, пауков, замков и крови.
    */
-  private symbolWeight(symbol: SlotSymbol, base: WeightOf, isFree: boolean, mode: SpinMode = this.spinModeNow): number {
-    // Автомат: у «Тихого» нет паука, замка, крови и клевера, у «Жадного» черепа тяжелее, ветка 3-го уровня — легче.
-    if (!machineSymbolAllowed(this.machineState, symbol)) return 0;
-    const skullFactor = isSkull(symbol) ? machineSkullFactor(this.machineState) : 1;
-    const machined = amuletWeight(symbol, base(symbol), this.amuletIds()) * skullFactor;
-    let weight = boostWeight(symbol, machined, this.itemEffects); // чеснок: череп легче, вишни: вишня тяжелее
-    if (this.itemEffects.risk && isSkull(symbol)) weight *= RISK_SKULL_FACTOR; // риск: черепа втрое чаще
-    if (this.itemEffects.luckSpin && isSkull(symbol)) weight = 0; // фарт: на этой прокрутке черепов нет
-    weight = modeWeight(symbol, weight, mode); // режим: «риск» — черепа чаще, «спокойно» — без черепов и кубика
-    return isFree ? freeSpinWeight(symbol, weight) : weight;
+  private symbolWeight(symbol: SlotSymbol, base: WeightOf, isFree: boolean): number {
+    // Сами правила веса — в skullShare.ts: по ним же считается доля на плашке «💀 N%» и ачивка «50 на 50».
+    return symbolWeightOf(symbol, base, this.weightContext(this.spinCharge), isFree);
   }
 
   /**
-   * Доля клеток-черепов в следующей платной прокрутке — для строки «💀 N%» на корпусе. Считаем по тем же весам, что и
-   * сама прокрутка (symbolWeight), поэтому чеснок, риск, фарт, амулеты, автомат и режим с рычага уже внутри — копий
-   * чисел нет. Режим берём с рычага (spinMode), а не прошлой прокрутки: строка про то, что будет дальше.
+   * Доля клеток-черепов в следующей платной прокрутке — для экранчика доли черепов на корпусе. Считаем по тем же весам, что и
+   * сама прокрутка (symbolWeight), поэтому чеснок, риск, фарт, амулеты, автомат и замах уже внутри — копий
+   * чисел нет. Заряд берём прошлой прокрутки (levers.lastCharge): строка про то, что будет при таком же замахе.
    * Кубик в долю не входит — так её задаёт weightsForRound (skullShare), и так игрок видит её в мониторе и на корпусе.
    * Бесплатные прокрутки сюда не попадают: черепов в них нет всегда, а строка — про обычную прокрутку.
    */
   private skullShareNext(): number {
     if (this.isLastChance) return 0; // последний шанс: сетка чистая, черепов в ней нет — строка честно показывает 0
-    const base = weightsForRound(this.round, diceWeight(this.diceDrought));
-    const mode = spinMode();
-    let skull = 0;
-    let others = 0;
-    for (const symbol of SYMBOLS) {
-      const weight = this.symbolWeight(symbol, base, false, mode);
-      if (isSkull(symbol)) skull = weight;
-      else if (!isDice(symbol)) others += weight;
-    }
-    return skull + others > 0 ? skull / (skull + others) : 0;
+    return this.currentSkullShare(); // то же число считает ачивка «50 на 50»: один код, а не два
   }
 
   /** HUD: приборы корпуса плюс доля черепов — её считает только эта сцена, у неё веса прокрутки. */
@@ -209,11 +193,10 @@ export abstract class RoundScene extends MachineScene {
   /**
    * Сетка встала. Платная прокрутка с заряженной перемешкой или подменой — сначала окно выбора (openReroll), итог потом;
    * иначе итог сразу (evaluateSpin). Бесплатная прокрутка окна не открывает: заряженное ждёт платной.
-   * Спокойная прокрутка окна тоже не открывает: в ней нет выплат, переделывать сетку незачем, заряд ждёт обычной.
    */
   private finishSpin(grid: Grid, weightOf: WeightOf, multiplier: number, isFree: boolean): void {
     this.isSpinning = false;
-    if (!isFree && this.spinModeNow !== 'calm' && (this.itemEffects.shuffle || this.itemEffects.swap)) {
+    if (!isFree && (this.itemEffects.shuffle || this.itemEffects.swap)) {
       this.openReroll(grid, weightOf, multiplier);
       return;
     }
@@ -223,48 +206,40 @@ export abstract class RoundScene extends MachineScene {
   /**
    * Итог прокрутки: паттерн из черепов — onSkulls, иначе серия растёт, выигрыш или копилка — на кон, пауки едят кон.
    * Кровь на экране — следующая прокрутка кровавая; короны, клевер и джекпот — collectBonuses. Выпал кубик — сначала игра Дилера, потом дальше.
-   * Спокойная прокрутка (режим «спокойно»): серия растёт, выплат нет — ни выигрыша, ни копилки, ни билетов, ни корон,
-   * а заряженные предметы (риск, молот, фарт) ждут обычной прокрутки. Черепов и кубика в ней нет по весам,
-   * а кровь она не оставляет: следующая прокрутка не станет кровавой.
    * Единственный вход в подсчёт: и обычная прокрутка, и сетка после перемешки или подмены приходят сюда.
    */
   private evaluateSpin(grid: Grid, multiplier: number): void {
-    const calm = this.spinModeNow === 'calm'; // спокойная прокрутка: серия растёт, выплат нет
     const result = evaluateGrid(grid, { ignoreLocks: this.itemEffects.hammer }); // молот: замки не блокируют
     const isBloody = this.isBloodNext; // кровь была в прошлой прокрутке — эта кровавая
-    // В спокойной прокрутке кровь не оставляем: выплат в ней нет, и ×3 на следующую прокрутку пропало бы зря.
-    if (!calm) this.isBloodNext = cellsOf(grid, 'blood').length > 0;
-    if (!calm && result.tickets >= TICKET_SCATTER) this.collectTicketSymbols(grid);
+    this.isBloodNext = cellsOf(grid, 'blood').length > 0;
+    if (result.tickets >= TICKET_SCATTER) this.collectTicketSymbols(grid);
     const locked = this.itemEffects.hammer ? [] : [...lockedColumns(grid)]; // при молоте столбцы не затемняются
     this.screen.dimColumns(locked); // замок заблокировал свои столбцы
     if (locked.length > 0) this.sfx.play('lock');
-    if (this.isBloodNext && !calm) this.sfx.play('blood');
-    // Спокойная прокрутка не может кончить кон черепами: веса черепа и кубика в ней нулевые.
-    // Защита на случай сетки не из наших весов (старый заряд): черепа и Дилер в calm не запускаются.
-    if (!calm && result.kind === 'skull') {
+    if (this.isBloodNext) this.sfx.play('blood');
+    if (result.kind === 'skull') {
       this.onSkulls(result, isBloody);
     } else {
       this.streak += 1; // серия растёт с каждой прокруткой без паттерна из черепов, даже без выигрыша
       this.panel.pulseMultiplier(); // множитель в окошке вырос
-      if (!calm) {
-        if (result.kind === 'win') this.addToPot(result, multiplier, isBloody);
-        else this.feedPiggy(multiplier);
-        this.feedSpiders(grid);
-      }
+      if (result.kind === 'win') this.addToPot(result, multiplier, isBloody);
+      else this.feedPiggy(multiplier);
+      this.feedSpiders(grid);
     }
-    if (!calm) this.collectBonuses(grid, result);
+    this.collectBonuses(grid, result);
     this.rustAfterSpin(grid); // ржавый автомат: столбец может заржаветь к следующей прокрутке
-    if (!calm) {
-      // Риск, молот и фарт действуют на одну прокрутку — она прошла, гаснут. В спокойной заряды ждут обычной прокрутки.
-      this.itemEffects.risk = false;
-      this.itemEffects.hammer = false;
-      this.itemEffects.luckSpin = false;
-    }
+    // Риск, молот и фарт действуют на одну прокрутку — она прошла, гаснут.
+    this.itemEffects.risk = false;
+    this.itemEffects.hammer = false;
+    this.itemEffects.luckSpin = false;
     // Перемешка и подмена здесь не гаснут: окно выбора их уже погасило (applyShuffle/applySwap), а пропуск
     // оставляет заряд на следующую платную прокрутку — до конца раунда его снимет clearRoundEffects.
     this.showItemEffects();
     this.refreshHud();
-    if (!calm && cellsOf(grid, 'dice').length > 0) {
+    // Ачивки этой прокрутки: «50 на 50» (паттерн выиграл при максимальной доле черепов) и «Везунчик» —
+    // им нужно знать, что паттерн выиграл именно сейчас, поэтому флаг идёт в проверку.
+    this.checkAchievements(result.kind === 'win');
+    if (cellsOf(grid, 'dice').length > 0) {
       this.diceDrought = 0;
       this.sfx.play('dice');
       this.startDealerGame(() => this.afterSpin());
@@ -361,10 +336,28 @@ export abstract class RoundScene extends MachineScene {
    * иначе спокойный момент — может начаться новая фаза.
    */
   private afterSpin(): void {
+    if (this.freeSpins > 0 && this.freeSpinsAwarded > FREE_SPINS_GUARD) {
+      this.breakRunawayFreeSpins();
+      return;
+    }
     if (this.freeSpins > 0) this.time.delayedCall(FREE_SPIN_PAUSE, () => this.spinFree());
     else if (this.spinsLeft === 0) this.endOfSpins();
     else this.checkPhase();
     this.refreshHud();
+  }
+
+  /**
+   * Предохранитель от зависания раунда, а не игровое правило: цепочка «бесплатная прокрутка даёт короны» выдала
+   * больше FREE_SPINS_GUARD прокруток за раунд — раунд кончается штатно, как по нулю прокруток (endOfSpins:
+   * кон забирается, приходит Коллектор), а в консоль уходит предупреждение. Игроку это никак не показывается:
+   * до 500 цепочка доходит редко (2–3 % забегов по симуляции full-run.mjs), но именно в этих случаях без
+   * предохранителя раунд не кончался бы.
+   */
+  private breakRunawayFreeSpins(): void {
+    console.warn('free spins guard', this.freeSpinsAwarded, 'free spins in round', this.round);
+    this.freeSpins = 0; // цепочка рвётся, иначе после Коллектора она продолжится в новом раунде
+    this.spinsLeft = 0; // и обычных прокруток не остаётся — раунд кончен
+    this.endOfSpins();
   }
 
   /** Пауки на экране: каждый съедает часть кона. Их клетки в рамках, над первым — «−N». */
@@ -411,11 +404,11 @@ export abstract class RoundScene extends MachineScene {
 
   /**
    * Черепа сжигают кон вместе с выигрышем этой прокрутки, серия обрывается. Страховка возвращает на табло
-   * `INSURANCE_SHARE` сгоревшего — и сгорает сама: в раунде она спасает кон только раз (`insuranceUsed`).
+   * `INSURANCE_SHARE` сгоревшего — по разу за копию: каждая копия даёт в раунде ещё одно спасение (`insuranceSaves`).
    */
   private burnPot(result: SpinResult): void {
     const lost = this.pot;
-    const refund = this.insuranceUsed ? 0 : insuranceRefund(lost, this.amuletIds());
+    const refund = insuranceRefund(lost, this.amuletIds(), this.insuranceSaves);
     this.pot = 0;
     this.streak = 0;
     this.sfx.play('skulls');
@@ -424,7 +417,7 @@ export abstract class RoundScene extends MachineScene {
     this.screen.flashLamps(LAMP_RED, SKULL_LAMPS_TIME);
     this.panel.flashMultiplierRed();
     if (refund > 0) {
-      this.insuranceUsed = true; // страховка одноразовая: сработала — сгорела до следующего раунда
+      this.insuranceSaves += 1; // сработка копии: следующая копия (если есть) спасёт ещё раз в этом раунде
       this.amuletRack.trigger('insurance');
       this.earn(refund); // возврат страховки — доход забега (решение автора): игра отдала эти фишки обратно
       this.payout.takeAll(refund, () => this.panel.pulseBoard());
@@ -470,9 +463,8 @@ export abstract class RoundScene extends MachineScene {
     const factor =
       winFactor(ids, this.bones) *
       (isBloody ? BLOOD_WIN : 1) * // кровавая прокрутка — ×3
-      machineWinFactor(this.machineState) *
-      (this.itemEffects.risk ? RISK_WIN_FACTOR : 1) * // риск: выигрыш ×10 (видно в подсказке как ×10)
-      winModeFactor(this.spinModeNow); // режим «риск»: ×2, складывается с предметом 💀 ×10
+      machineWinFactor(this.machineId) *
+      (this.itemEffects.risk ? RISK_WIN_FACTOR : 1); // риск: выигрыш ×10 (видно в подсказке как ×10)
     const gain = Math.round(win * multiplier * factor);
     this.pot += gain;
     // Колокольчик: прокрутки, но не выше потолка. Показываем, сколько добавилось на самом деле: у потолка бывает и 0.
@@ -551,7 +543,7 @@ export abstract class RoundScene extends MachineScene {
   private markDebt(): void {
     if (this.isLastChance) return; // в последнем шансе раунд кончился: записку и новость не трогаем
     const isEnough = this.hasEnoughForDebt();
-    this.collector.markNote(this.debt, isEnough);
+    this.collector.markNote(this.debt);
     if (!isEnough || this.isDebtNewsShown || this.isRoundOver) return;
     this.isDebtNewsShown = true;
     this.screen.announceDebtCovered();
@@ -619,6 +611,8 @@ export abstract class RoundScene extends MachineScene {
     switch (item.id) {
       case 'cigarette':
         this.spinsLeft = spinsAfterBonus(this.spinsLeft, CIGARETTE_SPINS);
+        this.cigarettesThisRound += 1; // третья за раунд — «Курильщик»
+        if (this.cigarettesThisRound === CIGARETTES_FOR_ACHIEVEMENT) this.unlockAchievement('smoker');
         break;
       case 'shield':
         this.itemEffects.shields += 1;
@@ -661,6 +655,11 @@ export abstract class RoundScene extends MachineScene {
         this.itemEffects.swap = true;
         break;
     }
+    // Первое включение предмета за всё время — простая ачивка (у каждого предмета из списка своя), а дальше
+    // проверяем комбинации: риск + фарт, чеснок + колокола и прочее «одновременно».
+    const achievement = ITEM_ACHIEVEMENTS[item.id];
+    if (achievement !== undefined) this.unlockAchievement(achievement);
+    this.checkAchievements();
   }
 
   /** Включённые предметы у экрана и цвет огней вокруг экрана в покое (чеснок, кровь, фаза — calmLampColor). */
@@ -677,14 +676,32 @@ export abstract class RoundScene extends MachineScene {
    */
   protected startRound(): void {
     const ids = this.amuletIds();
+    this.cigarettesThisRound = 0; // и сигареты тоже
+    // Автомат сам редко меняется в начале раунда: первый раунд — всегда тот, что стоит с забега.
+    const machine = machineAtRoundStart(this.machineId, this.round);
+    if (machine !== this.machineId) {
+      this.machineId = machine;
+      this.showNewMachine(); // корпус, значок и UPDATE на мониторе — сразу
+      // Новость о смене — с задержкой: ниже в этом же startRound checkPhase может объявить «ФАЗУ 2»,
+      // а на стекле живёт одна новость за раз. Через 1,5 с фаза уже прочитана, и название автомата встаёт на её место.
+      this.time.delayedCall(MACHINE_NEWS_DELAY, () => {
+        if (!this.scene.isActive()) return; // сцену выключили — новость не нужна (таймеры сцены умирают вместе с ней)
+        this.announceMachine();
+      });
+    }
     this.isRoundOver = false;
     this.isDebtNewsShown = this.hasEnoughForDebt(); // фишек хватает с начала раунда — новости нет, записка и так светится
-    this.freeSpinsGiven = 0; // потолок бесплатных прокруток — на раунд
+    // Счётчик бесплатных прокруток за раунд — только для предохранителя FREE_SPINS_GUARD. В кассете (RunSave) его нет,
+    // и после отката он снова 0: сцена тогда перезапускается (SaveScene.insertTape → scene.restart) и раунд начинается
+    // заново. Это сознательно: бюджет — часть состояния раунда, а canRewind и так требует freeSpins === 0.
+    // Флаг devUsedThisRun устроен наоборот — он лежит в RunSave (save.ts) и откат его не снимает: забег, который
+    // трогали в «ТЕСТ», рекорда не пишет, к какой бы плёнке ни откатились.
+    this.freeSpinsAwarded = 0;
     clearRoundEffects(this.itemEffects); // бусты и флаги прошлого раунда не переходят в новый
-    this.insuranceUsed = false; // страховка снова готова: одна на раунд
+    this.insuranceSaves = 0; // страховка снова готова: сработок на новый раунд — по числу копий
     this.isBloodNext = false; // кровь из последнего шанса не переходит в новый раунд
     this.showItemEffects(); // спокойные огни — по новому раунду (кровь погасла)
-    this.spinsLeft = spinsPerRound(SPINS_PER_ROUND, ids) + machineBonusSpins(this.machineState); // +1 за ветку 3-го уровня
+    this.spinsLeft = spinsPerRound(SPINS_PER_ROUND, ids);
     // Фаза 2: +1 прокрутка в раунде (замечание 19). Фазу берём по закрытым долгам сразу, а не this.phase:
     // checkPhase идёт в конце startRound (после зелёных огней), а прокрутки нужны уже сейчас.
     this.spinsLeft = spinsAfterBonus(this.spinsLeft, phaseAt(this.closedDebts()).bonusSpins);
@@ -753,6 +770,6 @@ export abstract class RoundScene extends MachineScene {
     }
     clearRoundEffects(this.itemEffects); // чеснок, вишни и прочее действуют только до конца раунда
     this.showItemEffects();
-    this.refreshHud(); // бусты сняты — строка «💀 N%» не должна висеть с чесноком от прошлого раунда
+    this.refreshHud(); // бусты сняты — экранчик доли черепов не должен показывать число с чесноком от прошлого раунда
   }
 }

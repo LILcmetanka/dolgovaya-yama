@@ -1,5 +1,5 @@
 import type { Amulet, AmuletCounts } from './amulets';
-import type { MachineSet, MachineState } from './machines';
+import type { MachineId } from './machines';
 import type { Item, ItemEffects } from './items';
 
 /**
@@ -38,12 +38,12 @@ export interface RunSave {
   amulets: Amulet[]; // уникальные амулеты по гнёздам
   amuletCounts: AmuletCounts; // сколько копий каждого амулета (шаг 62б: копии не занимают гнёзда)
   bones: number;
-  machine?: MachineState; // какой автомат стоит и как прокачан; в старых записях поля нет — тогда классический
-  machineSet?: MachineSet; // все три автомата с уровнями и ветками: прокачка живёт весь забег, а не один магазин
+  machineId?: MachineId; // какой автомат стоял на записи; в старых записях поля нет — остаётся текущий
   diceDrought: number;
   patterns?: string[]; // какие паттерны были открыты на момент записи: откат возвращает стекло как на плёнке
   secondWindUsed?: boolean; // «второе дыхание» уже потрачено; в старых записях поля нет — считаем, что нет
-  insuranceUsed?: boolean; // страховка уже сработала в этом раунде; в старых записях поля нет — считаем, что нет
+  insuranceSaves?: number; // сколько раз страховка сработала в этом раунде; в старых записях поля нет — считаем 0
+  devUsed?: boolean; // забег трогали во вкладке «ТЕСТ» до записи: откат этого не забывает, рекорд фишек не пишется; в старых записях поля нет — считаем, что нет
 }
 
 /** Цена кассеты в билетах, когда за забег уже куплено bought кассет: 2, 3, 4… */

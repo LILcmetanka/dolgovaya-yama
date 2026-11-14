@@ -72,6 +72,30 @@ export function addText(
  */
 export const IS_TOUCH_ONLY = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
 
+/**
+ * Вписать надпись в maxWidth: сначала кегль уменьшается от maxFontSize до minFontSize, а если и на нём не влезло —
+ * надпись ужимается масштабом. updateText зовём явно перед каждой проверкой: ширина должна быть от свежих букв,
+ * иначе длинный ценник «× 101200» вылезает за тёмную табличку и стекло (DONTLIKE з.10).
+ */
+export function fitTextWidth(
+  text: Phaser.GameObjects.Text,
+  value: string,
+  maxWidth: number,
+  maxFontSize: number,
+  minFontSize: number,
+): void {
+  text.setText(value).setScale(1);
+  let size = maxFontSize;
+  text.setFontSize(size);
+  text.updateText();
+  while (text.width > maxWidth && size > minFontSize) {
+    size -= 1;
+    text.setFontSize(size);
+    text.updateText();
+  }
+  if (text.width > maxWidth) text.setScale(maxWidth / text.width);
+}
+
 /** Надпись или картинка коротко пульсирует: увеличивается в scale раз и возвращается к обычному размеру base. */
 export function pulse(
   scene: Phaser.Scene,

@@ -1,67 +1,73 @@
-import { GAME_CONFIG } from './gameConfig';
-import { isDice, isSkull, type SlotSymbol } from './rules';
-
 /**
- * «Три ручки» (шаг 70): липкий режим платной прокрутки, а не кнопка на каждый ход.
- * Обычная — как есть; «риск» — черепа чаще и выигрыш больше; «спокойно» — ни черепов, ни кубика, ни выплат, только серия +1.
- * Выбор запоминается в localStorage и переключается между прокрутками. Бесплатные прокрутки, смена автомата
- * и последний шанс идут обычными правилами — они режим не спрашивают.
- * Без Phaser (как progress.ts): модуль грузится и в браузере, и в Node-симуляторе.
+ * Замах рычага (DONTLIKE п. 8, вариант А): вместо трёх режимов прокрутки — заряд 0…1.
+ * Держишь рычаг (пробел, Enter или мышь) — шкала идёт от CHARGE_MIN до CHARGE_MAX за CHARGE_FULL_TIME,
+ * отпускаешь — прокрутка с этим зарядом. Сильный замах: черепа чаще, дорогие символы (а с ними крупные
+ * паттерны ×2/×3) выпадают чаще. Слабый — тихо и безопасно. Выплаты, множители и цель заряд не трогает:
+ * он пересчитывает только веса символов. Бесплатные прокрутки, смена автомата и последний шанс идут зарядом 0.
+ * Без Phaser: модуль грузится и в браузере, и в Node-симуляторе.
  */
 
-export type SpinMode = 'normal' | 'risk' | 'calm';
+export const CHARGE_MIN = 0; // отпустил сразу — заряд 0: тихо и безопасно
+export const CHARGE_MAX = 1; // полный замах
+export const CHARGE_FULL_TIME = 1200; // мс: столько держать рычаг до полного заряда
+export const RISK_CHARGE = 0.7; // с этого заряда прокрутка считается «рискованной» (ачивки про риск)
+export const CHARGE_SKULL_SWING = 0.6; // вес черепа: 0,4× на нуле — 1,0× в середине — 1,6× на полном
+export const CHARGE_BIG_SWING = 0.6; // дорогие символы: 0,7× на нуле — 1,0× в середине — 1,3× на полном
+export const CHARGE_BIG_PRICE = 9; // с этой цены символ считается «крупным» (🔔 9, 💎 15, 7 25)
+export const CHARGE_NEUTRAL = 0.5; // на этом заряде веса символов такие же, как без замаха
 
-/** Все режимы по кругу — в этом порядке переключает клавиша T. */
-export const SPIN_MODES: readonly SpinMode[] = ['normal', 'risk', 'calm'];
-
-const MODE_KEY = 'dolgovaya-yama-spin-mode'; // ключ выбранного режима в localStorage
-
-let mode: SpinMode = loadMode();
-
-/** Режим из localStorage; нет его, битое или чужое значение — «обычно». */
-function loadMode(): SpinMode {
-  try {
-    const saved = localStorage.getItem(MODE_KEY);
-    return saved === 'risk' || saved === 'calm' ? saved : 'normal';
-  } catch {
-    return 'normal'; // хранилище запрещено — режим по умолчанию
-  }
+/** Заряд по времени удержания рычага: 0…1, полный — ровно за CHARGE_FULL_TIME. */
+export function chargeValue(elapsed: number): number {
+  return Math.min(CHARGE_MAX, Math.max(CHARGE_MIN, elapsed / CHARGE_FULL_TIME));
 }
 
-/** Какой режим выбран сейчас (он же и у следующей платной прокрутки). */
-export function spinMode(): SpinMode {
-  return mode;
+/** Множитель веса черепа от заряда: слабый замах — черепов меньше базы, сильный — больше. */
+export function skullChargeFactor(charge: number): number {
+  return 1 + CHARGE_SKULL_SWING * (2 * charge - 1);
 }
 
-/** Выбрать режим и запомнить его. */
-export function setSpinMode(next: SpinMode): void {
-  mode = next;
-  try {
-    localStorage.setItem(MODE_KEY, next);
-  } catch {
-    // не запомнили — в следующий раз снова «обычно»
-  }
+/** Множитель веса дорогого символа от заряда: сильный замах чаще даёт крупные паттерны. */
+export function bigChargeFactor(charge: number): number {
+  return 1 + CHARGE_BIG_SWING * (charge - CHARGE_NEUTRAL);
 }
 
-/** Следующий режим по кругу: обычно → риск → спокойно → обычно. */
-export function nextSpinMode(): SpinMode {
-  const index = SPIN_MODES.indexOf(mode);
-  return SPIN_MODES[(index + 1) % SPIN_MODES.length];
+/** Считается ли прокрутка «рискованной»: заряд выше порога (ачивки про риск). */
+export function isRiskyCharge(charge: number): boolean {
+  return charge >= RISK_CHARGE;
 }
 
-/**
- * Вес символа в этой прокрутке с поправкой на режим. «Спокойно» убирает черепа и кубик совсем (вес 0),
- * «риск» делает череп тяжелее, обычная прокрутка не меняет ничего.
- */
-export function modeWeight(symbol: SlotSymbol, weight: number, mode: SpinMode): number {
-  if (mode === 'calm') return isSkull(symbol) || isDice(symbol) ? 0 : weight;
-  if (mode === 'risk' && isSkull(symbol)) return weight * GAME_CONFIG.modeSkullFactor;
-  return weight;
+// Текущий замах. Часы — performance.now(): он есть и в браузере, и в Node.
+let startedAt = 0; // когда нажали рычаг
+let charging = false; // рычаг держат прямо сейчас
+let last = 0; // заряд прошлой прокрутки: его показывает шкала в покое и читают ачивки
+
+/** Начали держать рычаг. */
+export function startCharge(now = performance.now()): void {
+  startedAt = now;
+  charging = true;
 }
 
-/** Во сколько раз режим увеличивает выигрыш: «риск» — ×2, «спокойно» — ничего не платит (0), обычный — ×1. */
-export function winModeFactor(mode: SpinMode): number {
-  if (mode === 'calm') return 0;
-  if (mode === 'risk') return GAME_CONFIG.modeWinFactor;
-  return 1;
+/** Заряд сейчас: пока держат — по времени, в покое — заряд прошлой прокрутки (для шкалы). */
+export function chargeNow(now = performance.now()): number {
+  return charging ? chargeValue(now - startedAt) : last;
+}
+
+/** Отпустили рычаг: вернуть заряд этой прокрутки и запомнить его для шкалы. */
+export function releaseCharge(now = performance.now()): number {
+  const value = chargeNow(now);
+  charging = false;
+  last = value;
+  return value;
+}
+
+/** Заряд прошлой прокрутки (0 — ещё ни разу не тянули или тянули в самом начале). */
+export function lastCharge(): number {
+  return last;
+}
+
+/** Сервер/тест может сбросить замах (новый забег): шкала снова пустая. */
+export function resetCharge(): void {
+  charging = false;
+  startedAt = 0;
+  last = 0;
 }

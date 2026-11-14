@@ -2,7 +2,6 @@ import Phaser from 'phaser';
 import type { Amulet, Rarity } from './amulets';
 import type { MachineSpec } from './machines';
 import type { Item } from './items';
-import { t } from './lang';
 import {
   BELLY,
   BODY,
@@ -15,6 +14,7 @@ import {
   PAYOUT_WINDOW,
   SCREEN,
   SHOP_PANEL,
+  SKULL_SCREEN,
   SOCKET_RADIUS,
   SOCKET_XS,
   SOCKET_Y,
@@ -72,6 +72,7 @@ export const CHIP_TEXTURE = 'chip'; // фишка анфас: на табло, �
 export const LEVER_ROD_TEXTURE = 'lever-rod';
 export const LEVER_BALL_TEXTURE = 'lever-ball';
 export const NOTE_TEXTURE = 'note';
+export const GOAL_NOTE_TEXTURE = 'note-goal'; // вторая записка: цель забега на стене над экраном
 export const NOTE_GLOW_TEXTURE = 'note-glow'; // зелёное свечение вокруг записки: долг можно отдать раньше
 export const SHELF_CELL_TEXTURE = 'shelf-cell'; // клетка полки с предметами
 export const SHELF_DOOR_TEXTURE = 'shelf-door'; // стальная дверца с кодовым замком поверх закрытого отсека
@@ -154,11 +155,14 @@ const NOTE_DEBT_INK = '#7f1d1d'; // сумма — красной ручкой
 const NOTE_PAPER_LIGHT = '#a39679'; // бумага записки: светлее сверху слева…
 const NOTE_PAPER_DARK = '#7a6d55'; // …и темнее снизу справа
 const NOTE_DEBT_FONT_SIZE = 44; // сумма крупно; длинная сумма уменьшается, чтобы влезть на листок
-const NOTE_CHECK_COLOR = '#16a34a'; // галочка «фишек хватает»
 const NOTE_BAR_COLOR = '#16a34a'; // полоска долга: что уже на табло
 const NOTE_BAR_PENDING = 'rgba(22, 163, 74, 0.35)'; // …и что ещё на кону: заберёшь — будет на табло
 const NOTE_BAR_TRACK = 'rgba(30, 41, 59, 0.4)'; // пустая часть полоски
 const NOTE_BAR_Y = 104; // полоска под суммой, под галочкой
+const NOTE_CAPTION_Y = 95; // подпись под суммой (процент цели) — над полоской цели
+const NOTE_CAPTION_FONT_SIZE = 14;
+const NOTE_GOAL_AMOUNT_Y = 74; // сумма на записке цели — выше, чем на записке долга: под ней ещё процент и полоска
+const NOTE_GOAL_BAR_Y = 103; // полоска цели — под процентом, в том же стиле, что полоска долга (DONTLIKE з.2)
 const NOTE_BAR_HEIGHT = 7;
 const NOTE_BAR_LEFT = 26; // правее красного поля записки
 const NOTE_BAR_RIGHT = 20; // отступ справа от края листка
@@ -253,6 +257,7 @@ function bakeMachineBody(scene: Phaser.Scene): void {
   drawInset(g, BELLY, 0x000000, 0x7c2d12, BELLY_SHADE); // полупрозрачная: под ней тело корпуса, панель — того же цвета
   drawInset(g, MULTIPLIER_WINDOW, 0x050505, TRIM_COLOR);
   drawInset(g, PAYOUT_WINDOW, 0x050505, TRIM_COLOR);
+  drawInset(g, SKULL_SCREEN, 0x050505, TRIM_COLOR); // экранчик доли черепов — та же оправа, что у окна выплаты
   drawSockets(g);
   bake(g, MACHINE_TEXTURE, 960, 640);
 }
@@ -352,24 +357,33 @@ export function createLeverTextures(scene: Phaser.Scene, rodLength: number): voi
   }
 }
 
+/** Что написано на записке: у долга — «ДОЛГ» и сумма, у цели — «ЦЕЛЬ», сумма ступени и процент под ней. */
+export interface NoteContent {
+  texture: string; // имя текстуры записки: у каждой свои ключ и canvas
+  title: string; // «ДОЛГ» / «ЦЕЛЬ»
+  amount: string; // сумма строкой: у цели — с точками между тысячами
+  caption?: string; // подпись под суммой («18,4%»); есть подпись — вместо полоски
+}
+
 /**
  * Записка с долгом на canvas: листок в линейку, красное поле, скотч, «ДОЛГ» и сумма.
  * Надписи рисуются прямо на листке, поэтому записку можно повернуть одной картинкой.
  * Сумма меняется раз в раунд — тогда записка перерисовывается заново (canvas маленький, это дёшево).
+ * Той же функцией рисуется вторая записка — цель забега: другой ключ текстуры, заголовок и подпись.
  */
 export function drawNoteTexture(
   scene: Phaser.Scene,
   width: number,
   height: number,
-  debt: number,
-  isEnough: boolean,
+  note: NoteContent,
   paid = 0, // доля долга, что уже на табло (0…1)
   pending = 0, // доля долга, что лежит на кону (0…1, вместе с paid не больше 1)
+  goalShare = 0, // доля цели забега (0…1): её показывает зелёная полоска на записке цели
 ): void {
   // Текстура уже есть — её создала эта же функция, значит это canvas: берём его и рисуем заново.
-  const texture = scene.textures.exists(NOTE_TEXTURE)
-    ? (scene.textures.get(NOTE_TEXTURE) as Phaser.Textures.CanvasTexture)
-    : createSharpCanvas(scene, NOTE_TEXTURE, width, height);
+  const texture = scene.textures.exists(note.texture)
+    ? (scene.textures.get(note.texture) as Phaser.Textures.CanvasTexture)
+    : createSharpCanvas(scene, note.texture, width, height);
   if (!texture) return;
   const ctx = texture.context;
   ctx.clearRect(0, 0, width, height);
@@ -379,10 +393,10 @@ export function drawNoteTexture(
   ctx.textBaseline = 'middle';
   ctx.fillStyle = NOTE_INK;
   ctx.font = `bold 18px ${FONT}`;
-  ctx.fillText(t('debt'), width / 2, height / 2 - 16);
+  ctx.fillText(note.title, width / 2, height / 2 - 16);
 
   // Сумма: уменьшаем шрифт, пока она не влезет на листок.
-  const text = String(debt);
+  const text = note.amount;
   let size = NOTE_DEBT_FONT_SIZE;
   ctx.font = `bold ${size}px ${FONT}`;
   while (ctx.measureText(text).width > width - 32 && size > 16) {
@@ -390,10 +404,33 @@ export function drawNoteTexture(
     ctx.font = `bold ${size}px ${FONT}`;
   }
   ctx.fillStyle = NOTE_DEBT_INK;
-  ctx.fillText(text, width / 2, height / 2 + 22);
-  drawNoteBar(ctx, width, paid, pending);
-  if (isEnough) drawNoteCheck(ctx, width, height);
+  if (note.caption === undefined) {
+    // Записка долга: сумма по центру и полоска под ней — как было.
+    ctx.fillText(text, width / 2, height / 2 + 22);
+    drawNoteBar(ctx, width, paid, pending);
+  } else {
+    // Записка цели: сумма выше, под ней процент и зелёная полоска заполнения — в том же стиле, что у долга (DONTLIKE з.2).
+    ctx.fillText(text, width / 2, NOTE_GOAL_AMOUNT_Y);
+    drawNoteCaption(ctx, width, note.caption);
+    drawNoteGoalBar(ctx, width, goalShare);
+  }
   texture.refresh(); // передать нарисованное в видеокарту
+}
+
+/** Подпись под суммой — процент цели, набранный до десятых (на записке цели он стоит над полоской). */
+function drawNoteCaption(ctx: CanvasRenderingContext2D, width: number, caption: string): void {
+  ctx.fillStyle = NOTE_INK;
+  ctx.font = `bold ${NOTE_CAPTION_FONT_SIZE}px ${FONT}`;
+  ctx.fillText(caption, width / 2, NOTE_CAPTION_Y);
+}
+
+/** Полоска цели: пустая часть и зелёная заливка по проценту — тот же стиль, что у полоски долга (DONTLIKE з.2). */
+function drawNoteGoalBar(ctx: CanvasRenderingContext2D, width: number, share: number): void {
+  const barWidth = width - NOTE_BAR_LEFT - NOTE_BAR_RIGHT;
+  ctx.fillStyle = NOTE_BAR_TRACK;
+  ctx.fillRect(NOTE_BAR_LEFT, NOTE_GOAL_BAR_Y, barWidth, NOTE_BAR_HEIGHT);
+  ctx.fillStyle = NOTE_BAR_COLOR;
+  ctx.fillRect(NOTE_BAR_LEFT, NOTE_GOAL_BAR_Y, barWidth * Math.max(0, Math.min(1, share)), NOTE_BAR_HEIGHT);
 }
 
 /** Полоска долга под суммой, как полоска прогресса: тёмная — на табло, бледная — ещё на кону. */
@@ -405,19 +442,6 @@ function drawNoteBar(ctx: CanvasRenderingContext2D, width: number, paid: number,
   ctx.fillRect(NOTE_BAR_LEFT, NOTE_BAR_Y, barWidth * (paid + pending), NOTE_BAR_HEIGHT);
   ctx.fillStyle = NOTE_BAR_COLOR;
   ctx.fillRect(NOTE_BAR_LEFT, NOTE_BAR_Y, barWidth * paid, NOTE_BAR_HEIGHT);
-}
-
-/** Зелёная галочка в правом нижнем углу записки: фишек на табло хватает на долг. */
-function drawNoteCheck(ctx: CanvasRenderingContext2D, width: number, height: number): void {
-  ctx.strokeStyle = NOTE_CHECK_COLOR;
-  ctx.lineWidth = 6;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.beginPath();
-  ctx.moveTo(width * 0.66, height * 0.72);
-  ctx.lineTo(width * 0.75, height * 0.84);
-  ctx.lineTo(width * 0.93, height * 0.56);
-  ctx.stroke();
 }
 
 /** Листок записки: тень на стене, старая тёмная бумага (в цвет комнаты) с пятнами и сгибом, линейки, поле и скотч. */
@@ -1144,6 +1168,21 @@ function drawVendingGlass(g: Phaser.GameObjects.Graphics, glass: Box): void {
   g.fillTriangle(left, top + 60, left, top + 100, left + 130, top);
 }
 
+/**
+ * Стекло маленькой витрины и чемодана с амулетами: та же плёнка и блик, что у торгового автомата,
+ * но блик — долей от размера проёма (витрины тут меньше). Рисуется поверх товара, под ценниками.
+ */
+export function drawGlassPane(g: Phaser.GameObjects.Graphics, glass: Box, radius = 6): void {
+  const left = glass.x - glass.width / 2;
+  const top = glass.y - glass.height / 2;
+  const gleam = Math.min(glass.width * 0.62, glass.height * 0.46); // вдоль диагонали проёма
+  g.fillStyle(0xffffff, 0.07);
+  g.fillRoundedRect(left, top, glass.width, glass.height, radius); // стекло чуть отсвечивает
+  g.fillStyle(0xffffff, 0.1);
+  g.fillTriangle(left, top + gleam * 0.6, left + gleam * 0.7, top, left + gleam, top); // блик по диагонали
+  g.fillTriangle(left, top + gleam * 0.6, left, top + gleam, left + gleam, top);
+}
+
 /** Торговый автомат: корпус, неоновая вывеска, витрина с рядами (справа табличка ценника), панель с щелью, лоток. */
 function drawVendingMachine(
   g: Phaser.GameObjects.Graphics,
@@ -1820,6 +1859,7 @@ const MONITOR_INK = '#cffafe'; // надписи
 const MONITOR_LINE = 'rgba(103, 232, 249, 0.3)'; // разделители
 const MONITOR_NEW = '#fde047'; // символ, который вошёл в автомат в этом раунде, — в золотой рамке
 const MONITOR_PRICE_COLOR = '#fbbf24'; // цены — как цифры табло
+const MONITOR_BOOST_COLOR = '#4ade80'; // пометка «выпадает чаще» у усиленного предметом символа
 const MONITOR_PAD = 10; // поля экрана
 const MONITOR_PRICE_COLUMNS = 3; // цены — по три в ряд
 const MONITOR_PRICE_ROW = 56;
@@ -1832,11 +1872,12 @@ const MONITOR_NOTE_ICON = 36;
 const MONITOR_NOTE_FONT = 16;
 const MONITOR_NOTE_LINE = 19; // высота строки описания
 
-/** Платящий символ на мониторе: сколько платит его паттерн ×1. isNew — вошёл в автомат в этом раунде. */
+/** Платящий символ на мониторе: сколько платит его паттерн ×1 (с усилениями), boost — во сколько раз чаще падает. isNew — вошёл в автомат в этом раунде. */
 export interface MonitorPrice {
   symbol: SlotSymbol;
   price: number;
   isNew: boolean;
+  boost?: number; // вес символа усилен предметом (вишни, колокола…): на мониторе — зелёная пометка
 }
 
 /** Особый символ на мониторе: что он делает. */
@@ -1929,7 +1970,14 @@ function drawMonitorPrices(ctx: CanvasRenderingContext2D, prices: MonitorPrice[]
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = MONITOR_PRICE_COLOR;
-    ctx.fillText(`×${entry.price}`, left + MONITOR_PRICE_ICON + MONITOR_PRICE_CHIP + 8, middle + 1);
+    const priceText = `×${entry.price}`;
+    const priceX = left + MONITOR_PRICE_ICON + MONITOR_PRICE_CHIP + 8;
+    ctx.fillText(priceText, priceX, middle + 1);
+    // Символ усилен предметом: он платит столько же, но выпадает чаще — зелёная пометка «▲N».
+    if (entry.boost !== undefined && entry.boost > 1) {
+      ctx.fillStyle = MONITOR_BOOST_COLOR;
+      ctx.fillText(` ▲${entry.boost}`, priceX + ctx.measureText(priceText).width, middle + 1);
+    }
   });
   return top + Math.ceil(prices.length / MONITOR_PRICE_COLUMNS) * MONITOR_PRICE_ROW;
 }

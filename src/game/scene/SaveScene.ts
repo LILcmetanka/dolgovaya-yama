@@ -1,5 +1,4 @@
 import { copyEffects } from '../items';
-import { copyMachineSet, copyMachineState, machineStatesFrom } from '../machines';
 import { isPatternId } from '../progress';
 import { luckyCloversOf, tapePrice, type RunSave } from '../save';
 import { ShopScene } from './ShopScene';
@@ -90,12 +89,12 @@ export abstract class SaveScene extends ShopScene {
       amulets: [...this.amulets],
       amuletCounts: { ...this.amuletCounts },
       bones: this.bones,
-      machine: copyMachineState(this.machineState),
-      machineSet: copyMachineSet(this.machineStates), // уровни всех трёх: прокачка не пропадает после отката
+      machineId: this.machineId,
       diceDrought: this.diceDrought,
       patterns: [...this.patternSet], // стекло на плёнке: откат вернёт ровно этот набор
       secondWindUsed: this.secondWindUsed, // на записи флаг такой, какой был: запись до провала — дыхание ещё есть
-      insuranceUsed: this.insuranceUsed,
+      insuranceSaves: this.insuranceSaves,
+      devUsed: this.devUsedThisRun, // кассета помнит, что забег трогали в «ТЕСТ»: откат не делает такой рекорд честным
     };
     this.tapeState = 'recorded';
     this.tooltip.hide();
@@ -127,9 +126,10 @@ export abstract class SaveScene extends ShopScene {
     const tape: RunSave = {
       ...record,
       secondWindUsed: this.secondWindUsed || (record.secondWindUsed ?? false),
-      insuranceUsed: (record.round === this.round ? this.insuranceUsed : false) || (record.insuranceUsed ?? false),
+      // Откат не пополняет страховку: сработки из этого раунда и с плёнки берём по большей.
+      insuranceSaves: Math.max(record.round === this.round ? this.insuranceSaves : 0, record.insuranceSaves ?? 0),
     };
-    this.cassette.rewind(() => this.scene.restart({ tape, tapesBought }));
+    this.cassette.rewind(() => this.scene.restart({ tape, tapesBought, devUsed: this.devUsedThisRun, achievements: this.pendingAchievements() }));
   }
 
   /**
@@ -159,14 +159,17 @@ export abstract class SaveScene extends ShopScene {
     this.amulets = [...record.amulets];
     this.amuletCounts = { ...record.amuletCounts };
     this.bones = record.bones;
-    // Запись без набора автоматов (старая кассета) знала только один — остальные с первого уровня.
-    this.machineStates = record.machineSet ? copyMachineSet(record.machineSet) : machineStatesFrom(record.machine ?? this.machineState);
-    this.machineId = record.machine?.id ?? this.machineId;
+    // Запись без автомата (старая кассета) — остаётся тот, что стоит сейчас.
+    if (record.machineId !== undefined) this.machineId = record.machineId;
     // Корпус его цвета и значок покажет MachineBadge — части строятся после.
     this.diceDrought = record.diceDrought;
     // Откат не пополняет ни дыхание, ни страховку: то, что уже потрачено, записью не возвращается.
     this.secondWindUsed = this.secondWindUsed || (record.secondWindUsed ?? false);
-    this.insuranceUsed = this.insuranceUsed || (record.insuranceUsed ?? false);
+    this.insuranceSaves = Math.max(this.insuranceSaves, record.insuranceSaves ?? 0);
+    // След «трогали в ТЕСТ» липкий в обе стороны: накрученный до записи забег остаётся помеченным и после отката,
+    // а старая кассета без поля (devUsed нет) ничего не помечает. resetState() этот флаг уже обнулил —
+    // поэтому insertTape передаёт его в scene.restart отдельно (data.devUsed), и здесь он складывается с плёнкой.
+    this.devUsedThisRun = this.devUsedThisRun || !!record.devUsed;
     this.tapesBought = tapesBought;
     this.tapeState = 'forSale';
     // Стекло как на записи: открытые позже этого места паттерны кассета не возвращает. В старой записи набора нет —
@@ -186,7 +189,7 @@ export abstract class SaveScene extends ShopScene {
     this.amuletRack.setAmulets(this.amulets, this.amuletCounts);
     this.showItemEffects();
     this.showBones();
-    this.collector.markNote(this.debt, this.hasEnoughForDebt());
+    this.collector.markNote(this.debt);
     this.cassette.showPlay();
     this.checkPhase();
     this.refreshHud();
