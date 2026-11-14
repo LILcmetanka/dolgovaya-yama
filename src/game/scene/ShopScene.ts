@@ -42,6 +42,8 @@ export abstract class ShopScene extends DealerScene {
   private machineNextId: MachineId = 'classic';
   // Каким автомат был на входе в магазин: по нему видно, показывать ли новый автомат после выхода.
   private machineAtEntry: MachineState = newMachineState();
+  // Панель уезжает после leaveShop, и колбэк её хода ещё не сработал: раунд начнётся, только когда она уедет.
+  private isLeavingShop = false;
 
   /**
    * Долг отдан (или пропущен): на записке следующий долг (записка переворачивается), сверху съезжает панель магазина.
@@ -50,6 +52,8 @@ export abstract class ShopScene extends DealerScene {
   protected openShop(): void {
     this.round += 1;
     this.debt = debtForRound(this.round);
+    this.isShopOpen = true; // панель на экране — и пока едет, и когда уже стоит
+    this.isLeavingShop = false; // забег мог перезапуститься посреди выхода: панель снова на месте
     this.machineNextId = this.machineId; // начинаем с того, что стоит
     this.machineAtEntry = copyMachineState(this.machineState);
     this.updateRecord();
@@ -75,6 +79,7 @@ export abstract class ShopScene extends DealerScene {
     this.sfx.play('turn');
     this.shop.open(offer, prices, () => {
       // Панель опустилась: только теперь можно покупать, а чемодан наполняется уже на ней.
+      if (this.isGameOver) return; // победа пришла, пока панель ехала: покупки закрыты, панель уже уезжает
       this.isShopping = true;
       this.miniShop.open();
       if (isAmulets) this.amuletCase.fill({ amulets: amuletOffer, amuletPrices: amuletOffer.map(amuletPrice) });
@@ -236,7 +241,8 @@ export abstract class ShopScene extends DealerScene {
    */
   protected spinDrum(): void {
     if (!this.drumUnlocked()) return;
-    if (!this.isShopping) return;
+    // Забег кончен или победа ждёт конца действия: колесо за экраном не крутим (winDrum включил бы покупки).
+    if (!this.isShopping || this.isGameOver || this.isVictoryPending) return;
     const price = drumPrice(this.drumSpins, this.debt);
     if (price > this.balance) {
       this.sfx.play('deny');
@@ -272,11 +278,13 @@ export abstract class ShopScene extends DealerScene {
       this.itemShelf.openSlot(this.addSlot());
     } else {
       const chips = drumChips(paid);
-      this.balance += chips;
+      this.earn(chips); // фишки барабана — доход забега (решение автора)
       this.effects.popupAt(x, y - PRIZE_POPUP_RISE, `+${chips}`, GOLD_TEXT);
       this.drum.payOut(x, y, () => this.shop.pulseChips());
     }
-    this.isShopping = true; // колесо встало — снова можно покупать
+    // Колесо встало — снова можно покупать. Но если фишки барабана взвели победу, покупать нечего:
+    // забег кончен или победа ждёт конца действия, панель уже уезжает, и покупки включать нельзя.
+    if (!this.isGameOver && !this.isVictoryPending) this.isShopping = true;
     this.afterPurchase(prizeSound(prize));
   }
 
@@ -380,19 +388,54 @@ export abstract class ShopScene extends DealerScene {
   /**
    * Из магазина — назад к игровому автомату: панель уезжает наверх, выбранный автомат встаёт на место
    * (эффекты его уровня — со следующего раунда), и начинается новый раунд.
+   * Панель едет ~480 мс: пока она едет, раунд не начат (isLeavingShop) — победа в этом окне начнёт его сама (continueRun).
    */
   protected leaveShop(): void {
-    if (!this.isShopping) return;
+    // После победы магазин уже закрыт, нового раунда нет; пока панель едет — второй раз не уходим.
+    if (!this.isShopping || !this.isShopOpen || this.isLeavingShop || this.isGameOver) return;
     this.isShopping = false;
+    this.isShopOpen = false;
+    this.isLeavingShop = true;
     this.tooltip.hide();
     this.sfx.play('turn');
+    this.shop.close(() => {
+      // Победа могла перехватить выход, пока панель ехала (suspendShop): тогда раунд начнёт «ДАЛЬШЕ».
+      if (!this.isLeavingShop) return;
+      this.isLeavingShop = false;
+      this.enterNextRound();
+    });
+  }
+
+  /**
+   * Победа застала магазин на экране (идёт барабан, панель уже опущена): покупки закрыты, подсказка убрана,
+   * панель уезжает без нового раунда. Вернёт true — «ДАЛЬШЕ» потом доиграет выход из магазина (resumeAfterShop).
+   * Панель может и уезжать от leaveShop — тогда её колбэк снимается новым close и раунд начнёт «ДАЛЬШЕ».
+   */
+  protected suspendShop(): boolean {
+    if (!this.isShopOpen && !this.isLeavingShop) return false;
+    this.isLeavingShop = false;
+    this.isShopOpen = false;
+    this.isShopping = false;
+    this.tooltip.hide();
+    this.shop.close(() => {});
+    return true;
+  }
+
+  /** «ДАЛЬШЕ» после победы: магазин, который она прервала, доигрывается — выбранный автомат встаёт на место и новый раунд. */
+  protected resumeAfterShop(): void {
+    this.isShopOpen = false;
+    this.enterNextRound();
+  }
+
+  /** Панель уехала: выбранный автомат встаёт на место, и начинается новый раунд (leaveShop и «ДАЛЬШЕ» после победы). */
+  private enterNextRound(): void {
+    // Победа пришла, пока панель ехала: раунд за экраном не начинаем — его начнёт «ДАЛЬШЕ» (continueRun).
+    if (this.isGameOver) return;
+    this.panel.setPhaseSignsVisible(true); // панели больше нет — знаки фазы 2 снова видны
     const next = this.machineStates[this.machineNextId];
     const isChanged = !isSameMachine(this.machineAtEntry, next); // уровень мог смениться у того же автомата
     this.machineId = this.machineNextId; // запись забега общая: уровень уже в ней, копировать нечего
-    this.shop.close(() => {
-      this.panel.setPhaseSignsVisible(true); // панели больше нет — знаки фазы 2 снова видны
-      if (isChanged) this.showNewMachine(); // корпус, значок и новость на стекле — новый автомат или новый уровень
-      this.startRound();
-    });
+    if (isChanged) this.showNewMachine(); // корпус, значок и новость на стекле — новый автомат или новый уровень
+    this.startRound();
   }
 }

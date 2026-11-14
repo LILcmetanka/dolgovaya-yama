@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { CROWNS_FOR_FREE_SPINS, FREE_SPINS, JACKPOT_SPINS, JACKPOT_TICKETS } from '../bonus';
+import { CROWNS_FOR_FREE_SPINS, FREE_SPINS } from '../bonus';
 import {
   amuletTexture,
   createAmuletTextures,
@@ -17,13 +17,14 @@ import {
 } from '../decor';
 import { AMULETS } from '../amulets';
 import { amuletKey, isSeen, itemKey, machineKey, WHO_COLLECTOR, WHO_DEALER } from '../codex';
+import { CHIP_GOAL, CHIP_RECORD } from '../gameConfig';
 import { MACHINES } from '../machines';
 import { BLOOD_WIN, SPIDER_BITE } from '../evil';
 import { ITEMS } from '../items';
-import { t } from '../lang';
+import { formatChips, t } from '../lang';
 import { AMULET_SIZE, ITEM_SIZE, VIEW_CENTER_X, VIEW_WIDTH, WALL_PANEL, WALL_TV } from '../layout';
-import { isPaying, isUnlocked, symbolsUnlockedAt, SYMBOLS, TICKET_SCATTER, type SlotSymbol } from '../rules';
-import { addText } from '../theme';
+import { isPaying, isUnlocked, skullShare, symbolsUnlockedAt, SYMBOLS, TICKET_SCATTER, type SlotSymbol } from '../rules';
+import { addText, GOLD_TEXT } from '../theme';
 
 const TV_DIM_ALPHA = 0.35; // в покое на стекле тусклый «?»
 const TV_QUESTION_SIZE = 44; // его размер
@@ -60,6 +61,15 @@ const HIDDEN_WIDTH = 160;
 const HIDDEN_HEIGHT = 44;
 const HIDDEN_GAP = 8;
 const HIDDEN_TOP_GAP = 18; // отступ перед сеткой «???» от последнего ряда карточек
+// Вкладка «Как играть»: сверху цель забега (первый блок), под ней полоса прогресса и отметка рекорда, дальше текст и клавиши.
+const GOAL_BAR_WIDTH = 600;
+const GOAL_BAR_HEIGHT = 8;
+const GOAL_BAR_Y = 34; // от верхнего края содержимого
+const GOAL_RECORD_Y = 46;
+const GOAL_TEXT_TOP = 64; // где начинается текст под блоком цели
+const GOAL_BAR_BACK = 0x0e4a58; // жёлоб полосы — как активная вкладка
+const GOAL_BAR_FILL = 0xfbbf24; // сколько набрано — цвет цифр табло
+const GOAL_FILL_MIN = 4; // первый процент — хотя бы полоска, иначе «0 видно» не отличить от «пусто»
 // Страницы: ряды по 2 столбца, сколько влезет в панель (низ 632). Больше не влезает: 12 предметов и 11 амулетов
 // дают 12 рядов строк плюс ряды «???». Листаются кликом по панели или по счётчику «‹ 1/2 ›».
 
@@ -80,10 +90,13 @@ const TABS: { id: Tab; label: 'tabSymbols' | 'tabItems' | 'tabWho' | 'tabHowTo' 
 ];
 
 /** Что делает особый символ — надпись монитора; числа в ней — из правил, поэтому монитор не врёт, даже если их поменять. */
-function symbolNote(symbol: SlotSymbol): string {
+function symbolNote(symbol: SlotSymbol, round: number): string {
   switch (symbol.id) {
     case 'skull':
-      return t('skullNote');
+      // Доля черепов растёт с каждым раундом (rules.skullShare) — показываем, сколько их сейчас, а не «всегда столько».
+      // Модификаторы (чеснок, риск, автомат) тут не считаются: монитор знает только раунд, а строка «💀 N%» на
+      // корпусе — фактическая, её считает сцена по весам прокрутки.
+      return t('skullNote', Math.round(skullShare(round) * 100));
     case 'ticket':
       return t('ticketNote', TICKET_SCATTER);
     case 'joker':
@@ -125,6 +138,8 @@ export class WallScreen {
   private page = 0; // страница вкладки «Предметы» или «Кто есть кто»
   private pages = 1; // сколько их всего у открытой вкладки
   private round = 0; // для какого раунда нарисованы символы
+  private earned = 0; // сколько набрано за забег — первый блок «Как играть»
+  private goal = CHIP_GOAL; // порог, к которому идёт забег: 1 000 000, после «ДАЛЬШЕ» — 10 000 000
   private isOpen = false; // большой экран открыт
   private isEnabled = true; // по телевизору можно кликнуть
   private isHovered = false; // мышь над телевизором — курсор-рука его
@@ -302,7 +317,10 @@ export class WallScreen {
     this.showTab(this.tab);
   }
 
-  /** «Символы»: цены, что делают особые символы, джекпот — одна картинка. */
+  /**
+   * «Символы»: цены, что делают особые символы, — одна картинка. Джекпот внизу экрана убран (DONTLIKE 9.2),
+   * его строка теперь выходит новостью на стекле, когда джекпот выпадает (BonusScene.collectJackpot).
+   */
   private buildSymbols(left: number, top: number): void {
     this.pages = 1;
     this.content.add(this.scene.add.image(left, top, MONITOR_SCREEN_TEXTURE).setOrigin(0));
@@ -399,13 +417,38 @@ export class WallScreen {
     }
   }
 
-  /** «Как играть»: слева цель и порядок игры, справа клавиши. */
+  /** «Как играть»: сверху цель забега с полосой, слева цель и порядок игры, справа клавиши. */
   private buildHowTo(left: number, top: number): void {
     this.pages = 1;
-    const style = { fontSize: '21px', color: INK, lineSpacing: 5 };
-    const goal = addText(this.scene, left + 10, top + 6, t('howToGoal'), { ...style, wordWrap: { width: 600 } });
-    const keys = addText(this.scene, left + 10 + 650, top + 6, t('howToKeys'), { ...style, wordWrap: { width: 340 } });
-    this.content.add([goal, keys]);
+    // Первый блок — цель: сколько игра уже отдала и сколько до текущего порога. Полоса — доля от него.
+    const percent = Math.min(100, Math.floor((this.earned / this.goal) * 100));
+    const title = addText(this.scene, left + 10, top + 6, t('howToGoalLine', formatChips(this.goal), formatChips(this.earned), percent), {
+      fontSize: '22px',
+      fontStyle: 'bold',
+      color: GOLD_TEXT,
+    });
+    const done = Math.max(0, Math.min(1, this.earned / this.goal));
+    const back = this.scene.add.rectangle(left + 10, top + GOAL_BAR_Y, GOAL_BAR_WIDTH, GOAL_BAR_HEIGHT, GOAL_BAR_BACK).setOrigin(0, 0.5);
+    const fillWidth = done > 0 ? Math.max(GOAL_FILL_MIN, GOAL_BAR_WIDTH * done) : 0;
+    const fill = this.scene.add.rectangle(left + 10, top + GOAL_BAR_Y, fillWidth, GOAL_BAR_HEIGHT, GOAL_BAR_FILL).setOrigin(0, 0.5);
+    const record = addText(this.scene, left + 10, top + GOAL_RECORD_Y, t('howToRecord', formatChips(CHIP_RECORD)), { fontSize: '15px', color: DIM_INK });
+    // Текст под блоком цели мельче прежнего (было 21px): блок занимает верх панели, а текст цели длинный —
+    // на 21px он и раньше уходил за нижнюю рамку. 16px + зазор 2 — текст и клавиши влезают целиком.
+    const style = { fontSize: '16px', color: INK, lineSpacing: 2 };
+    const goal = addText(this.scene, left + 10, top + GOAL_TEXT_TOP, t('howToGoal'), { ...style, wordWrap: { width: 600 } });
+    const keys = addText(this.scene, left + 10 + 650, top + GOAL_TEXT_TOP, t('howToKeys'), { ...style, wordWrap: { width: 340 } });
+    this.content.add([title, back, fill, record, goal, keys]);
+  }
+
+  /**
+   * Сколько набрано за забег и к какому порогу он идёт (зовёт refreshHud). Пока «Как играть» не открыта, ничего
+   * не перерисовываем: открытая вкладка меняется только между прокрутками, так что этого достаточно.
+   */
+  showGoal(earned: number, goal: number): void {
+    if (earned === this.earned && goal === this.goal) return;
+    this.earned = earned;
+    this.goal = goal;
+    if (this.isOpen && this.tab === 'howTo') this.showTab('howTo');
   }
 
   /** Картинка «Символов» заново: цены — от дешёвых к дорогим, особые символы — в том порядке, как входили в автомат. */
@@ -419,8 +462,7 @@ export class WallScreen {
     const notes: MonitorNote[] = inMachine
       .filter((symbol) => !isPaying(symbol))
       .sort((a, b) => a.unlockRound - b.unlockRound)
-      .map((symbol) => ({ symbol, text: symbolNote(symbol), isNew: fresh.includes(symbol) }));
-    const jackpot = t('jackpotNote', JACKPOT_TICKETS, JACKPOT_SPINS);
-    drawMonitorScreen(this.scene, SYMBOLS_WIDTH, SYMBOLS_HEIGHT, prices, notes, jackpot);
+      .map((symbol) => ({ symbol, text: symbolNote(symbol, this.round), isNew: fresh.includes(symbol) }));
+    drawMonitorScreen(this.scene, SYMBOLS_WIDTH, SYMBOLS_HEIGHT, prices, notes);
   }
 }

@@ -1,9 +1,9 @@
 import { GAME_CONFIG } from './gameConfig';
-import { isSkull, type SlotSymbol } from './rules';
 
 /**
- * Фазы забега: правила меняются по ходу забега. Фаза 1 — знакомство. Фаза 2 «автомат злится» — черепов больше,
- * но и множитель серии растёт быстрее: риск и награда, выбор «крутить или забрать» острее.
+ * Фазы забега: правила меняются по ходу забега. Фаза 1 — знакомство. Фаза 2 «автомат злится» — в раунде на одну
+ * прокрутку больше: игрок получает запас на долг, но черепа к этому времени уже стали чаще сами по себе
+ * (skullShare в rules.ts растёт с каждым раундом) — замечание 19.
  * Фаза наступает по прогрессу игрока — по числу закрытых долгов (это и есть счёт). Без Phaser.
  */
 
@@ -11,18 +11,18 @@ import { isSkull, type SlotSymbol } from './rules';
 export interface Phase {
   number: number; // номер — его показывает новость «ФАЗА 2»
   fromDebts: number; // условие: с какого числа закрытых долгов (счёта) идёт фаза
-  skullFactor: number; // параметр 1: вес черепа во столько раз больше
-  multiplierBonus: number; // параметр 2: множитель серии растёт на столько больше за прокрутку
+  multiplierBonus: number; // параметр 1: множитель серии растёт на столько больше за прокрутку (0 — шаг остаётся 1)
+  bonusSpins: number; // параметр 2: столько прокруток добавляется в начале раунда
 }
 
-/** Все фазы по порядку. Фаза 1 ничего не меняет; числа фазы 2 — ручки в gameConfig.ts (подобраны симуляцией). */
+/** Все фазы по порядку. Фаза 1 ничего не меняет; числа фазы 2 — ручки в gameConfig.ts. */
 export const PHASES: Phase[] = [
-  { number: 1, fromDebts: 0, skullFactor: 1, multiplierBonus: 0 },
+  { number: 1, fromDebts: 0, multiplierBonus: 0, bonusSpins: 0 },
   {
     number: 2,
     fromDebts: GAME_CONFIG.phase2Debts, // после первого долга
-    skullFactor: GAME_CONFIG.phase2SkullFactor, // паттерн из черепов 16% → ~22% прокруток
-    multiplierBonus: GAME_CONFIG.phase2MultiplierBonus, // множитель ×1, ×3, ×5…
+    multiplierBonus: GAME_CONFIG.phase2MultiplierBonus, // 0: шаг множителя 1, окно показывает ×1, ×2, ×3
+    bonusSpins: GAME_CONFIG.phase2BonusSpins, // +1 прокрутка в раунде вместо прежнего роста веса черепа
   },
 ];
 
@@ -33,9 +33,4 @@ export function phaseAt(closedDebts: number): Phase {
     if (closedDebts >= phase.fromDebts) current = phase;
   }
   return current;
-}
-
-/** Вес символа в фазе: черепов больше в skullFactor раз. */
-export function phaseWeight(symbol: SlotSymbol, weight: number, phase: Phase): number {
-  return isSkull(symbol) ? weight * phase.skullFactor : weight;
 }

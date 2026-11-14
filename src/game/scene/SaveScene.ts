@@ -1,6 +1,7 @@
 import { copyEffects } from '../items';
 import { copyMachineSet, copyMachineState, machineStatesFrom } from '../machines';
-import { tapePrice, type RunSave } from '../save';
+import { isPatternId } from '../progress';
+import { luckyCloversOf, tapePrice, type RunSave } from '../save';
 import { ShopScene } from './ShopScene';
 
 /**
@@ -74,11 +75,13 @@ export abstract class SaveScene extends ShopScene {
       pot: this.pot,
       streak: this.streak,
       isBloodNext: this.isBloodNext,
-      isLuckyNext: this.isLuckyNext,
+      luckyClovers: this.luckyClovers,
       roundShields: this.roundShields,
       isDebtNewsShown: this.isDebtNewsShown,
       debt: this.debt,
       balance: this.balance,
+      earned: this.earned, // цель забега — тоже часть снимка: откат возвращает и её
+      chipGoal: this.chipGoal, // и ступень цели: после «ДАЛЬШЕ» кассета не возвращает миллион
       tickets: this.tickets,
       slots: this.slots,
       shelf: [...this.shelf],
@@ -90,6 +93,7 @@ export abstract class SaveScene extends ShopScene {
       machine: copyMachineState(this.machineState),
       machineSet: copyMachineSet(this.machineStates), // уровни всех трёх: прокачка не пропадает после отката
       diceDrought: this.diceDrought,
+      patterns: [...this.patternSet], // стекло на плёнке: откат вернёт ровно этот набор
       secondWindUsed: this.secondWindUsed, // на записи флаг такой, какой был: запись до провала — дыхание ещё есть
       insuranceUsed: this.insuranceUsed,
     };
@@ -139,11 +143,14 @@ export abstract class SaveScene extends ShopScene {
     this.pot = record.pot;
     this.streak = record.streak;
     this.isBloodNext = record.isBloodNext;
-    this.isLuckyNext = record.isLuckyNext;
+    this.luckyClovers = luckyCloversOf(record);
     this.roundShields = record.roundShields;
     this.isDebtNewsShown = record.isDebtNewsShown;
     this.debt = record.debt; // долг этого раунда: на Счастливом автомате он больше
     this.balance = record.balance;
+    this.earned = record.earned ?? this.earned; // набранное за забег — как на плёнке (в старой записи поля нет)
+    // Ступень цели — тоже с плёнки: запись после «ДАЛЬШЕ» не возвращает миллион (нет поля — цель остаётся текущей).
+    if (record.chipGoal !== undefined) this.chipGoal = record.chipGoal;
     this.tickets = record.tickets;
     this.slots = record.slots;
     this.shelf = [...record.shelf];
@@ -162,6 +169,9 @@ export abstract class SaveScene extends ShopScene {
     this.insuranceUsed = this.insuranceUsed || (record.insuranceUsed ?? false);
     this.tapesBought = tapesBought;
     this.tapeState = 'forSale';
+    // Стекло как на записи: открытые позже этого места паттерны кассета не возвращает. В старой записи набора нет —
+    // тогда остаётся набор, который уже собрался в прогрессе (он же стоит в resetState).
+    if (Array.isArray(record.patterns)) this.patternSet = record.patterns.filter((id) => isPatternId(id));
     this.newsRound = record.round; // новость этого раунда на записи уже была
   }
 
@@ -171,6 +181,7 @@ export abstract class SaveScene extends ShopScene {
    * Последний шанс — ровно как на записи (loadTape): запись до нехватки — шанс ещё есть, после — израсходован.
    */
   protected playTape(): void {
+    this.setPatternsOnGlass(); // стекло с записи: набор пришёл в loadTape
     this.itemShelf.setItems(this.shelf);
     this.amuletRack.setAmulets(this.amulets, this.amuletCounts);
     this.showItemEffects();

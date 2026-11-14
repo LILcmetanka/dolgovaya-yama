@@ -1,5 +1,6 @@
-import { countCrowns, freeSpinsFor, hasClover, isJackpot, JACKPOT_SPINS, JACKPOT_TICKETS, luckyGrid, MAX_FREE_SPINS_PER_ROUND } from '../bonus';
+import { countCrowns, freeSpinsFor, isJackpot, JACKPOT_SPINS, JACKPOT_TICKETS, luckyGrid, MAX_FREE_SPINS_PER_ROUND } from '../bonus';
 import { cellsOf } from '../evil';
+import { t } from '../lang';
 import { CENTER_X, cellX, cellY, GRID_Y, SPIN_LAMPS_Y } from '../layout';
 import type { SpinResult } from '../patterns';
 import { spinGrid, spinsAfterBonus, type Grid, type WeightOf } from '../rules';
@@ -20,11 +21,13 @@ export abstract class BonusScene extends PhaseScene {
   /**
    * Сетка прокрутки: после клевера — с паттерном наверняка (удача тратится), иначе обычная.
    * canUseLuck = false — спокойная прокрутка: выплат в ней нет, поэтому клевер ждёт обычной и не тратится.
+   * Клеверов на сетке могло быть несколько: их число уходит в luckyGrid, и паттерн выбирается по весам.
    */
   protected rollGrid(weightOf: WeightOf, canUseLuck = true): Grid {
-    if (!canUseLuck || !this.isLuckyNext) return spinGrid(weightOf);
-    this.isLuckyNext = false;
-    return luckyGrid(weightOf);
+    if (!canUseLuck || this.luckyClovers <= 0) return spinGrid(weightOf);
+    const clovers = this.luckyClovers; // запоминаем до сброса: он же гасит огни удачи
+    this.luckyClovers = 0;
+    return luckyGrid(weightOf, clovers);
   }
 
   /** Итог прокрутки для удачи: короны — бесплатные прокрутки, клевер — удача в следующей, джекпот — билеты и прокрутки. */
@@ -51,13 +54,16 @@ export abstract class BonusScene extends PhaseScene {
 
   /** Клевер на экране: следующая прокрутка — с паттерном. Клевер в рамке, огни в покое зелёные (calmLampColor), пока она не прошла. */
   private collectClover(grid: Grid): void {
-    if (!hasClover(grid)) return;
-    this.isLuckyNext = true;
+    const cells = cellsOf(grid, 'clover'); // один проход по сетке: их число — и есть число клеверов
+    if (cells.length === 0) return;
+    // Перезапись, а не накопление: предыдущий заряд клевера к этому моменту уже потрачен на прокрутку.
+    this.luckyClovers = cells.length;
     this.sfx.play('clover');
-    const clovers = cellsOf(grid, 'clover');
-    this.screen.highlightCells(clovers, CLOVER_BORDER);
-    const [row, col] = clovers[0];
-    this.effects.popupAt(cellX(col), cellY(row) - POPUP_ABOVE_CELL, '🍀', GREEN_TEXT);
+    this.screen.highlightCells(cells, CLOVER_BORDER);
+    const [row, col] = cells[0];
+    // Как метка «×N» у копий амулетов: при нескольких клеверах видно, насколько сильна следующая прокрутка.
+    const sign = cells.length > 1 ? `🍀 ×${cells.length}` : '🍀';
+    this.effects.popupAt(cellX(col), cellY(row) - POPUP_ABOVE_CELL, sign, GREEN_TEXT);
   }
 
   /** Джекпот: кроме фишек — билеты (летят с сетки на табло) и прокрутки (над лампочками — «+N», лампочки подмигивают). */
@@ -67,6 +73,9 @@ export abstract class BonusScene extends PhaseScene {
     const added = spinsAfterBonus(this.spinsLeft, JACKPOT_SPINS) - this.spinsLeft;
     this.spinsLeft += added;
     this.sfx.play('ticket', 0.3);
+    // Строка «Джекпот: билеты +N, прокрутки +N» раньше висела внизу монитора на стене; оттуда её убрал автор
+    // (DONTLIKE 9.2), и теперь она выходит новостью на стекле — ровно когда джекпот выпал.
+    this.screen.announceNews(t('jackpotNote', JACKPOT_TICKETS, added));
     this.panel.flyTickets(JACKPOT_TICKETS, CENTER_X, GRID_Y);
     if (added > 0) {
       this.effects.popupAt(CENTER_X, SPIN_LAMPS_Y - 20, `+${added}`, GOLD_TEXT);

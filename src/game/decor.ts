@@ -1805,7 +1805,8 @@ export function createFullscreenTexture(scene: Phaser.Scene): void {
 
 /**
  * Монитор символов: терминал на полу у правой стены. Корпус — одна запечённая картинка (с холодным отсветом экрана на стене),
- * экран — canvas: цены платящих символов, что делают особые, внизу — что даёт джекпот. Экран перерисовывается,
+ * экран — canvas: цены платящих символов и что делают особые. Джекпот внизу экрана убран (DONTLIKE 9.2): его строка
+ * переехала в новость на стекле, когда он выпадает. Экран перерисовывается,
  * когда в автомат входят новые символы или меняется язык (это раз в раунд — дёшево).
  */
 export const WALL_TV_TEXTURE = 'wall-tv';
@@ -1830,8 +1831,6 @@ const MONITOR_NOTE_ROW = 48; // особый символ: значок и чт�
 const MONITOR_NOTE_ICON = 36;
 const MONITOR_NOTE_FONT = 16;
 const MONITOR_NOTE_LINE = 19; // высота строки описания
-const MONITOR_MINI_CELL = 8; // схема джекпота: клетки 5×3
-const MONITOR_MINI_GAP = 2.2;
 
 /** Платящий символ на мониторе: сколько платит его паттерн ×1. isNew — вошёл в автомат в этом раунде. */
 export interface MonitorPrice {
@@ -1874,14 +1873,13 @@ export function createWallTvTexture(scene: Phaser.Scene, tv: Box): void {
   bake(g, WALL_TV_TEXTURE, width, height);
 }
 
-/** Экран монитора на canvas MONITOR_SCREEN_TEXTURE (width×height): цены, особые символы, внизу — джекпот. Рисуется заново целиком. */
+/** Экран монитора на canvas MONITOR_SCREEN_TEXTURE (width×height): цены и особые символы. Рисуется заново целиком. */
 export function drawMonitorScreen(
   scene: Phaser.Scene,
   width: number,
   height: number,
   prices: MonitorPrice[],
   notes: MonitorNote[],
-  jackpot: string,
 ): void {
   // Текстура уже есть — её создала эта же функция, значит это canvas: берём его и рисуем заново.
   const texture = scene.textures.exists(MONITOR_SCREEN_TEXTURE)
@@ -1891,16 +1889,13 @@ export function drawMonitorScreen(
   const ctx = texture.context;
   ctx.clearRect(0, 0, width, height);
   drawMonitorBackground(ctx, width, height);
-  let y = drawMonitorPrices(ctx, prices, width, MONITOR_PAD);
-  y = drawMonitorDivider(ctx, width, y);
+  const y = drawMonitorPrices(ctx, prices, width, MONITOR_PAD);
+  const notesTop = drawMonitorDivider(ctx, width, y);
   const noteWidth = (width - 2 * MONITOR_PAD) / MONITOR_NOTE_COLUMNS;
   notes.forEach((note, index) => {
     const left = MONITOR_PAD + (index % MONITOR_NOTE_COLUMNS) * noteWidth;
-    drawMonitorNote(ctx, note, left, noteWidth, y + Math.floor(index / MONITOR_NOTE_COLUMNS) * MONITOR_NOTE_ROW);
+    drawMonitorNote(ctx, note, left, noteWidth, notesTop + Math.floor(index / MONITOR_NOTE_COLUMNS) * MONITOR_NOTE_ROW);
   });
-  const jackpotTop = height - MONITOR_PAD - MONITOR_NOTE_ROW; // джекпот — всегда внизу экрана
-  drawMonitorDivider(ctx, width, jackpotTop - MONITOR_PAD);
-  drawMonitorJackpot(ctx, jackpot, width, jackpotTop);
   drawMonitorScanlines(ctx, width, height);
   texture.refresh(); // передать нарисованное в видеокарту
 }
@@ -1946,19 +1941,6 @@ function drawMonitorNote(ctx: CanvasRenderingContext2D, note: MonitorNote, left:
   drawMonitorIcon(ctx, note.symbol, left + 2, middle - MONITOR_NOTE_ICON / 2, MONITOR_NOTE_ICON);
   const textLeft = left + MONITOR_NOTE_ICON + 12;
   drawMonitorText(ctx, note.text, textLeft, middle, columnWidth - MONITOR_NOTE_ICON - 24);
-}
-
-/** Джекпот: маленькая схема «все 15 клеток» и что он даёт кроме фишек. */
-function drawMonitorJackpot(ctx: CanvasRenderingContext2D, text: string, width: number, top: number): void {
-  const middle = top + MONITOR_NOTE_ROW / 2;
-  const step = MONITOR_MINI_CELL + MONITOR_MINI_GAP;
-  const schemeTop = middle - (GRID_ROWS * step - MONITOR_MINI_GAP) / 2;
-  ctx.fillStyle = cssColor(MINI_ON);
-  for (let row = 0; row < GRID_ROWS; row++) {
-    for (let col = 0; col < GRID_COLUMNS; col++) ctx.fillRect(MONITOR_PAD + col * step, schemeTop + row * step, MONITOR_MINI_CELL, MONITOR_MINI_CELL);
-  }
-  const textLeft = MONITOR_PAD + GRID_COLUMNS * step + 6;
-  drawMonitorText(ctx, text, textLeft, middle, width - textLeft - MONITOR_PAD);
 }
 
 /** Надпись монитора: переносится по словам (до двух строк), стоит по высоте вокруг middle. */

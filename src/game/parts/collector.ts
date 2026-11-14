@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { createChipTextures, createNoteGlowTexture, drawNoteTexture, NOTE_GLOW_TEXTURE, NOTE_TEXTURE } from '../decor';
-import { t } from '../lang';
+import { formatChips, t } from '../lang';
 import { Atm } from './atm';
 import { CENTER_X, CENTER_Y, NOTE, NOTE_ANGLE, SCREEN, VIEW_WIDTH } from '../layout';
 import { GOOD_LUCK_TIME } from '../lastChance';
@@ -11,6 +11,8 @@ const NOTE_GLOW_MIN = 0.3; // свечение пульсирует: гасне�
 const NOTE_GLOW_TIME = 700; // мс
 // Надпись на чёрном экране автомата: KABOOM — конец забега. GOOD LUCK рисует банкомат (atm.ts), не эта часть.
 const SCREEN_TITLE_STYLE = { ...LED_STYLE, fontSize: '64px', color: RED_TEXT, shadow: { color: '#ef4444', blur: 18, fill: true } };
+// Экран победы: «ПОБЕДА» золотом — автомат цел, забег выигран (KABOOM — красный).
+const VICTORY_TITLE_STYLE = { ...LED_STYLE, fontSize: '56px', color: GOLD_TEXT, shadow: { color: '#f59e0b', blur: 18, fill: true } };
 const SCREEN_TITLE_DEPTH = POPUP_DEPTH - 1; // заголовок — над сеткой, под всплывающими надписями
 // Взрыв автомата (KABOOM): вспышка и огненные шары из экрана.
 const EXPLOSION_BALLS = 18;
@@ -25,7 +27,10 @@ const DEATH_SCORE_Y = 500;
 const DEATH_BUTTON_Y = 566;
 const BUTTON_WIDTH = 170;
 const BUTTON_HEIGHT = 60;
+const BUTTON_STEP = 200; // расстояние между центрами кнопок «ЗАНОВО» и «ДАЛЬШЕ» на экране победы
 const BUTTON_SHADOW = 6; // тень кнопки сдвинута вниз на столько px
+// Кнопки конца забега выше затемнения: иначе полноэкранная тень (она ловит клики) забирает нажатие себе.
+const BUTTON_DEPTH = GAME_OVER_DEPTH + 1;
 const BUTTON_COLOR = 0xea580c;
 const BUTTON_BORDER = 0xfbbf24;
 // Анимации, мс.
@@ -43,7 +48,7 @@ interface Button {
 /**
  * Всё про долг: записка на стене (фишек хватает — она светится, и по ней можно отдать долг раньше),
  * банкомат, в который платят долг (фишки в щель, на выходе купон), KABOOM на экране автомата,
- * затемнение и экран DEATH.
+ * затемнение и экран DEATH. Он же показывает экран ПОБЕДЫ — вид тот же, заголовок золотой.
  */
 export class Collector {
   private readonly scene: Phaser.Scene;
@@ -219,10 +224,14 @@ export class Collector {
     this.scene.tweens.add({ targets: parts, alpha: 0, duration: GOOD_LUCK_FADE_TIME, onComplete: () => parts.forEach((part) => part.destroy()) });
   }
 
-  /** Чёрный экран автомата с красной мигающей надписью text на слое depth. */
-  private screenTitle(text: string, depth: number): (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] {
+  /** Чёрный экран автомата с мигающей надписью text на слое depth. look — цвет и размер надписи (KABOOM красный, ПОБЕДА золотая). */
+  private screenTitle(
+    text: string,
+    depth: number,
+    look: Phaser.Types.GameObjects.Text.TextStyle = SCREEN_TITLE_STYLE,
+  ): (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] {
     const screen = this.scene.add.rectangle(SCREEN.x, SCREEN.y, SCREEN.width, SCREEN.height, 0x000000).setRounded(16);
-    const title = addText(this.scene, SCREEN.x, SCREEN.y, text, SCREEN_TITLE_STYLE).setOrigin(0.5);
+    const title = addText(this.scene, SCREEN.x, SCREEN.y, text, look).setOrigin(0.5);
     for (const part of [screen, title]) part.setDepth(depth);
     this.scene.tweens.add({ targets: title, alpha: 0.3, duration: TITLE_BLINK_TIME, yoyo: true, repeat: -1 }); // мигает
     return [screen, title];
@@ -247,8 +256,56 @@ export class Collector {
     const scoreText = `${t('debtsPaid')}: ${closedDebts} · ${t('best')}: ${record}`;
     const score = addText(this.scene, CENTER_X, DEATH_SCORE_Y, scoreText, { fontSize: '20px', color: GOLD_TEXT }).setOrigin(0.5);
     const button = this.makeButton(CENTER_X, DEATH_BUTTON_Y, t('again'), restart);
-    for (const part of [shade, score, button.shadow, button.face]) part.setDepth(GAME_OVER_DEPTH);
+    for (const part of [shade, score]) part.setDepth(GAME_OVER_DEPTH);
+    for (const part of [button.shadow, button.face]) part.setDepth(BUTTON_DEPTH); // кнопка выше тени — она нажимается
     this.screenTitle(title, GAME_OVER_DEPTH);
+  }
+
+  /**
+   * Победа: за забег набрано 1 000 000 (CHIP_GOAL). Тот же вид, что у экрана DEATH, только экран автомата цел: на нём золотая
+   * «ПОБЕДА», ниже набранное и рекорд забегов, внизу «ЗАНОВО» и «ДАЛЬШЕ» — второй продолжает тот же забег уже
+   * с целью 10 000 000. Вернёт уборку экрана: её зовёт «ДАЛЬШЕ», чтобы вернуться в игру.
+   */
+  showVictory(earned: number, record: number, again: () => void, next: () => void): () => void {
+    const left = CENTER_X - BUTTON_STEP / 2;
+    const right = CENTER_X + BUTTON_STEP / 2;
+    return this.finishScreen(t('victory'), VICTORY_TITLE_STYLE, earned, record, [
+      this.makeButton(left, DEATH_BUTTON_Y, t('again'), again),
+      this.makeButton(right, DEATH_BUTTON_Y, t('continueRun'), next),
+    ]);
+  }
+
+  /**
+   * Рекорд: за забег набрано 10 000 000 (CHIP_RECORD) — вторая и последняя ступень. Вид тот же, что у победы,
+   * только заголовок «РЕКОРД» и одна кнопка «ЗАНОВО»: дальше цели нет.
+   */
+  showRecord(earned: number, record: number, again: () => void): void {
+    this.finishScreen(t('record'), VICTORY_TITLE_STYLE, earned, record, [this.makeButton(CENTER_X, DEATH_BUTTON_Y, t('again'), again)]);
+  }
+
+  /** Общий вид экрана конца забега: затемнение, заголовок на экране автомата, набранное с рекордом и кнопки. Вернёт уборку. */
+  private finishScreen(
+    title: string,
+    look: Phaser.Types.GameObjects.Text.TextStyle,
+    earned: number,
+    record: number,
+    buttons: Button[],
+  ): () => void {
+    const shade = this.scene.add.rectangle(CENTER_X, CENTER_Y, VIEW_WIDTH, 640, 0x000000, 0.6); // на весь вид у автомата
+    shade.setInteractive(); // ловит клики, чтобы кнопки под затемнением не нажимались
+    const scoreText = t('victoryScore', formatChips(earned), formatChips(record));
+    const score = addText(this.scene, CENTER_X, DEATH_SCORE_Y, scoreText, { fontSize: '20px', color: GOLD_TEXT }).setOrigin(0.5);
+    const parts: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Container)[] = [shade, score];
+    for (const button of buttons) parts.push(button.shadow, button.face);
+    for (const part of parts) part.setDepth(GAME_OVER_DEPTH);
+    // Кнопки — выше затемнения: оно ловит клики, но не должно забирать их у кнопок.
+    for (const button of buttons) button.face.setDepth(BUTTON_DEPTH);
+    const titleParts = this.screenTitle(title, GAME_OVER_DEPTH, look);
+    // «ДАЛЬШЕ» убирает экран: твин мигания останавливаем, иначе он остался бы висеть на уничтоженной надписи.
+    return () => {
+      this.scene.tweens.killTweensOf(titleParts);
+      for (const part of [...parts, ...titleParts]) part.destroy();
+    };
   }
 
   /** Кнопка: тень, корпус с золотой рамкой, блик сверху и крупная надпись. Нажимается и мышью, и пальцем. */

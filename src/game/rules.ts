@@ -27,14 +27,31 @@ export const TAKE_KEEPS_STREAK = GAME_CONFIG.takeKeepsStreak;
 /** Сетка автомата: 5 столбцов и 3 ряда. */
 export const GRID_COLUMNS = 5;
 export const GRID_ROWS = 3;
-/** Вес черепа в первом раунде: около 3 черепов на экране и паттерн из черепов в ~16% прокруток. */
+/** Вес черепа в данных символов — справочное число: долю клеток задаёт skullShare (см. weightsForRound). */
 export const SKULL_WEIGHT = GAME_CONFIG.skullWeight;
 /**
- * Дальше череп держит ту же долю клеток, ~21,5%: когда в автомат входят новые символы, его вес растёт вместе с ними
- * (иначе черепов становится меньше, и игра делается спокойнее). Вес черепа = сумма весов остальных × SKULL_RATIO.
+ * Доля клеток-черепов в раунде: со skullShareStart растёт на skullShareGrowth за раунд и упирается в skullShareCap.
+ * Замечание 19: раньше доля была постоянной (~21,5%), и черепа не пугали по-новому — игрок не видел, что стало хуже.
+ * Рост откатывает только чеснок (🧄 ×0,5 к весу до конца раунда, items.ts); новых предметов и полей в RunSave нет —
+ * доля целиком выводится из номера раунда, поэтому кассета и забег заново её не ломают.
  */
-const FIRST_ROUND_OTHERS = 95; // сумма весов остальных символов первого раунда: 30 + 25 + 18 + 13 + 9
-export const SKULL_RATIO = SKULL_WEIGHT / FIRST_ROUND_OTHERS;
+export function skullShare(round: number): number {
+  const grown = GAME_CONFIG.skullShareStart + GAME_CONFIG.skullShareGrowth * (round - 1);
+  return Math.min(GAME_CONFIG.skullShareCap, Math.max(GAME_CONFIG.skullShareMin, grown));
+}
+
+/**
+ * Вес черепа из доли клеток: если черепов доля s, то вес = сумма весов остальных × s/(1−s) — тогда и в клетках
+ * доля ровно s, какого бы размера ни был автомат. Старая постоянная доля 26/121 ≈ 0,215 даёт 26/95 — прежнее
+ * SKULL_RATIO, так правка воспроизводит поведение до замечания 19 (0,215 — это старая доля, не нынешняя).
+ * Долю клампим: 0 или 1 дали бы вес 0 или ∞ — такой вызов не должен ломать прокрутку.
+ */
+export function skullRatioFromShare(share: number): number {
+  // Верхний край — чуть ниже 1: 1 дала бы ∞. Потолок нарочно высокий, чтобы поднятый skullShareCap
+  // считался честно, а не молча упирался в прежние 0,6.
+  const safe = Math.min(Math.max(share, 0.01), 1 - 1e-6);
+  return safe / (1 - safe);
+}
 
 /** Символ в клетке сетки. */
 export interface SlotSymbol {
@@ -133,15 +150,16 @@ export type WeightOf = (symbol: SlotSymbol) => number;
 const BASE_WEIGHT: WeightOf = (symbol) => (isUnlocked(symbol, 1) ? symbol.weight : 0);
 
 /**
- * Обычные веса в раунде round: символов, которых ещё нет в автомате, не бывает, череп держит свою долю клеток.
- * diceWeight — вес кубика в этой прокрутке (он растёт, пока кубик не выпадает; см. evil.ts). Долю черепа кубик не меняет.
+ * Обычные веса в раунде round: символов, которых ещё нет в автомате, не бывает, а долю клеток у черепа задаёт
+ * skullShare(round) — она растёт по раундам (замечание 19). У кубика вес — свой (он растёт, пока кубик не выпадает;
+ * см. evil.ts), и долю черепа кубик не меняет, как и раньше.
  */
 export function weightsForRound(round: number, diceWeight?: number): WeightOf {
   let others = 0;
   for (const symbol of SYMBOLS) {
     if (!isSkull(symbol) && !isDice(symbol) && isUnlocked(symbol, round)) others += symbol.weight;
   }
-  const skullWeight = others * SKULL_RATIO;
+  const skullWeight = others * skullRatioFromShare(skullShare(round));
   return (symbol) => {
     if (!isUnlocked(symbol, round)) return 0;
     if (isSkull(symbol)) return skullWeight;

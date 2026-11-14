@@ -1,180 +1,369 @@
-// Шаг 68: последний шанс вместо рулетки — один за забег. Как часто он выживает и с каким коном.
-// Запуск из этой папки: node --import ./ts-resolve.mjs last-chance-sim.mjs [проб] [забегов на долю]
-// Правила — из настоящих файлов логики, как в full-run.mjs: lastChance, rules, patterns, amulets, evil, characters, phases, items.
-// Порог считается от НЕХВАТКИ (долг − фишки на табло), а не от долга: кривую «сколько нехватало, когда случился
-// последний шанс» по раундам даёт full-run.study — тот же движок, что и полный забег (шанс там один за забег).
-const SRC = process.env.SIM_SRC ?? '/home/lilcmetanka/Documents/VPN/claude-chats/Игры/dolgovaya-yama/src/game/';
-const LC = await import(SRC + 'lastChance.ts');
+// Последний шанс «Долговой ямы» — по правилам текущего кода, без Phaser (шаг 68б: одна чистая сетка, два действия,
+// «второе дыхание»). Запуск из папки next-step:
+//   node --import ./ts-resolve.mjs last-chance-sim.mjs      — три политики на 200 зафиксированных сетках
+//   SIM_ROUNDS=1 node --import ./ts-resolve.mjs full-run.mjs 800 — доля спасений по раундам (там живёт study)
+//
+// ПРАВИЛА, как они читаются из кода (src/game):
+//  • Вход — одна чистая прокрутка, её делает сам автомат: обычные веса раунда, но у запрещённых символов вес 0
+//    (CollectorScene.cleanWeight; запрещены skull, dice, spider, lock, blood — lastChance.ts).
+//  • Цель — от денег, а не от сетки (2026-11-14): паттерн должен оплатить долю LAST_CHANCE_GOAL_SHARE нехватки,
+//    выраженную в множителе (lastChance.ts, lastChanceGoal + chancePrice):
+//    goal = need × share / (цена символа раунда × множитель серии × множители выигрыша), не выше ×10 (без джекпота).
+//    Входная сетка уже бьёт цель — победа сразу, полоса действий не открывается (`instant`).
+//  • Действий ровно LAST_CHANCE_ACTIONS = 2 (lastChance.ts): перекрут столбца — три клетки выпадают заново
+//    (CollectorScene.rerollColumn) — или джокер в клетку. В занятую джокером клетку и в замороженный столбец
+//    игра не даёт, действие при этом не тратится. Заморозка бесплатна и действий не тратит:
+//    она только запрещает перекрут, поэтому политика ею не пользуется — она сужает выбор.
+//  • Раньше проверить нельзя: исход считается, когда действия кончились (finishLastChance), «сдаться» —
+//    сразу провал (onLastChanceButton). Задача: best > goal (isLastChanceGoalMet, lastChance.ts).
+//  • Победа: чемодан платит долг, фишки целы, билета нет, счёт −1 (winLastChance). Провал: первое за забег —
+//    «второе дыхание» (счёт −1, магазин), второе — KABOOM (failLastChance).
+//
+// ПОЛИТИКА (объявлена явно, это выбор игрока, а не правило игры):
+//  • жадная: на каждом шаге берём действие с наибольшей вероятностью побить цель. Для перекрута вероятность оценивается
+//    выборкой GREEDY_SAMPLES исходов столбца (в задании 32-64), для джокера она точная — 0 или 1. При равной
+//    вероятности выигрывает действие с большим средним лучшим множителем: иначе при нуле вероятностей выбор был бы
+//    произвольным, а игрок так не играет.
+//  • границы для отчёта: «без действий» (исход входной сетки) и перебор всех пар действий (oracleWin) — оценка сверху.
+import { fileURLToPath } from 'node:url';
+
+const SRC = process.env.SIM_SRC ?? fileURLToPath(new URL('../../../src/game/', import.meta.url));
 const R = await import(SRC + 'rules.ts');
 const P = await import(SRC + 'patterns.ts');
-const A = await import(SRC + 'amulets.ts');
-const I = await import(SRC + 'items.ts');
 const E = await import(SRC + 'evil.ts');
-const C = await import(SRC + 'characters.ts');
-const PH = await import(SRC + 'phases.ts');
+const LC = await import(SRC + 'lastChance.ts');
 
-/** Наборы амулетов для сравнения: пусто и типовой к 4–8-му раунду (разгон, бронежилет, копилка, кости). */
-export const AMULET_SETS = {
-  none: {},
-  typical: { boost: 1, vest: 1, piggy: 1, bones: 1 },
+export const GREEDY_SAMPLES = 32; // N исходов перекрута на столбец в жадной политике (в задании 32-64)
+export const ORACLE_FIRST = 20; // сколько исходов первого действия перебирает oracle
+export const ORACLE_SECOND = 50; // сколько исходов перекрута на столбец во втором действии перебора
+export const BOUND_GRIDS = 200; // на скольких зафиксированных сетках сравниваются политики
+/** Сид зафиксированных сеток и выборок в границах политик: SIM_SEED переопределяет, значение печатается в отчёте. */
+export const SIM_SEED = Number(process.env.SIM_SEED ?? 20261113);
+/**
+ * Доля нехватки, которую должен оплатить паттерн. По умолчанию — правило игры (lastChance.ts);
+ * SIM_LC_SHARE переопределяет её для замера порога без правки кода. Значение печатается в каждом отчёте.
+ */
+export const SHARE = Number(process.env.SIM_LC_SHARE ?? LC.LAST_CHANCE_GOAL_SHARE);
+if (!Number.isFinite(SHARE) || SHARE <= 0) throw new Error(`SIM_LC_SHARE должен быть положительным числом, получено «${process.env.SIM_LC_SHARE}»`);
+
+const cloneGrid = (grid) => grid.map((line) => line.slice());
+
+/** Веса чистой сетки — CollectorScene.cleanWeight: обычные веса раунда без запрещённых символов. */
+export function cleanWeight(round, diceDrought) {
+  const base = R.weightsForRound(round, E.diceWeight(diceDrought));
+  return (symbol) => (LC.isLastChanceSymbol(symbol) ? base(symbol) : 0);
+}
+
+/** Входная сетка: одна чистая прокрутка (CollectorScene.rollLastChance + cleanWeight). */
+export function entryGrid(round, diceDrought) {
+  return R.spinGrid(cleanWeight(round, diceDrought));
+}
+
+/** Лучший множитель паттернов сетки (lastChance.ts). */
+export function bestMultiplier(grid) {
+  return LC.bestMultiplier(P.evaluateGrid(grid));
+}
+
+/**
+ * Цель от денег (lastChance.ts, lastChanceGoal + chancePrice): нехватка × доля, переведённая в множитель паттерна.
+ * Цена символа берётся по раунду — тем же правилом, что в игре; формула не копируется.
+ */
+export function moneyGoal(need, round, streak, factor, share = SHARE) {
+  return LC.lastChanceGoal(need, LC.chancePrice(round), streak, factor, share);
+}
+
+/** Полная нехватка (share = 1): паттерн должен оплатить весь долг — верхняя граница цели, для сравнения. */
+export function fullGoal(need, round, streak, factor) {
+  return moneyGoal(need, round, streak, factor, 1);
+}
+
+/** Побита ли цель (CollectorScene.finishLastChance). */
+export function isGoalMet(grid, goal) {
+  return LC.isLastChanceGoalMet(bestMultiplier(grid), goal);
+}
+
+/** Перекрут столбца: все три клетки выпадают заново (CollectorScene.rerollColumn). */
+function rerolledColumn(grid, col, weight) {
+  const next = cloneGrid(grid);
+  for (let row = 0; row < R.GRID_ROWS; row++) next[row][col] = R.randomSymbol(weight);
+  return next;
+}
+
+/** Джокер в клетку (CollectorScene.placeJoker). */
+function withJoker(grid, row, col) {
+  const next = cloneGrid(grid);
+  next[row][col] = R.JOKER;
+  return next;
+}
+
+/**
+ * Одно действие жадной политики: наибольшая вероятность побить цель, при равенстве — больший средний лучший
+ * множитель. Джокер считается точно, перекрут — выборкой GREEDY_SAMPLES исходов на столбец.
+ */
+export function chooseAction(grid, goal, weight, samples = GREEDY_SAMPLES) {
+  let best = null;
+  const better = (candidate) => !best || candidate.p > best.p || (candidate.p === best.p && candidate.mean > best.mean);
+  // Джокер: подстановка известна заранее, поэтому вероятность 0 или 1. В занятую джокером клетку игра не даёт.
+  for (let row = 0; row < R.GRID_ROWS; row++) {
+    for (let col = 0; col < R.GRID_COLUMNS; col++) {
+      if (grid[row][col].id === R.JOKER.id) continue;
+      const trial = withJoker(grid, row, col);
+      const bestAfter = bestMultiplier(trial);
+      const action = { kind: 'joker', row, col, p: LC.isLastChanceGoalMet(bestAfter, goal) ? 1 : 0, mean: bestAfter };
+      if (better(action)) best = action;
+    }
+  }
+  // Перекрут: какая из трёх клеток выпадет — неизвестно, вероятность оцениваем выборкой.
+  for (let col = 0; col < R.GRID_COLUMNS; col++) {
+    let wins = 0;
+    let sum = 0;
+    for (let k = 0; k < samples; k++) {
+      const bestAfter = bestMultiplier(rerolledColumn(grid, col, weight));
+      if (LC.isLastChanceGoalMet(bestAfter, goal)) wins += 1;
+      sum += bestAfter;
+    }
+    const action = { kind: 'reroll', col, p: wins / samples, mean: sum / samples };
+    if (better(action)) best = action;
+  }
+  return best;
+}
+
+function applyAction(grid, action, weight) {
+  return action.kind === 'joker' ? withJoker(grid, action.row, action.col) : rerolledColumn(grid, action.col, weight);
+}
+
+/**
+ * Играет последний шанс по жадной политике. Возвращает { won, goal, goalFull, actions, instant, firstWin }.
+ * Цель считается от денег: need — сколько фишек не хватило, streak — множитель серии, factor — множители выигрыша
+ * (амулеты и автомат, как в addToPot). Действий всегда LAST_CHANCE_ACTIONS: игра не даёт проверить исход раньше
+ * (после первого действия полоса ждёт второго), поэтому и политика делает оба. firstWin — цель была побита уже
+ * после первого действия (диагностика). instant — входная сетка уже бьёт цель: победа сразу, полоса не открывается.
+ * goalFull — та же цель при share = 1, для сравнения с прежним ориентиром «закрой весь долг».
+ */
+export function playLastChance({ round, diceDrought, need, streak = 1, factor = 1, share = SHARE, samples = GREEDY_SAMPLES }) {
+  const weight = cleanWeight(round, diceDrought);
+  let grid = R.spinGrid(weight);
+  const goal = moneyGoal(need, round, streak, factor, share);
+  const goalFull = fullGoal(need, round, streak, factor);
+  if (isGoalMet(grid, goal)) return { won: true, goal, goalFull, actions: 0, instant: true, firstWin: true };
+  let firstWin = false;
+  for (let step = 0; step < LC.LAST_CHANCE_ACTIONS; step++) {
+    grid = applyAction(grid, chooseAction(grid, goal, weight, samples), weight);
+    if (step === 0) firstWin = isGoalMet(grid, goal);
+  }
+  return { won: isGoalMet(grid, goal), goal, goalFull, actions: LC.LAST_CHANCE_ACTIONS, instant: false, firstWin };
+}
+
+/** Нижняя граница: ничего не делать — побеждает, только если входная сетка уже бьёт цель. */
+export function noActionWin(grid, goal) {
+  return isGoalMet(grid, goal);
+}
+
+/** Самый сильный паттерн без джекпота — из кода игры, не копией: цель выше него закрывает только джекпот. */
+const BEST_WITHOUT_JACKPOT = LC.BEST_WITHOUT_JACKPOT;
+
+/** Та же жадная политика, но с готовой целью (политики сравниваются на одних и тех же числах). */
+export function playWithGoal(grid, goal, weight, samples = GREEDY_SAMPLES) {
+  let state = grid;
+  for (let step = 0; step < LC.LAST_CHANCE_ACTIONS; step++) state = applyAction(state, chooseAction(state, goal, weight, samples), weight);
+  return isGoalMet(state, goal);
+}
+
+/**
+ * Воспроизведение правила игры на настоящих приходах Коллектора: на выборке приходов выдаём чистую сетку того же
+ * раунда и играем ту же политику с целью от нехватки (share из SHARE). Так проверяется, что прогон забегов и
+ * отдельный замер сходятся, а не «сколько было бы при другом правиле».
+ */
+export function rescueRateWithGoal(chances, limit = 2000) {
+  const step = Math.max(1, Math.ceil(chances.length / limit));
+  const sample = chances.filter((_, index) => index % step === 0);
+  let won = 0;
+  let reachable = 0;
+  const goals = [];
+  for (const chance of sample) {
+    const goal = moneyGoal(chance.need, chance.round, chance.streak, chance.factor);
+    goals.push(goal);
+    if (goal < BEST_WITHOUT_JACKPOT) reachable += 1; // без джекпота потолок — ×10, а нужно best > goal
+    const weight = cleanWeight(chance.round, chance.diceDrought);
+    if (playWithGoal(R.spinGrid(weight), goal, weight)) won += 1;
+  }
+  const sorted = [...goals].sort((a, b) => a - b);
+  return {
+    won: sample.length > 0 ? won / sample.length : 0,
+    count: sample.length,
+    goalMedian: sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0,
+    reachable: sample.length > 0 ? reachable / sample.length : 0,
+    share: SHARE,
+  };
+}
+
+/** Жадная политика на уже выданной сетке (для сравнения политик на одних и тех же сетках). */
+export function greedyWin(grid, goal, weight, samples = GREEDY_SAMPLES) {
+  let state = grid;
+  for (let step = 0; step < LC.LAST_CHANCE_ACTIONS; step++) state = applyAction(state, chooseAction(state, goal, weight, samples), weight);
+  return isGoalMet(state, goal);
+}
+
+/**
+ * Верхняя оценка — перебор всех пар действий: на первом шаге 5 перекрутов (исходы выборкой) и 15 джокеров (точно),
+ * на втором — то же самое для каждой получившейся сетки. Возвращает оценку вероятности побить цель.
+ * Это не точная граница: исходы перекрута перебираются выборкой (ORACLE_FIRST × ORACLE_SECOND), иначе пришлось бы
+ * считать 1331 исход на столбец на каждом шаге — на 200 сетках это часы.
+ */
+export function oracleWin(grid, goal, weight, first = ORACLE_FIRST, second = ORACLE_SECOND) {
+  const secondValue = (state) => {
+    let best = 0;
+    for (let row = 0; row < R.GRID_ROWS; row++) {
+      for (let col = 0; col < R.GRID_COLUMNS; col++) {
+        if (state[row][col].id === R.JOKER.id) continue;
+        if (LC.isLastChanceGoalMet(bestMultiplier(withJoker(state, row, col)), goal)) return 1; // джокер выигрывает
+      }
+    }
+    for (let col = 0; col < R.GRID_COLUMNS; col++) {
+      let wins = 0;
+      for (let k = 0; k < second; k++) if (LC.isLastChanceGoalMet(bestMultiplier(rerolledColumn(state, col, weight)), goal)) wins += 1;
+      if (wins / second > best) best = wins / second;
+    }
+    return best;
+  };
+  let best = 0;
+  for (let row = 0; row < R.GRID_ROWS; row++) {
+    for (let col = 0; col < R.GRID_COLUMNS; col++) {
+      if (grid[row][col].id === R.JOKER.id) continue;
+      const value = secondValue(withJoker(grid, row, col));
+      if (value > best) best = value;
+      if (best === 1) return 1;
+    }
+  }
+  for (let col = 0; col < R.GRID_COLUMNS; col++) {
+    let sum = 0;
+    for (let k = 0; k < first; k++) sum += secondValue(rerolledColumn(grid, col, weight));
+    if (sum / first > best) best = sum / first;
+  }
+  return best;
+}
+
+/** Фиксированные сетки и выборки для отчёта: ГКЧ подменяет Math.random, чтобы прогон повторялся. */
+function withSeed(seed, fn) {
+  const original = Math.random;
+  let state = seed >>> 0;
+  Math.random = () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  try {
+    return fn();
+  } finally {
+    Math.random = original;
+  }
+}
+
+const pct = (n) => `${Math.round(n * 1000) / 10}%`;
+const f = (n, d = 2) => n.toFixed(d).replace('.', ',');
+
+/**
+ * Три политики на одних и тех же зафиксированных сетках: «без действий», жадная, перебор всех пар действий.
+ * Сетки разные по раундам и засухе кубика — символы входят в автомат по раундам, веса от этого зависят.
+ * Цель — от денег (moneyGoal), а денег в этом замере нет: синтетическая нехватка = весь долг раунда, множители
+ * серии и выигрыша ×1. Это худший приход Коллектора — сетки сравниваются по политике, а не по балансу.
+ */
+export function comparePolicies(count = BOUND_GRIDS, seed = SIM_SEED) {
+  return withSeed(seed, () => {
+    const rows = [];
+    let noWin = 0;
+    let greedy = 0;
+    let oracle = 0;
+    let above = 0; // сетки, где жадная оказалась выше перебора (ошибка выборки, должно быть 0)
+    let instant = 0;
+    for (let i = 0; i < count; i++) {
+      const round = 1 + (i % 10);
+      const drought = i % 6;
+      const weight = cleanWeight(round, drought);
+      const grid = R.spinGrid(weight);
+      const goal = moneyGoal(R.debtForRound(round), round, 1, 1);
+      const instantWin = noActionWin(grid, goal) ? 1 : 0; // входная сетка уже бьёт цель
+      if (instantWin) instant += 1;
+      const gr = instantWin ? 1 : (greedyWin(grid, goal, weight) ? 1 : 0);
+      const or = instantWin ? 1 : oracleWin(grid, goal, weight);
+      noWin += instantWin;
+      greedy += gr;
+      oracle += or;
+      if (gr > or) above += 1;
+      rows.push({ round, goal, no: instantWin, gr, or });
+    }
+    const played = rows.length;
+    return { rows, played, instant, no: noWin / played, greedy: greedy / played, oracle: oracle / played, above };
+  });
+}
+
+const median = (list) => {
+  const sorted = [...list].sort((a, b) => a - b);
+  return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
 };
 
-/** Вес символа в последнем шансе — как full-run.mjs: раунд, характер автомата, амулеты, предметы (их нет), фаза. */
-function weightOf(s) {
-  const base = R.weightsForRound(s.round, E.diceWeight(s.diceDrought));
-  const owned = A.amuletIdsFrom(s.amuletCounts);
-  return (symbol) => {
-    const machined = C.characterWeight(symbol, A.amuletWeight(symbol, base(symbol), owned), s.machine);
-    const weighted = I.boostWeight(symbol, machined, s.effects);
-    return PH.phaseWeight(symbol, weighted, s.phase);
-  };
-}
-
 /**
- * Состояние забега перед последним шансом: раунд, его долг, фишки на табло и доля порога.
- * shortfall — сколько до долга не хватало (debt − balance), когда пришёл Коллектор; по умолчанию — весь долг.
- * share — доля НЕХВАТКИ для порога: по умолчанию LAST_CHANCE_SHARE из lastChance.ts, своя нужна подбору числа.
- * diceDrought — сколько прокруток подряд не было 🎲 к приходу Коллектора: от него вес кубика (как в раунде).
+ * Диагноз последнего шанса по настоящим приходам Коллектора: какая цель выходит из нехватки фишек, какой паттерн её
+ * бьёт и сколько нехваток спасается. Числа — правило игры при доле SHARE (в шапке отчёта), не ориентир.
  */
-export function newLastChanceState(round, counts = {}, machine = C.ORDINARY, share = LC.LAST_CHANCE_SHARE, shortfall = null, diceDrought = 0) {
-  const debt = C.characterDebt(R.debtForRound(round), machine); // долг раунда — как в магазине (full-run.openShop)
-  const missing = Math.max(0, Math.min(debt, shortfall ?? debt));
-  const owned = A.amuletIdsFrom(counts);
-  return {
-    round, debt, machine, balance: debt - missing, share,
-    pot: 0, streak: 0, bones: 0, diceDrought,
-    roundShields: A.vestShields(owned), // бронежилет: в начале раунда щитов полный запас
-    amuletCounts: { ...counts }, effects: I.noEffects(), phase: PH.phaseAt(round - 1),
-  };
+export function chanceReport(chances) {
+  const total = chances.length;
+  if (total === 0) {
+    console.log('последнего шанса не было ни разу');
+    return;
+  }
+  const rescued = (list) => (list.length ? list.filter((chance) => chance.won).length / list.length : 0);
+  const share = (list) => list.length / total;
+  console.log(`\nцель последнего шанса — ${f(SHARE, 2)} нехватки фишек, выраженные в множителе паттерна (${total} приходов Коллектора):`);
+  console.log('паттерн  шансов  доля    спасено');
+  for (const pattern of [...new Set(chances.map((chance) => LC.goalPattern(chance.goal)))].sort((a, b) => a - b)) {
+    const same = chances.filter((chance) => LC.goalPattern(chance.goal) === pattern);
+    console.log(`×${String(pattern).padEnd(7)}${String(same.length).padEnd(8)}${pct(share(same)).padEnd(8)}${pct(rescued(same))}`);
+  }
+  const cumulative = [
+    ['цель 0', (chance) => chance.goal === 0],
+    ['цель ≤ ×1', (chance) => chance.goal < 1],
+    ['цель ≤ ×2', (chance) => chance.goal <= 2],
+    ['цель ≤ ×4', (chance) => chance.goal <= 4],
+    ['цель у потолка ×10', (chance) => chance.goal >= BEST_WITHOUT_JACKPOT],
+  ];
+  for (const [name, test] of cumulative) {
+    const same = chances.filter(test);
+    console.log(`  ${name.padEnd(20)} доля ${pct(share(same)).padEnd(7)} спасено ${pct(rescued(same))}`);
+  }
+  const withActions = chances.filter((chance) => !chance.instant);
+  const oneAction = withActions.filter((chance) => chance.firstWin).length;
+  const lostAfterFirst = withActions.filter((chance) => chance.firstWin && !chance.won).length;
+  const actions = withActions.reduce((sum, chance) => sum + chance.actions, 0) / Math.max(withActions.length, 1);
+  console.log(`действия: ${f(actions, 2)} на шанс; после первого действия цель уже побита в ${pct(oneAction / Math.max(withActions.length, 1))} случаев, второе действие её разрушило в ${pct(lostAfterFirst / Math.max(withActions.length, 1))}`);
+  const rule = rescueRateWithGoal(chances);
+  console.log(`правило игры (доля ${f(rule.share, 2)}, ${rule.count} приходов, та же политика): медиана цели ×${f(rule.goalMedian, 1)}, цель ниже потолка ×10 в ${pct(rule.reachable)} приходов, спасено ${pct(rule.won)}`);
 }
 
-/**
- * Последний шанс: кон 0, серия 0, до LAST_CHANCE_SPINS прокруток. Прокрутка считается как в игре (evaluateLastChance):
- * черепа — бронежилет отбивает паттерн, иначе кон сгорает (страховка оставляет его на кону, не на табло), а кровавые
- * черепа жгут ещё и фишки на табло; выигрыш — цена паттернов × множитель серии × множитель амулетов и характера
- * (кровавая прокрутка — ещё ×BLOOD_WIN); пустая — копилка; пауки съедают долю кона; серия +1 за прокрутку без черепов.
- * Автомат встаёт, как только кон взял порог: это верхняя граница человеческой игры — живой игрок видит кон и ждёт ровно столько.
- * st и g — как у остальных шагов full-run: решений игрок здесь не принимает (ставка не нужна), в g копится, сколько
- * прокруток автомат успел сделать. Возвращает 'survived' | 'dead'. Экспорт для full-run.mjs: обратного импорта нет, цикла не будет.
- */
-export function playLastChance(s, st, g) {
-  s.pot = 0;
-  s.streak = 0;
-  const owned = A.amuletIdsFrom(s.amuletCounts);
-  // Щиты тратятся в том же порядке, что RoundScene.onSkulls: сначала остаток бронежилета этого раунда, потом щит
-  // с полки. Остаток пишется обратно в состояние — щит, сгоревший в шансе, не должен ждать следующего раунда.
-  const hasShield = () => (s.roundShields ?? 0) + (s.effects?.shields ?? 0) > 0;
-  const spendShield = () => {
-    if ((s.roundShields ?? 0) > 0) s.roundShields -= 1;
-    else if ((s.effects?.shields ?? 0) > 0) s.effects.shields -= 1;
-  };
-  const share = s.share ?? LC.LAST_CHANCE_SHARE;
-  const need = () => Math.ceil(share * Math.max(0, s.debt - s.balance)); // табло могло сгореть — порог растёт
-  let spins = 0;
-  let won = false;
-  for (; spins < LC.LAST_CHANCE_SPINS; spins++) {
-    const mult = R.multiplierForStreak(s.streak, A.multiplierStep(owned) + s.phase.multiplierBonus);
-    const grid = R.spinGrid(weightOf(s));
-    const isBloody = s.isBloodNext; // кровь была в прошлой прокрутке — эта кровавая
-    s.isBloodNext = E.cellsOf(grid, 'blood').length > 0;
-    const result = P.evaluateGrid(grid);
-    if (result.kind === 'skull') {
-      s.bones += 1; // черепа идут в кости — как в раунде
-      if (hasShield()) { spendShield(); s.streak += 1; } // отбил щит
-      else {
-        s.pot = A.insuranceRefund(s.pot, owned); // страховка оставляет кон на кону
-        s.streak = 0;
-        if (isBloody) s.balance -= E.bloodBurn(s.balance); // кровавые черепа жгут ещё и табло (burnBoard)
-      }
-    } else {
-      s.streak += 1;
-      if (result.kind === 'win') {
-        const win = A.amuletPatternWin(result.hits, owned);
-        const factor = A.winFactor(owned, s.bones) * (isBloody ? E.BLOOD_WIN : 1) * s.machine.winFactor;
-        s.pot += Math.round(win * mult * factor);
-      } else s.pot += A.piggyCoins(mult, owned);
-      s.pot -= E.spiderBite(s.pot, E.cellsOf(grid, 'spider').length);
-    }
-    if (s.pot >= need()) { won = true; spins += 1; break; }
-  }
-  if (g) g.lastChanceSpins = spins; // сколько прокруток автомат успел сделать — пригодится в сводке забега
-  return won ? 'survived' : 'dead';
-}
-
-/** Ячейка таблицы: доля выживших и средний кон в порогах за trials шансов. */
-function cell(round, counts, trials, pickMachine, shortfall, share = LC.LAST_CHANCE_SHARE, diceDrought = 0) {
-  let survived = 0;
-  let pot = 0;
-  let debt = 0;
-  let need = 0;
-  for (let i = 0; i < trials; i++) {
-    const s = newLastChanceState(round, counts, pickMachine(), share, shortfall, diceDrought);
-    debt = s.debt;
-    if (playLastChance(s) === 'survived') survived += 1;
-    need = Math.ceil(share * Math.max(0, s.debt - s.balance)); // после кровавых черепов табло могло сгореть
-    pot += need > 0 ? s.pot / need : 1;
-  }
-  return { survived: survived / trials, pot: pot / trials, debt, need };
-}
-
-/** Автомат проб: обычный — как в начале забега. */
-const ORDINARY = () => C.ORDINARY;
-/** Автомат проб: любой за забег — к 4–8-му раунду обычный успевает смениться (характеры приходят событием). */
-const ANY_MACHINE = () => [C.ORDINARY, ...C.CHARACTERS][Math.floor(Math.random() * (C.CHARACTERS.length + 1))];
-
-const pct = (n) => `${Math.round(n * 100)}%`;
-const f = (n, d = 2) => n.toFixed(d).replace('.', ',');
-const perAttempt = (x) => (x.lastChances > 0 ? x.survived / x.lastChances : 0); // выжил на попытку, а не на забег
-
-async function report(trials, games) {
-  const rounds = [3, 4, 5, 6, 7, 8, 9, 10, 11];
-  // Кривая из полного забега: сколько не хватало, когда последний шанс был (шанс один за забег, шаг 68).
-  // Импорт динамический: full-run.mjs сам импортирует playLastChance отсюда — статический дал бы цикл.
-  const F = await import('./full-run.mjs');
-  const chosen = F.study(games, LC.LAST_CHANCE_SHARE);
-  const curve = chosen.curve;
-  const drought = chosen.drought; // медиана «сколько прокруток без кубика» к приходу Коллектора — вес 🎲 в последнем шансе
-  const actual = rounds.filter((round) => curve.has(round)); // раунды, где шанс действительно случается
-
-  console.log(`последний шанс, доля нехватки ${f(LC.LAST_CHANCE_SHARE, 3)}, прокруток ${LC.LAST_CHANCE_SPINS}, ${trials} проб на ячейку, обычный автомат`);
-  console.log(`кривая нехватки из full-run, ${games} забегов: ${actual.map((round) => `${round}: ${curve.get(round)}`).join(', ')}`);
-  console.log(`забег: ${f(chosen.summary.closed)} долгов, ${f(chosen.summary.minutes, 1)} мин; шансов ${f(chosen.summary.lastChances)}, выжил ${pct(perAttempt(chosen.summary))} из них`);
-  console.log(`${'раунд'.padEnd(6)}${'долг'.padEnd(7)}${'нехватка'.padEnd(10)}${'порог'.padEnd(8)}без амулетов            типовой набор (boost, vest, piggy, bones)`);
-  for (const round of actual) {
-    const line = [`${String(round).padEnd(6)}`];
-    const parts = [];
-    let debt = 0;
-    let need = 0;
-    for (const [, counts] of Object.entries(AMULET_SETS)) {
-      const got = cell(round, counts, trials, ORDINARY, curve.get(round), LC.LAST_CHANCE_SHARE, drought.get(round) ?? 0);
-      debt = got.debt;
-      need = got.need;
-      parts.push(`${pct(got.survived)} выжил (${f(got.pot, 1)} порога)`.padEnd(24));
-    }
-    line.push(`${String(debt).padEnd(7)}${String(curve.get(round)).padEnd(10)}${String(need).padEnd(8)}`, ...parts);
-    console.log(line.join(''));
-  }
-
-  // Подбор доли (шаг 68): длина забега и выживаемость на попытку — на одних и тех же забегах (full-run.study).
-  // Цели: забег 6,5–8,5 долгов, 8–13 мин, выжил 65–75% попыток.
-  console.log(`\nподбор доли нехватки (порог = доля × (долг − фишки)), по ${games} забегов и 1000 проб на раунд:`);
-  const sweep = [0.02, 0.03, 0.05, 0.1, 0.15, 0.2];
-  for (const share of sweep) {
-    const { summary, curve: own, drought: ownDrought } = F.study(games, share);
-    const ownRounds = rounds.filter((round) => own.has(round));
-    const byRound = ownRounds.map((round) => Math.round(cell(round, AMULET_SETS.typical, 1000, ORDINARY, own.get(round), share, ownDrought.get(round) ?? 0).survived * 100));
-    const mark = share === LC.LAST_CHANCE_SHARE ? ' ←' : '';
+export function roundReport(studyResult) {
+  const { summary, rounds } = studyResult;
+  console.log(`\nпоследний шанс по раундам (${summary.lastChances} на забег, спасено ${pct(summary.rescue)}, мгновенных ${pct(summary.instantShare)}, доля цели ${f(SHARE, 2)}):`);
+  console.log('раунд  шансов  спасено  мгновенно  действий  цель    паттерн  нехватка');
+  for (const [round, row] of [...rounds].sort((a, b) => a[0] - b[0])) {
+    if (row.count < 3) continue; // слишком мало случаев — строка ничего не говорит
+    const goal = median(row.goal);
     console.log(
-      `доля ${f(share)}  забег ${f(summary.closed)} (мед ${summary.median}), ${f(summary.minutes, 1)} мин | шансов ${f(summary.lastChances)}, выжил ${pct(perAttempt(summary))} | типовой по раундам ${ownRounds.map((round, i) => `${round}: ${byRound[i]}`).join(' ')}${mark}`,
+      `${String(round).padEnd(7)}${String(row.count).padEnd(8)}${pct(row.won / row.count).padEnd(9)}${pct(row.instant / row.count).padEnd(11)}`
+      + `${f(row.actions / row.count, 1).padEnd(10)}${f(goal, 1).padEnd(8)}×${String(LC.goalPattern(goal)).padEnd(7)}${median(row.deficit)}`,
     );
   }
-
-  console.log('\nвыбранная доля на любом автомате забега, 5000 проб, раунды 4–11:');
-  for (const [name, counts] of Object.entries(AMULET_SETS)) {
-    const byRound = [];
-    for (const round of rounds) byRound.push(curve.has(round) ? pct(cell(round, counts, 5000, ANY_MACHINE, curve.get(round), LC.LAST_CHANCE_SHARE, drought.get(round) ?? 0).survived) : '—');
-    console.log(`  ${name.padEnd(8)} ${byRound.join(' ')}`);
-  }
 }
 
-if (import.meta.filename === process.argv[1]) void report(Number(process.argv[2] ?? 20000), Number(process.argv[3] ?? 2000));
+if (import.meta.filename === process.argv[1]) {
+  const check = comparePolicies();
+  console.log(`границы политик на ${check.played} зафиксированных сетках (раунды 1-10, засуха кубика 0-5, доля цели ${f(SHARE, 2)}, синтетическая нехватка = долг раунда, множители ×1):`);
+  console.log(`  без действий ${pct(check.no)} (входная сетка уже бьёт цель — ${check.instant} сеток) | жадная (N=${GREEDY_SAMPLES}) ${pct(check.greedy)} | перебор пар действий ${pct(check.oracle)} | жадная выше перебора ${check.above} | сид ${SIM_SEED}`);
+  for (const pattern of [...new Set(check.rows.map((row) => LC.goalPattern(row.goal)))].sort((a, b) => a - b)) {
+    const same = check.rows.filter((row) => LC.goalPattern(row.goal) === pattern);
+    const share = (key) => same.reduce((a, row) => a + row[key], 0) / same.length;
+    console.log(`  цель ×${pattern}: сеток ${same.length}, без действий ${pct(share('no'))}, жадная ${pct(share('gr'))}, перебор ${pct(share('or'))}`);
+  }
+  console.log('доля спасений по раундам — отдельный прогон: SIM_ROUNDS=1 node --import ./ts-resolve.mjs full-run.mjs [игр]');
+}

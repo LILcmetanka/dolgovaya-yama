@@ -1,10 +1,13 @@
 import Phaser from 'phaser';
 import { amuletIdsFrom, multiplierStep, START_SOCKETS, type Amulet, type AmuletCounts, type AmuletId } from '../amulets';
 import { resetCodex } from '../codex';
+import { CHIP_GOAL } from '../gameConfig';
 import { garlicOn, noEffects, START_SLOTS, type Item, type ItemEffects, type ShopItem } from '../items';
+import { formatChips, t } from '../lang';
 import { PHASES, type Phase } from '../phases';
 import { newMachineSet, type MachineId, type MachineSet, type MachineState } from '../machines';
-import { markTutorialDone } from '../progress';
+import type { Pattern } from '../patterns';
+import { hasPattern, markPatternOpen, markTutorialDone, openedPatterns } from '../progress';
 import { debtForRound, multiplierForStreak, SPINS_PER_ROUND } from '../rules';
 import type { RunSave, TapeState } from '../save';
 import { Sound } from '../sound';
@@ -34,10 +37,13 @@ import type { WallScreen } from '../parts/wallScreen';
 import type { Tooltip } from '../parts/tooltip';
 
 const RECORD_KEY = 'dolgovaya-yama-record'; // ключ рекорда в localStorage
+const CHIP_RECORD_KEY = 'dolgovaya-yama-chip-record'; // ключ рекорда набранных за забег фишек (отметка CHIP_RECORD)
 const ANGRY_TENSION = 0.25; // фаза 2: столько тревоги добавляется — сердце в музыке бьётся чаще
 // Записка светится (долг можно отдать раньше) только на последних прокрутках: если она горит сразу, её нажимают
 // и не докручивают раунд себе в плюс (практика 3). Отдать раньше (D или клик) можно и до этого.
 const PAY_EARLY_GLOW_SPINS = 3;
+// Пороги по пути к цели: на них на стекле новость «НАБРАНО N · M% ЦЕЛИ» (1 000 000 — уже победа, не новость).
+const CHIP_MILESTONES = [100_000, 500_000];
 
 /** Рекорд из localStorage. Если хранилище недоступно — 0, игра работает и так. */
 function loadRecord(): number {
@@ -58,6 +64,25 @@ function saveRecord(record: number): void {
   }
 }
 
+/** Рекорд набранных фишек из localStorage. Если хранилище недоступно — 0, игра работает и так. */
+function loadChipRecord(): number {
+  try {
+    const saved = Number(localStorage.getItem(CHIP_RECORD_KEY));
+    return Number.isFinite(saved) && saved > 0 ? saved : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Сохранить рекорд набранных фишек. Не получилось — не страшно: экран победы покажет рекорд этого забега. */
+function saveChipRecord(record: number): void {
+  try {
+    localStorage.setItem(CHIP_RECORD_KEY, String(record));
+  } catch {
+    // хранилище недоступно — играем без сохранения
+  }
+}
+
 /**
  * Сцена игры собрана слоями — каждый слой в своём файле добавляет свою часть игры:
  * BaseScene (состояние забега и табло) → PhaseScene (фазы) → BonusScene (короны, клевер, джекпот) →
@@ -75,6 +100,9 @@ export abstract class BaseScene extends Phaser.Scene {
   protected round = 0; // номер раунда: какой по счёту долг закрываем
   protected debt = 0; // долг этого раунда
   protected balance = 0; // фишки на табло — твои; из них в конце раунда отдаётся долг
+  protected earned = 0; // сколько игра отдала за забег (все приходы на табло): цель забега — chipGoal
+  protected chipGoal = CHIP_GOAL; // порог, к которому идёт забег: 1 000 000, а после «ДАЛЬШЕ» — 10 000 000 (CHIP_RECORD)
+  protected chipRecord = 0; // лучший earned на конец забега (localStorage): экран победы и рекорда
   protected tickets = 0; // билеты 🎟 на табло — на амулеты и гнёзда
   protected spinsLeft = 0; // сколько прокруток осталось в раунде
   protected pot = 0; // кон: выиграно, но ещё не забрано — паттерн из черепов сжигает его
@@ -105,17 +133,20 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isDebtNewsShown = false; // в этом раунде уже показали «НА ДОЛГ ХВАТАЕТ» — второй раз не показываем
   protected diceDrought = 0; // сколько прокруток подряд не было кубика — его шанс растёт («подстраховка»)
   protected isBloodNext = false; // на экране была кровь: следующая прокрутка кровавая
-  protected isLuckyNext = false; // на экране был клевер: следующая прокрутка — с паттерном наверняка
+  protected luckyClovers = 0; // сколько клеверов висит на сетке: следующая прокрутка — с паттерном, и чем их больше, тем сильнее
   protected freeSpins = 0; // сколько бесплатных прокруток за короны ещё впереди — они крутятся сами
   protected freeSpinsGiven = 0; // сколько бесплатных прокруток уже дали в этом раунде — потолок MAX_FREE_SPINS_PER_ROUND
   protected phase: Phase = PHASES[0]; // какая фаза сейчас (phases.ts) — по числу закрытых долгов
   protected tapeState: TapeState = 'forSale'; // кассета: продаётся, чистая (в REC) или записана (в PLAY)
   protected tapesBought = 0; // сколько кассет куплено за забег — от этого цена; откат этого числа не откатывает
   protected tapeRecord: RunSave | null = null; // что записано на кассету: забег в начале раунда
+  protected patternSet: string[] = []; // какие паттерны открыты в этом забеге: только их схемы видно на стекле
   protected isSpinning = false; // сетка крутится — ввод игнорируется
   protected isRerolling = false; // окно перемешки и подмены открыто: сетку ещё не посчитали, кроме выбора ничего нельзя
   protected isRoundOver = false; // прокрутки кончились — расплата и магазин, крутить и забирать нельзя
   protected isShopping = false; // панель магазина опущена — можно покупать (пока крутится барабан — нельзя)
+  protected isShopOpen = false; // панель магазина вообще на экране (и когда покупки закрыты: крутится барабан)
+  protected isVictoryPending = false; // цель взята, но победа ждёт конца текущего действия (CollectorScene.checkChipGoal)
   protected isAwaitingPayment = false; // банкомат выехал и фишек хватает — ждём «отдать» (клик по банкомату или Enter)
   protected isDealing = false; // идёт игра Дилера «больше или меньше» — крутить и забирать нельзя
   protected isLastChance = false; // фишек не хватило: одна чистая прокрутка и два действия игрока (CollectorScene)
@@ -160,6 +191,9 @@ export abstract class BaseScene extends Phaser.Scene {
     this.round = 1;
     this.debt = debtForRound(1);
     this.balance = 0;
+    this.earned = 0;
+    this.chipGoal = CHIP_GOAL; // новый забег снова идёт к миллиону; 10 000 000 — только после «ДАЛЬШЕ»
+    this.chipRecord = loadChipRecord();
     this.tickets = 0;
     this.spinsLeft = SPINS_PER_ROUND;
     this.pot = 0;
@@ -182,13 +216,14 @@ export abstract class BaseScene extends Phaser.Scene {
     this.isDebtNewsShown = false;
     this.diceDrought = 0;
     this.isBloodNext = false;
-    this.isLuckyNext = false;
+    this.luckyClovers = 0;
     this.freeSpins = 0;
     this.freeSpinsGiven = 0;
     this.phase = PHASES[0];
     this.tapeState = 'forSale';
     this.tapesBought = 0;
     this.tapeRecord = null;
+    this.patternSet = [...openedPatterns()]; // открытое копится навсегда: «заново» и конец забега схемы не гасят
     this.isDealing = false;
     this.isLastChance = false;
     this.secondWindUsed = false;
@@ -197,8 +232,10 @@ export abstract class BaseScene extends Phaser.Scene {
     this.isRerolling = false;
     this.isRoundOver = false;
     this.isShopping = false;
+    this.isShopOpen = false;
     this.isAwaitingPayment = false;
     this.isGameOver = false;
+    this.isVictoryPending = false;
     this.isRewinding = false;
     this.isPaused = false;
     this.isAtMonitor = false;
@@ -213,6 +250,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.panel.showMultiplier(this.multiplier());
     this.panel.showSpinsLeft(this.spinsLeft);
     this.panel.showFreeSpins(this.freeSpins);
+    this.monitor.showGoal(this.earned, this.chipGoal); // цель забега на вкладке «Как играть» — по набранному сейчас
     // В последнем шансе цели в окошке нет: её показывает полоса последнего шанса, а «забрать» там нечего.
     this.payout.setGoal(null);
     this.payout.showPot(this.pot, this.debt);
@@ -225,6 +263,45 @@ export abstract class BaseScene extends Phaser.Scene {
     this.sfx.setTension(tension);
     this.atmosphere.setTension(tension);
   }
+
+  /**
+   * Доход на табло. Через эту дверь идут ВСЕ приходы фишек за забег: забранный кон (payPot), возврат страховки
+   * (burnPot), «Проценты» (payDebt) и барабан (winDrum). earned меряет, сколько игра отдала за забег: долг его
+   * не уменьшает, а штрафы (кровавая прокрутка) сюда не идут — это не доход.
+   * После прибавки — новость порога и проверка цели забега (её делает CollectorScene: там же смерть).
+   * Рекорд здесь не пишется: chipRecord фиксируется по концу забега (победа, рекорд или KABOOM).
+   */
+  protected earn(amount: number): void {
+    if (amount <= 0) return;
+    const before = this.earned;
+    this.balance += amount;
+    this.earned += amount;
+    this.announceChipMilestone(before);
+    this.checkChipGoal();
+  }
+
+  /** Лучший earned на конец забега: больше прежнего — запоминаем в localStorage. Зовут концовки забега. */
+  protected updateChipRecord(): void {
+    if (this.earned <= this.chipRecord) return;
+    this.chipRecord = this.earned;
+    saveChipRecord(this.chipRecord);
+  }
+
+  /** Набранное перевалило порог (100 000, 500 000) — новость на стекле. Порогов сразу два не бывает: показываем старший. */
+  private announceChipMilestone(before: number): void {
+    const crossed = CHIP_MILESTONES.filter((milestone) => before < milestone && this.earned >= milestone);
+    const milestone = crossed.at(-1);
+    if (milestone === undefined) return;
+    const percent = Math.round((milestone / this.chipGoal) * 100);
+    this.screen.announceNews(t('chipsMilestone', formatChips(milestone), percent));
+    this.sfx.play('news', 0.3);
+  }
+
+  /**
+   * Дошли до цели забега — chipGoal (1 000 000, после «ДАЛЬШЕ» — 10 000 000). Здесь пусто: победу делает CollectorScene
+   * (в нём же KABOOM и экран DEATH) — только он знает, можно ли гасить лампы сейчас или надо дождаться конца анимации.
+   */
+  protected checkChipGoal(): void {}
 
   /** Насколько близко беда — от неё бьётся «сердце» в музыке: не хватает на долг, а прокрутки кончаются. */
   protected tension(): number {
@@ -245,7 +322,7 @@ export abstract class BaseScene extends Phaser.Scene {
    * тёмно-красные, действует чеснок — бледно-зелёные, фаза 2 — оранжевые, иначе золото.
    */
   protected calmLampColor(): number {
-    if (this.isLuckyNext) return LAMP_LUCK;
+    if (this.luckyClovers > 0) return LAMP_LUCK;
     if (this.isBloodNext) return LAMP_BLOOD;
     if (garlicOn(this.itemEffects)) return LAMP_GARLIC;
     return this.phase === PHASES[0] ? LAMP_GOLD : LAMP_ANGRY;
@@ -256,7 +333,11 @@ export abstract class BaseScene extends Phaser.Scene {
     return amuletIdsFrom(this.amuletCounts);
   }
 
-  /** Можно ли сейчас крутить, забирать и включать предметы. Пока впереди бесплатные прокрутки — нельзя: они крутятся сами. */
+  /**
+   * Можно ли сейчас крутить, забирать и включать предметы. Пока впереди бесплатные прокрутки — нельзя: они крутятся сами.
+   * Пока цель взята, но победа ждёт конца действия (isVictoryPending) — тоже нельзя: иначе кассета успела бы
+   * откатить забег, а новая прокрутка начаться за экраном победы.
+   */
   protected canAct(): boolean {
     return (
       !this.isSpinning &&
@@ -264,6 +345,7 @@ export abstract class BaseScene extends Phaser.Scene {
       !this.isRoundOver &&
       !this.isDealing &&
       !this.isGameOver &&
+      !this.isVictoryPending &&
       !this.isRewinding &&
       !this.isPaused &&
       !this.isAtMonitor &&
@@ -295,7 +377,7 @@ export abstract class BaseScene extends Phaser.Scene {
 
   /** Можно ли откатиться: есть запись и сейчас между прокрутками (в последнем шансе и у Коллектора — уже нельзя). */
   protected canRewind(): boolean {
-    return this.tapeState === 'recorded' && !this.isRewinding && !this.isGameOver && this.canAct();
+    return this.tapeState === 'recorded' && !this.isRewinding && !this.isGameOver && !this.isVictoryPending && this.canAct();
   }
 
   /**
@@ -310,6 +392,27 @@ export abstract class BaseScene extends Phaser.Scene {
   /** Из тьмы первого забега проступает записка с долгом (третья прокрутка). */
   protected openRevealNote(): void {
     this.reveal?.openNote();
+  }
+
+  /**
+   * Паттерн выпал на сетке: впервые — открываем его навсегда (в браузере) и сразу в этом забеге: схема проступает
+   * на стекле, на стекле же новость «НОВЫЙ ПАТТЕРН ×N». Уже открытый — ничего не делаем: слава о нём уже есть.
+   * После отката кассетой схема может пропасть с плёнки, но открытой навсегда она осталась (hasPattern) — тогда новость
+   * пишет «ПАТТЕРН ×N» без слова «новый»: игрок его уже видел.
+   */
+  protected openPattern(pattern: Pattern): void {
+    if (this.patternSet.includes(pattern.id)) return;
+    const isKnown = hasPattern(pattern.id); // открыт в прошлом забеге (или до отката): «новый» уже неправда
+    markPatternOpen(pattern.id);
+    this.patternSet.push(pattern.id);
+    this.screen.revealPattern(pattern);
+    this.screen.announcePattern(pattern, isKnown);
+    this.sfx.play('news', 0.3);
+  }
+
+  /** Показать на стекле набор этого забега: при создании сцены и после отката кассетой (с набором с записи). */
+  protected setPatternsOnGlass(): void {
+    this.screen.setPatterns(this.patternSet);
   }
 
   /** Коллектор пришёл за долгом — обучение пройдено: тьма гаснет и больше не вернётся. */

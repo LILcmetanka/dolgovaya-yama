@@ -42,7 +42,6 @@ import {
   LED_COLOR,
   LED_STYLE,
   POPUP_DEPTH,
-  POPUP_STYLE,
   pulse,
   RED_TEXT,
 } from '../theme';
@@ -68,17 +67,25 @@ const TICKET_FLY_STAGGER = 120;
 // Окошко множителя.
 const MULTIPLIER_FLASH_TIME = 600; // сколько окошко горит красным после черепов, мс
 const MULTIPLIER_DROP_SCALE = 0.7; // «забрать» уменьшило множитель — число сжимается до такого размера и возвращается
-// Знаки фазы 2 — что изменилось: черепов больше, множитель растёт быстрее. Сначала крупно на стекле под «ФАЗА 2»,
-// потом улетают под окошко множителя и остаются там до конца забега.
-const PHASE_SIGNS = [
-  { text: '💀▲', style: { ...POPUP_STYLE, color: RED_TEXT } },
-  { text: '×▲', style: LED_STYLE }, // светится, как «×N» в окошке множителя
-];
-const PHASE_SIGN_FONT_SIZE = '26px';
+// Знак фазы 2 — что изменилось: одна прокрутка в раунде прибавилась. Он один (×▲): черепов фаза 2 больше не множит
+// (замечание 19), их долю показывает своя строка «💀 N%» слева. Сначала знак крупно на стекле под «ФАЗА 2»,
+// потом улетает под окошко множителя и остаётся там до конца забега.
+const PHASE_SIGN_FONT = 26; // шрифт знака на стекле
+const PHASE_SIGN_FONT_SIZE = `${PHASE_SIGN_FONT}px`;
 const PHASE_SIGN_STEP = 90; // на стекле: от знака до знака
-const PHASE_SIGN_SMALL = 0.5; // под окошком множителя знаки во столько раз меньше…
+const PHASE_SIGN_SMALL = 0.5; // под окошком множителя знак во столько раз меньше…
 const PHASE_SIGN_SMALL_STEP = 44; // …и стоят теснее
 const PHASE_SIGNS_HOME_Y = MULTIPLIER_WINDOW.y + MULTIPLIER_WINDOW.height / 2 + 13; // под окошком множителя
+const PHASE_SIGN_HOME_X = MULTIPLIER_WINDOW.x + PHASE_SIGN_SMALL_STEP / 2; // справа: слева стоит строка доли черепов
+const PHASE_SIGNS = [{ text: '×▲', style: LED_STYLE }]; // светится, как «×N» в окошке множителя
+// Строка доли клеток-черепов «💀 N%» — слева под окошком множителя, видна всегда: игрок должен видеть, как доля растёт.
+// Шрифт тот же, что у уменьшенного знака фазы 2 (26 × 0,5 = 13 px) — новой вёрстки не заводим.
+// Подсказку вешаем на невидимый прямоугольник: текст меняется, и мерить его ширину для наведения не надо.
+const SHARE_FONT_SIZE = `${PHASE_SIGN_FONT * PHASE_SIGN_SMALL}px`;
+const SHARE_X = MULTIPLIER_WINDOW.x - PHASE_SIGN_SMALL_STEP / 2;
+const SHARE_WARN = 0.27; // с такой доли клеток-черепов строка красная — предупреждение
+const SHARE_HINT_WIDTH = 60;
+const SHARE_HINT_HEIGHT = 22;
 const PHASE_SIGNS_HOLD = 2200; // столько мс знаки видны на стекле
 const PHASE_SIGNS_FLY_TIME = 700;
 // Знаки — поверх полосы новости «ФАЗА 2» (она на POPUP_DEPTH). Над панелью магазина их не видно: пока магазин
@@ -126,10 +133,12 @@ function spinLampColor(spinsLeft: number): number {
 /** Приборы на корпусе автомата: табло с фишками, окошко множителя серии, лампочки прокруток и рычаг справа. */
 export class MachinePanel {
   private readonly scene: Phaser.Scene;
+  private readonly hint: Hint; // подсказки приборов: строка доли черепов и знак фазы 2
   private readonly boardText: Phaser.GameObjects.Text; // табло: сколько у тебя фишек
   private readonly ticketsText: Phaser.GameObjects.Text; // табло: сколько у тебя билетов
   private readonly ticketScale: number; // билет на табло во столько раз больше своей картинки — туда долетают билеты
   private readonly multiplierText: Phaser.GameObjects.Text; // окошко множителя серии
+  private readonly skullShareText: Phaser.GameObjects.Text; // строка «💀 N%»: доля клеток-черепов в прокрутке
   private readonly spinLamps: Phaser.GameObjects.Arc[] = []; // лампочки прокруток: одна на прокрутку
   private freeLamps: Phaser.GameObjects.Image[] = []; // бесплатные прокрутки за короны — короны в конце ряда лампочек
   private readonly leverRod: Phaser.GameObjects.Image; // штанга рычага, низ — точка вращения
@@ -143,6 +152,7 @@ export class MachinePanel {
   /** pullLever — что делать, когда рычаг дёрнули кликом (Пробел сцена ловит сама); chooseMode — выбрали режим прокрутки. */
   constructor(scene: Phaser.Scene, pullLever: () => void, hint: Hint, chooseMode: (mode: SpinMode) => void) {
     this.scene = scene;
+    this.hint = hint;
     createChipTextures(scene);
     createTicketTexture(scene);
     createCrownLampTexture(scene);
@@ -161,6 +171,11 @@ export class MachinePanel {
     this.addSpinLamps(SPINS_PER_ROUND);
     // Окошко множителя серии: «×3» — с таким множителем пойдёт следующая прокрутка.
     this.multiplierText = addText(scene, MULTIPLIER_WINDOW.x, MULTIPLIER_WINDOW.y, '', LED_STYLE).setOrigin(0.5);
+    // Доля клеток-черепов — всегда на виду под окошком множителя. Зона подсказки невидима и постоянного размера.
+    this.skullShareText = addText(scene, SHARE_X, PHASE_SIGNS_HOME_Y, '', { fontSize: SHARE_FONT_SIZE }).setOrigin(0.5);
+    const shareZone = scene.add.rectangle(SHARE_X, PHASE_SIGNS_HOME_Y, SHARE_HINT_WIDTH, SHARE_HINT_HEIGHT).setAlpha(0);
+    shareZone.setInteractive();
+    attachHint(shareZone, hint, () => [t('skullShareTitle'), t('skullShareWhat')]);
 
     // Рычаг справа: штанга и шарик на её конце.
     this.leverRod = scene.add.image(LEVER_MOUNT.x, LEVER_MOUNT.y, LEVER_ROD_TEXTURE).setOrigin(0.5, 1);
@@ -323,32 +338,43 @@ export class MachinePanel {
     pulse(this.scene, this.multiplierText);
   }
 
+  /**
+   * Строка «💀 N%»: доля клеток-черепов в следующей платной прокрутке. Долю считает сцена (RoundScene.skullShareNext —
+   * по тем же весам, что и прокрутка), здесь только показ: с SHARE_WARN и выше — красным, как предупреждение.
+   */
+  showSkullShare(share: number): void {
+    this.skullShareText.setText(`💀 ${Math.round(share * 100)}%`);
+    this.skullShareText.setColor(share >= SHARE_WARN ? RED_TEXT : LED_COLOR);
+  }
+
   /** «Забрать» уменьшило множитель — число в окошке сжимается и возвращается (черепа — flashMultiplierRed). */
   dropMultiplier(): void {
     pulse(this.scene, this.multiplierText, MULTIPLIER_DROP_SCALE);
   }
 
   /**
-   * Началась фаза 2: знаки «что изменилось» (PHASE_SIGNS) крупно на стекле под «ФАЗА 2», через PHASE_SIGNS_HOLD
-   * они улетают под окошко множителя, уменьшаются и остаются там до конца забега; окошко подпрыгивает.
+   * Началась фаза 2: знак ×▲ крупно на стекле под «ФАЗА 2», через PHASE_SIGNS_HOLD он улетает под окошко множителя,
+   * уменьшается и остаётся там до конца забега; окошко подпрыгивает. Наведение на знак — что даёт фаза 2.
    */
   flyPhaseSigns(): void {
     for (const sign of this.phaseSigns) sign.destroy();
     this.phaseSigns = PHASE_SIGNS.map((sign, index) => {
-      const offset = index - (PHASE_SIGNS.length - 1) / 2; // знаки по бокам от середины
+      const offset = index - (PHASE_SIGNS.length - 1) / 2; // знак по середине стекла (сейчас он один)
       const style = { ...sign.style, fontSize: PHASE_SIGN_FONT_SIZE };
       const text = addText(this.scene, GLASS.x + offset * PHASE_SIGN_STEP, PHASE_SIGNS_Y, sign.text, style);
       text.setOrigin(0.5).setDepth(PHASE_SIGN_DEPTH); // поверх тёмной полосы новости на стекле
+      text.setInteractive();
+      attachHint(text, this.hint, () => [t('phase2Title'), t('phase2What')]);
       this.scene.tweens.add({
         targets: text,
-        x: MULTIPLIER_WINDOW.x + offset * PHASE_SIGN_SMALL_STEP,
+        x: PHASE_SIGN_HOME_X,
         y: PHASE_SIGNS_HOME_Y,
         scale: PHASE_SIGN_SMALL,
         delay: PHASE_SIGNS_HOLD,
         duration: PHASE_SIGNS_FLY_TIME,
         ease: 'Cubic.easeInOut',
         onComplete: () => {
-          if (index === 0) pulse(this.scene, this.multiplierText); // знаки долетели — окошко подпрыгивает (один раз)
+          if (index === 0) pulse(this.scene, this.multiplierText); // знак долетел — окошко подпрыгивает (один раз)
         },
       });
       return text;
@@ -358,6 +384,16 @@ export class MachinePanel {
   /** Пока магазин открыт, знаков фазы 2 не видно: они не должны торчать поверх витрины. Закрыли — снова на месте. */
   setPhaseSignsVisible(visible: boolean): void {
     for (const sign of this.phaseSigns) sign.setVisible(visible);
+  }
+
+  /** Фаза откатилась к первой (последний шанс вернул счёт назад): знаков фазы 2 больше нет — их убираем совсем. */
+  clearPhaseSigns(): void {
+    this.hint.hide(); // табличка могла висеть на знаке — знака не станет
+    for (const sign of this.phaseSigns) {
+      this.scene.tweens.killTweensOf(sign); // откат во время полёта знака не должен оставить твин на уничтоженном объекте
+      sign.destroy();
+    }
+    this.phaseSigns = [];
   }
 
   /** Черепа оборвали серию: окошко множителя вспыхивает красным. */
@@ -415,9 +451,14 @@ export class MachinePanel {
     });
   }
 
-  /** Новый раунд: лишние лампочки (от сигарет) убираются, остальные загораются по очереди слева направо. */
-  popSpinLamps(): void {
-    for (const lamp of this.spinLamps.splice(SPINS_PER_ROUND)) lamp.destroy();
+  /**
+   * Новый раунд: лишние лампочки (от сигарет) убираются, недостающие (фаза 2 даёт прокрутку) появляются сразу,
+   * остальные загораются по очереди слева направо. count — сколько прокруток в раунде: иначе лишняя лампочка
+   * выскочила бы вторым «попом» из showSpinsLeft, вне общей волны.
+   */
+  popSpinLamps(count = SPINS_PER_ROUND): void {
+    if (count > this.spinLamps.length) this.addSpinLamps(count - this.spinLamps.length);
+    for (const lamp of this.spinLamps.splice(count)) lamp.destroy(); // лишние — только сверх прокруток раунда
     this.placeSpinLamps();
     this.spinLamps.forEach((lamp, index) => {
       this.scene.tweens.add({ targets: lamp, scale: { from: 0.3, to: 1 }, delay: index * 40, duration: 180, ease: 'Back.easeOut' });

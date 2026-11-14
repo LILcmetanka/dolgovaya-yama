@@ -4,26 +4,46 @@
  * Магазин открывается не по забегам, а по закрытым долгам (BaseScene: amuletsUnlocked и остальные).
  */
 
+import { PATTERNS } from './patterns';
+
 export interface Progress {
   tutorialDone: boolean; // первый забег с тьмой пройден — больше её не показываем
+  patterns: string[]; // какие паттерны уже выпадали: на стекле видно только их (кассета возвращает набор с записи)
 }
 
 const PROGRESS_KEY = 'dolgovaya-yama-progress'; // ключ прогресса в localStorage
-const DEFAULT_PROGRESS: Progress = { tutorialDone: false }; // новый игрок: тьма в первом забеге
+const DEFAULT_PROGRESS: Progress = { tutorialDone: false, patterns: [] }; // новый игрок: тьма в первом забеге, стекло пустое
 
 let progress: Progress = loadProgress();
+
+/** Id всех паттернов — по нему отбрасываем чужое в сохранении (и там, где читают запись кассеты). */
+const PATTERN_IDS = new Set(PATTERNS.map((pattern) => pattern.id));
+
+/** Существует ли такой паттерн в игре: чужие и битые id в прогресс и в запись кассеты не пускаем. */
+export function isPatternId(id: unknown): id is string {
+  return typeof id === 'string' && PATTERN_IDS.has(id);
+}
+
+/** Открытые паттерны из сохранения: не массив — пусто, чужие id и повторы отбрасываем. */
+function patternsOf(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const result: string[] = [];
+  for (const id of value) if (isPatternId(id) && !result.includes(id)) result.push(id);
+  return result;
+}
 
 /** Прогресс из localStorage; нет его или он битый — по умолчанию. */
 function loadProgress(): Progress {
   try {
     const saved: unknown = JSON.parse(localStorage.getItem(PROGRESS_KEY) ?? 'null');
-    if (typeof saved !== 'object' || saved === null) return { ...DEFAULT_PROGRESS };
-    const { tutorialDone } = saved as Progress;
+    if (typeof saved !== 'object' || saved === null) return { ...DEFAULT_PROGRESS, patterns: [] };
+    const { tutorialDone, patterns } = saved as { tutorialDone?: unknown; patterns?: unknown };
     return {
       tutorialDone: typeof tutorialDone === 'boolean' ? tutorialDone : DEFAULT_PROGRESS.tutorialDone,
+      patterns: patternsOf(patterns),
     };
   } catch {
-    return { ...DEFAULT_PROGRESS }; // хранилище запрещено или в нём не JSON
+    return { ...DEFAULT_PROGRESS, patterns: [] }; // хранилище запрещено или в нём не JSON
   }
 }
 
@@ -43,5 +63,25 @@ export function isTutorialDone(): boolean {
 /** Запомнить, что обучение пройдено: в следующих забегах тьмы нет. */
 export function markTutorialDone(): void {
   progress.tutorialDone = true;
+  saveProgress();
+}
+
+/** Какие паттерны уже открыты: их схемы видно на стекле. Копия — менять набор снаружи нельзя. */
+export function openedPatterns(): readonly string[] {
+  return [...progress.patterns];
+}
+
+/**
+ * Этот паттерн уже открывался раньше (хоть в прошлом забеге, хоть в этом)? По нему стекло пишет «ПАТТЕРН ×N» без «новый»:
+ * после отката кассетой схема могла пропасть с плёнки, но открытой навсегда она уже осталась.
+ */
+export function hasPattern(id: string): boolean {
+  return progress.patterns.includes(id);
+}
+
+/** Паттерн выпал впервые: открыть его навсегда — «Заново» и конец забега открытое не сбрасывают. */
+export function markPatternOpen(id: string): void {
+  if (!isPatternId(id) || progress.patterns.includes(id)) return;
+  progress.patterns.push(id);
   saveProgress();
 }

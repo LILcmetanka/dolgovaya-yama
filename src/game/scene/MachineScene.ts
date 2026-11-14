@@ -44,7 +44,7 @@ export abstract class MachineScene extends BonusScene {
    */
   protected rustAfterSpin(grid: Grid): void {
     this.lastGrid = grid;
-    if (this.freeSpins > 0 || this.isLuckyNext || this.spinsLeft === 0) return;
+    if (this.freeSpins > 0 || this.luckyClovers > 0 || this.spinsLeft === 0) return;
     const column = rustColumn(machineSpec(this.machineState).rustChance);
     if (column === null) return;
     this.rustyColumn = column;

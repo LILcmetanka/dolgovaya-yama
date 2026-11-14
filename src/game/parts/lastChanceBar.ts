@@ -1,8 +1,10 @@
 import Phaser from 'phaser';
 import { itemTexture } from '../decor';
 import { ITEMS } from '../items';
+import { goalPattern } from '../lastChance';
 import { t, type TextKey } from '../lang';
 import { PAYOUT_WINDOW } from '../layout';
+import { TOP_MULTIPLIER } from '../patterns';
 import { addText, GOLD_TEXT, LED_STYLE, POPUP_DEPTH } from '../theme';
 import { TAKE_BEZEL_LEFT } from './payoutWindow';
 import { attachHint, type Hint } from './tooltip';
@@ -46,8 +48,8 @@ const BUTTON_TEXTS: Record<LastChanceAction, { title: TextKey; what: TextKey }> 
 };
 
 /**
- * Полоса последнего шанса на месте окошка выплаты: цель («любой паттерн» или «сильнее ×N»), сколько действий осталось
- * и четыре кнопки — заморозка столбца (бесплатно), перекрут столбца, джокер в клетку и «сдаться».
+ * Полоса последнего шанса на месте окошка выплаты: цель («нужен паттерн ×N» или «только джекпот»),
+ * сколько действий осталось и четыре кнопки — заморозка столбца (бесплатно), перекрут столбца, джокер в клетку и «сдаться».
  * Клик по сетке ловит сцена (SlotScreen.beginPick), здесь только кнопки.
  */
 export class LastChanceBar {
@@ -97,9 +99,14 @@ export class LastChanceBar {
     this.close();
   }
 
-  /** Показать полосу: цель — какой множитель надо побить (0 — просто собрать паттерн), и сколько действий осталось. */
+  /**
+   * Показать полосу: goal — какой множитель паттерна надо перекрыть, actionsLeft — сколько действий осталось.
+   * Суммы фишек здесь нет: победу решает множитель, а платит паттерн по цене своего символа — одно число врало бы.
+   * Цель у потолка (её бьёт только джекпот) читается отдельной строкой.
+   */
   open(goal: number, actionsLeft: number): void {
-    this.goalText.setText(goal === 0 ? t('lcGoalAny') : t('lcGoalBeat', goal));
+    const pattern = goalPattern(goal);
+    this.goalText.setText(pattern < TOP_MULTIPLIER ? t('lcGoalPattern', pattern) : t('lcGoalJackpot'));
     this.setActions(actionsLeft);
     this.setFreezeMode(false);
     for (const part of this.parts) part.setVisible(true);

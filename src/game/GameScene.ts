@@ -73,6 +73,9 @@ export class GameScene extends CollectorScene {
     this.monitor = new WallScreen(this, this.round, () => this.toggleMonitor(), () => this.openSettings()); // мебель комнаты: под рычагом и рукой Коллектора
     this.tooltip = new Tooltip(this);
     this.screen = new SlotScreen(this, this.sfx);
+    // Паттерн выпал — сцена решает, открывать ли его (BaseScene.openPattern); на стекле сразу набор этого забега.
+    this.screen.onPatternLanded = (pattern) => this.openPattern(pattern);
+    if (!data.tape) this.setPatternsOnGlass(); // после кассеты набор ставит playTape — второй раз не трогаем
     this.brokenScreen = new BrokenScreen(this); // поверх сетки: дыра и трещины после взрыва (KABOOM)
     this.machineBadge = new MachineBadge(this, machineBody, machineSpec(this.machineState), this.tooltip);
     this.panel = new MachinePanel(this, () => this.spin(), this.tooltip, (mode) => this.chooseSpinMode(mode));
@@ -249,6 +252,7 @@ export class GameScene extends CollectorScene {
     if (mode === spinMode()) return;
     setSpinMode(mode);
     this.panel.showMode(mode);
+    this.refreshHud(); // режим меняет долю черепов в следующей прокрутке — строка «💀 N%» обновляется сразу
     this.sfx.play('item');
   }
 
