@@ -82,3 +82,15 @@ test('провал последнего шанса не растит долг: �
     assert.equal(RULES.debtForRound(next), RULES.debtForRound(round), `раунд ${round}: долг не вырос`);
   }
 });
+
+test('мягкий сброс серии: череп оставляет треть, но не ниже серии 0 (×1)', () => {
+  assert.equal(RULES.streakAfterSkull(9), 3, '×10 → ×4');
+  assert.equal(RULES.streakAfterSkull(3), 1, '×4 → ×2');
+  assert.equal(RULES.streakAfterSkull(2), 0, '×3 → ×1');
+  assert.equal(RULES.streakAfterSkull(1), 0, '×2 → ×1');
+  assert.equal(RULES.streakAfterSkull(0), 0, '×1 остаётся ×1');
+  assert.equal(RULES.streakAfterSkull(-2), 0, 'мусор не даёт отрицательной серии');
+  assert.equal(Number.isNaN(RULES.streakAfterSkull(Number.NaN)), false, 'NaN не протекает');
+  assert.equal(RULES.streakAfterSkull(Number.NaN), 0, 'NaN — мусор, серия 0');
+  assert.equal(RULES.streakAfterSkull(Number.POSITIVE_INFINITY), 0, 'Infinity — мусор, серия 0');
+});

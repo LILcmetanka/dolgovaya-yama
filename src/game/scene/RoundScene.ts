@@ -45,6 +45,7 @@ import {
   randomSymbol,
   spinsAfterBonus,
   SPINS_PER_ROUND,
+  streakAfterSkull,
   streakAfterTake,
   symbolsUnlockedAt,
   TICKET_SCATTER,
@@ -403,14 +404,14 @@ export abstract class RoundScene extends MachineScene {
   }
 
   /**
-   * Черепа сжигают кон вместе с выигрышем этой прокрутки, серия обрывается. Страховка возвращает на табло
+   * Черепа сжигают кон вместе с выигрышем этой прокрутки, серия падает до трети. Страховка возвращает на табло
    * `INSURANCE_SHARE` сгоревшего — по разу за копию: каждая копия даёт в раунде ещё одно спасение (`insuranceSaves`).
    */
   private burnPot(result: SpinResult): void {
     const lost = this.pot;
     const refund = insuranceRefund(lost, this.amuletIds(), this.insuranceSaves);
     this.pot = 0;
-    this.streak = 0;
+    this.streak = streakAfterSkull(this.streak);
     this.sfx.play('skulls');
     this.screen.highlightSkulls(result.hits);
     this.effects.flashAndShake();

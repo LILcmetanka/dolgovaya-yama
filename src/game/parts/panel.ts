@@ -386,7 +386,7 @@ export class MachinePanel {
     this.phaseSigns = [];
   }
 
-  /** Черепа оборвали серию: окошко множителя вспыхивает красным. */
+  /** Черепа срезали серию: окошко множителя вспыхивает красным. */
   flashMultiplierRed(): void {
     this.multiplierText.setColor(RED_TEXT);
     pulse(this.scene, this.multiplierText);

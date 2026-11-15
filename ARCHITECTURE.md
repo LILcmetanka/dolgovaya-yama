@@ -158,7 +158,7 @@ sequenceDiagram
   UI-->>RS: stopped → finishSpin
   RS->>L: evaluateGrid — паттерны,<br/>черепа, замки
   alt паттерн из 💀
-    RS->>RS: бронежилет, щит<br/>или burnPot: кон 0, серия 0
+    RS->>RS: бронежилет, щит<br/>или burnPot: кон 0, серия → треть
     RS->>UI: payout.burn, вспышка, тряска
   else черепа не сложились
     RS->>RS: серия + 1, выигрыш<br/>× множитель — на кон

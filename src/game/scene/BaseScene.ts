@@ -110,7 +110,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected tickets = 0; // билеты 🎟 на табло — на амулеты и гнёзда
   protected spinsLeft = 0; // сколько прокруток осталось в раунде
   protected pot = 0; // кон: выиграно, но ещё не забрано — паттерн из черепов сжигает его
-  protected streak = 0; // серия: +1 за прокрутку без паттерна из черепов; черепа её обнуляют, «забрать» уменьшает
+  protected streak = 0; // серия: +1 за прокрутку без паттерна из черепов; черепа оставляют от неё треть (streakAfterSkull), «забрать» уменьшает
   protected record = 0; // рекорд: больше всего закрытых долгов за одну игру
   protected slots = 0; // сколько мест на полке открыто
   protected shelf: (Item | null)[] = []; // что лежит на полке, по месту на клетку; null — пусто

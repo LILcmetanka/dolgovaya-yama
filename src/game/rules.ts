@@ -24,6 +24,12 @@ export const DEBT_ROUND_TO = 10;
 export const MULTIPLIER_STEP = GAME_CONFIG.multiplierStep;
 /** Какую долю серии оставляет «забрать»: множитель не падает до ×1, а уменьшается вдвое. */
 export const TAKE_KEEPS_STREAK = GAME_CONFIG.takeKeepsStreak;
+/**
+ * Какую долю серии оставляет череп — «мягкий сброс» по багу 11 (решение 15.11.2026).
+ * Замер `full-run.mjs`, 300 забегов, сид 1: новое правило — 10+ долгов у 71%, 1 млн у 14%;
+ * старое обнуление на том же симуляторе — 63% и 10%.
+ */
+export const SKULL_KEEPS_STREAK = 1 / 3;
 /** Сетка автомата: 5 столбцов и 3 ряда. */
 export const GRID_COLUMNS = 5;
 export const GRID_ROWS = 3;
@@ -211,8 +217,9 @@ export function debtForRound(round: number): number {
 }
 
 /**
- * Множитель прокрутки. streak — серия: +1 за каждую прокрутку без паттерна из черепов; черепа её обнуляют,
- * «забрать» уменьшает (streakAfterTake), а между раундами она сохраняется — новый раунд начинает с той же серии.
+ * Множитель прокрутки. streak — серия: +1 за каждую прокрутку без паттерна из черепов; черепа оставляют от неё
+ * треть (streakAfterSkull), «забрать» уменьшает (streakAfterTake), а между раундами она сохраняется — новый раунд
+ * начинает с той же серии.
  * 0 → ×1, 1 → ×2, 2 → ×3… (при шаге MULTIPLIER_STEP = 1; амулет «Разгон» делает шаг больше).
  */
 export function multiplierForStreak(streak: number, step = MULTIPLIER_STEP): number {
@@ -226,6 +233,15 @@ export function multiplierForStreak(streak: number, step = MULTIPLIER_STEP): num
  */
 export function streakAfterTake(streak: number): number {
   return Math.floor(streak * TAKE_KEEPS_STREAK);
+}
+
+/**
+ * Серия после черепа: остаётся SKULL_KEEPS_STREAK от неё, с округлением вниз — ×10 → ×4, ×4 → ×2, ×3 → ×1
+ * (числа — множители). Мусор, отрицательное, NaN и Infinity — 0. Почему не «минус одна ступень» — см. SKULL_KEEPS_STREAK.
+ */
+export function streakAfterSkull(streak: number): number {
+  if (!Number.isFinite(streak) || streak <= 0) return 0;
+  return Math.floor(streak * SKULL_KEEPS_STREAK);
 }
 
 /** Сколько прокрутка кладёт на кон: выигрыш паттернов × множитель серии, округлённый до целого. */

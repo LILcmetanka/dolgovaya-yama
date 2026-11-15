@@ -341,6 +341,9 @@ function payPot(s, g, isRoundEnd = false) {
 /** Новый раунд. Серию НЕ трогаем: в коде она переходит в следующий раунд (BaseScene → RoundScene.startRound). */
 function startRound(s, st, g) {
   const owned = ids(s);
+  // Автомат сам редко меняется в начале раунда (машина по умолчанию — та, что стоит с забега; первый раунд не меняется).
+  const switched = M.machineAtRoundStart(s.machineId, s.round, st.swapChance);
+  if (switched !== s.machineId) { s.machineId = switched; g.machineSwaps += 1; }
   // Фаза — по закрытым долгам (checkPhase); ставим её до прокруток: она даёт phase2BonusSpins (замечание 19).
   s.phase = PH.phaseAt(s.round - 1);
   const plan = A.spinsPerRound(R.SPINS_PER_ROUND, owned); // как RoundScene.startRound, без потолка
@@ -462,7 +465,7 @@ function burnPot(s, g) {
   const lost = s.pot;
   const refund = A.insuranceRefund(lost, ids(s), s.insuranceSaves);
   s.pot = 0;
-  s.streak = 0;
+  s.streak = R.streakAfterSkull(s.streak);
   if (refund > 0) {
     s.insuranceSaves += 1;
     earn(s, g, refund); // сработка копии: счётчик страховки гасит её до конца раунда; возврат — доход забега
