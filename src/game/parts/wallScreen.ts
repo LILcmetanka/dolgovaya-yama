@@ -422,9 +422,10 @@ export class WallScreen {
         .map((item) => ({ texture: itemTexture(item), name: t(item.name), description: t(item.description) })),
       ...AMULETS.filter((amulet) => isSeen(amuletKey(amulet.id))).map((amulet) => ({
         texture: amuletTexture(amulet),
-        // Активный помечен в названии: он работает не сам, а по клику, и стоит в отдельном гнезде (шаг 12а).
+        // Активный помечен в названии: он работает не сам, а по клику, и стоит в отдельном гнезде (шаг 12а);
+        // к описанию — строка про нажатие, иначе список врал бы: описание читается как «работает всегда».
         name: isActive(amulet) ? `${t(amulet.name)} · ${t('activeAmulet')}` : t(amulet.name),
-        description: t(amulet.description),
+        description: isActive(amulet) ? `${t(amulet.description)} · ${t('activeAmuletPress')}` : t(amulet.description),
       })),
     ];
     this.buildRows(left, top, rows, hidden);

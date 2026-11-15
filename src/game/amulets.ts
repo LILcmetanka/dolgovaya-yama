@@ -68,6 +68,9 @@ export const SKULL_POCKET_SKULLS = 1.25; // череп в кармане: чер
 export const SKULL_POCKET_WIN = 2; // …но все выигрыши во столько раз больше за каждую копию (в степени копий)
 export const GREED_WIN = 2; // жадность: все выигрыши во столько раз больше за каждую копию (в степени копий)…
 export const GREED_LOST_SPINS = 3; // …но прокруток в раунде на столько меньше за каждую копию
+// Активные (шаг 12б): эффект включает клик по значку, заряд тратится нажатием и возвращается в новом раунде.
+export const CHARM_SKULL_DELTA = -0.03; // оберег: доля черепов ниже на 3 п.п. до конца раунда — тот же сдвиг, что у сделки «тише черепа»
+export const SIGHT_SPINS = 2; // прицел: столько прокруток раунда прибавляется сразу за нажатие
 
 /** Все амулеты. Порядок не важен: в витрину они попадают случайно. */
 export const AMULETS: Amulet[] = [
@@ -158,7 +161,10 @@ export const AMULETS: Amulet[] = [
   {
     id: 'charm', sign: '🧿',
     name: { ru: 'Оберег', en: 'Charm' },
-    description: { ru: 'Раз в раунд: до конца раунда черепа реже на 3 п.п.', en: 'Once a round: skulls 3 pp rarer until the round ends' },
+    description: {
+      ru: `Раз в раунд: до конца раунда черепа реже на ${Math.round(-CHARM_SKULL_DELTA * 100)} п.п.`,
+      en: `Once a round: skulls ${Math.round(-CHARM_SKULL_DELTA * 100)} pp rarer until the round ends`,
+    },
     rarity: 'common',
     maxCopies: 1,
     price: 2,
@@ -168,7 +174,7 @@ export const AMULETS: Amulet[] = [
   {
     id: 'sight', sign: '🎯',
     name: { ru: 'Прицел', en: 'Sight' },
-    description: { ru: 'Раз в раунд: +2 прокрутки в этом раунде', en: 'Once a round: +2 spins this round' },
+    description: { ru: `Раз в раунд: +${SIGHT_SPINS} прокрутки в этом раунде`, en: `Once a round: +${SIGHT_SPINS} spins this round` },
     rarity: 'rare',
     maxCopies: 1,
     price: 3,
@@ -215,6 +221,43 @@ export function activeAmuletOf(counts: AmuletCounts): Amulet | null {
 /** Сколько зарядов у активного амулета в раунде (usesPerRound; нет поля — один). */
 export function activeUses(amulet: Amulet): number {
   return amulet.usesPerRound ?? 1;
+}
+
+/** Что даёт нажатие активного амулета: сдвиг доли черепов до конца раунда и прокрутки сразу. */
+export interface AmuletUse {
+  used: boolean; // нажатие прошло: амулет активный и заряд был
+  chargesLeft: number; // сколько зарядов останется после нажатия
+  skullShareDelta: number; // «Оберег»: черепа реже до конца раунда (поправка доли, как у сделки)
+  spinsBonus: number; // «Прицел»: столько прокруток раунда прибавится сразу
+}
+
+/** Что делает каждый активный амулет по нажатию. Нет id — нажимать нечего. */
+const ACTIVE_EFFECTS: Partial<Record<AmuletId, { skullShareDelta: number; spinsBonus: number }>> = {
+  charm: { skullShareDelta: CHARM_SKULL_DELTA, spinsBonus: 0 },
+  sight: { skullShareDelta: 0, spinsBonus: SIGHT_SPINS },
+};
+
+/**
+ * Можно ли сейчас нажать активный амулет: нет амулета, он пассивный или «Прицел» уже у потолка прокруток раунда
+ * — нельзя. Потолок проверяем здесь, а не в pressActiveAmulet: отказ должен быть без списания заряда.
+ * Правило одно на игру и симулятор: RoundScene.useActiveAmulet и full-run.pressActiveAmulet зовут эту функцию.
+ */
+export function canPressActive(amulet: Amulet | null, spinsLeft: number, maxSpins: number): boolean {
+  if (!amulet || !isActive(amulet)) return false;
+  // «Прицел» у потолка прокруток пропал бы впустую — отказ, как у сигареты (useItem).
+  return !(amulet.id === 'sight' && spinsLeft >= maxSpins);
+}
+
+/**
+ * Нажатие на значок активного амулета: списывает заряд и говорит, что включилось. Заряда нет, амулета нет,
+ * он пассивный или нажимать его нечему — нажатие не проходит: заряд не меняется, эффекта нет.
+ * Потолок прокруток у «Прицела» проверяет canPressActive до вызова: здесь он не смотрится.
+ */
+export function pressActiveAmulet(amulet: Amulet | null, chargesLeft: number): AmuletUse {
+  const effect = amulet && isActive(amulet) ? ACTIVE_EFFECTS[amulet.id] : undefined;
+  const charges = Math.max(0, Math.floor(chargesLeft));
+  if (!effect || charges <= 0) return { used: false, chargesLeft: charges, skullShareDelta: 0, spinsBonus: 0 };
+  return { used: true, chargesLeft: charges - 1, skullShareDelta: effect.skullShareDelta, spinsBonus: effect.spinsBonus };
 }
 
 /**

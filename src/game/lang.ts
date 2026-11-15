@@ -144,6 +144,10 @@ const TEXTS = {
   activeSocketEmpty: { ru: 'Гнездо активного амулета', en: 'Active amulet socket' },
   activeAmulet: { ru: 'АКТИВНЫЙ', en: 'ACTIVE' },
   activeUsesLeft: { ru: 'зарядов: {0}', en: 'charges: {0}' },
+  activeClickToUse: { ru: 'нажми, чтобы включить', en: 'click to use' },
+  activeNoCharges: { ru: 'Зарядов нет — эффект вернётся в следующем раунде', en: 'No charges — the effect is back next round' },
+  activeAmuletPress: { ru: 'Включается нажатием на значок в янтарном гнезде', en: 'Click its icon in the amber socket to use it' },
+  sightNews: { ru: '🎯 +{0} прокрутки', en: '🎯 +{0} spins' },
   activeSlotBusy: { ru: 'В активном гнезде уже стоит амулет', en: 'The active slot is taken' },
   activeAmuletHow: { ru: 'Эффект активного амулета включает клик по значку', en: 'An active amulet works when you click its icon' },
   ticket: { ru: 'Билет', en: 'Ticket' }, // без эмодзи 🎟: билет в игре — одна красная картинка (decor.ts)

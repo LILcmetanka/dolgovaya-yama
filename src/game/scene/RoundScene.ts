@@ -1,12 +1,15 @@
 import {
+  activeAmuletOf,
   amuletPatternWin,
   amuletsOnWin,
   bellSpins,
   BONES_BONUS,
+  canPressActive,
   earlyPayTickets,
   insuranceRefund,
   owns,
   piggyCoins,
+  pressActiveAmulet,
   spinsPerRound,
   vestShields,
   winFactor,
@@ -115,6 +118,9 @@ export abstract class RoundScene extends MachineScene {
   private tookExtraThisSpin = false; // второе «забрать» уже потрачено (больше двух за прокрутку нельзя)
   private lastTakeAmount = 0; // сколько дало первое забирание: от него считается второе
   private bankKeptThisRound = false; // сделка №10: первый череп в этом раунде кон уже не сжёг
+  // «Оберег» 🧿: сдвиг доли черепов до конца раунда. Живёт в раунде, а не в сделках Дилера: нажатие амулета
+  // — не сделка. Тот же механизм, что у сделки «тише черепа» (weightContext → skullShareWeightMul).
+  private amuletSkullDelta = 0;
 
   /** Новый забег: прокруток ещё не было, окно перемешки не висит, сделок Дилера нет. */
   protected resetState(): void {
@@ -128,6 +134,7 @@ export abstract class RoundScene extends MachineScene {
     this.tookExtraThisSpin = false;
     this.lastTakeAmount = 0;
     this.bankKeptThisRound = false;
+    this.amuletSkullDelta = 0;
   }
 
   // ---------- Прокрутка ----------
@@ -207,7 +214,8 @@ export abstract class RoundScene extends MachineScene {
     const base = super.weightContext(charge);
     const effects = pactEffects(this.pacts, this.round);
     const withLuck: WeightContext = effects.symbolLuck ? { ...base, symbolLuck: effects.symbolLuck } : base;
-    const delta = effects.skullShareDelta; // может быть и отрицательной: «тише черепа»
+    // Сделки Дилера и «Оберег» 🧿 складываются: обе двигают долю черепов, каждая по-своему (может выйти и минус).
+    const delta = effects.skullShareDelta + this.amuletSkullDelta;
     if (delta === 0 || !Number.isFinite(delta)) return withLuck;
     const mul = skullShareWeightMul(skullShareOf(this.round, this.diceDrought, withLuck), delta);
     return mul === 1 ? withLuck : { ...withLuck, skullMul: mul };
@@ -713,6 +721,60 @@ export abstract class RoundScene extends MachineScene {
     this.refreshHud();
   }
 
+  // ---------- Активные амулеты (шаг 12б) ----------
+
+  /**
+   * Нажали значок активного амулета: заряд тратится, эффект включается до конца раунда. Только между прокрутками
+   * и только если заряд есть — иначе значок трясётся и заряд остаётся. Прокрутку нажатие не тратит и множитель
+   * серии не трогает: это не «забрать» и не прокрутка.
+   * «Оберег» 🧿 держит черепа тише до конца раунда (тот же сдвиг доли, что у сделки «тише черепа»),
+   * «Прицел» 🎯 сразу добавляет прокрутки раунда (обычные, не фриспины).
+   */
+  protected useActiveAmulet(): void {
+    if (!this.canAct()) {
+      this.sfx.play('deny');
+      this.amuletRack.denyActive();
+      return;
+    }
+    const amulet = activeAmuletOf(this.amuletCounts);
+    if (!amulet) return;
+    // «Прицел» у потолка прокруток пропал бы впустую — отказ, как у сигареты (useItem): заряд остаётся.
+    // Частичная прибавка «Прицела» (+1 вместо +2 при spinsLeft = MAX_SPINS_PER_ROUND - 1) — принятое поведение, как у сигареты.
+    if (!canPressActive(amulet, this.spinsLeft, MAX_SPINS_PER_ROUND)) {
+      this.sfx.play('deny');
+      this.amuletRack.denyActive();
+      return;
+    }
+    const use = pressActiveAmulet(amulet, this.activeUses);
+    if (!use.used) {
+      this.sfx.play('deny');
+      this.amuletRack.denyActive();
+      this.tooltip.show(t('activeNoCharges'), '');
+      return;
+    }
+    this.tooltip.hide();
+    this.activeUses = use.chargesLeft;
+    this.amuletRack.setActiveUses(this.activeUses);
+    this.amuletRack.trigger(amulet.id);
+    this.sfx.play('item');
+    // «Оберег»: сдвиг доли черепов до конца раунда — его подхватит weightContext следующей прокрутки.
+    if (use.skullShareDelta !== 0) {
+      this.amuletSkullDelta += use.skullShareDelta;
+      this.effects.popup(amulet.sign, GOLD_TEXT);
+    }
+    // «Прицел»: прокрутки раунда, как колокольчик или сигарета — через потолок раунда.
+    if (use.spinsBonus > 0) {
+      const extra = spinsAfterBonus(this.spinsLeft, use.spinsBonus) - this.spinsLeft;
+      this.spinsLeft += extra;
+      if (extra > 0) {
+        this.effects.popupAt(CENTER_X, SPIN_LAMPS_Y - 20, t('sightNews', extra), GOLD_TEXT);
+        this.panel.winkSpinLamps(this.spinsLeft);
+        this.sfx.play('coin');
+      }
+    }
+    this.refreshHud();
+  }
+
   /**
    * Игрок кликнул по включённому предмету у экрана и освободил его место: предмет больше ничего не делает.
    * Значок к этому моменту уже погас (ItemShelf.fadeOut) — остаётся снять сам эффект и переставить столбик.
@@ -829,6 +891,7 @@ export abstract class RoundScene extends MachineScene {
     this.insuranceSaves = 0; // страховка снова готова: сработок на новый раунд — по числу копий
     this.activeUses = this.activeCharges(); // активный амулет снова полон: заряд прошлого раунда не переходит
     this.amuletRack.setActiveUses(this.activeUses);
+    this.amuletSkullDelta = 0; // «Оберег» живёт раунд: в новом черепа снова как обычно, пока его не нажмут
     this.bankKeptThisRound = false; // сделка №10: «первый череп не жжёт кон» — снова первый
     this.tookThisSpin = false; // сделка №15: в новом раунде «забрать» ещё не было
     this.tookExtraThisSpin = false;

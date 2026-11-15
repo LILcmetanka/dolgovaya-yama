@@ -19,6 +19,8 @@ const FLY_FADE = 200; // и гаснет, пройдя к гнезду стол�
 const CAP_POP_TIME = 500; // заглушка слетает с купленного гнезда
 const TRIGGER_TIME = 140; // амулет сработал: подпрыгивает
 const TRIGGER_SCALE = 1.35;
+const SHAKE_TIME = 40; // «нельзя»: значок трясётся влево-вправо и возвращается
+const SHAKE_STEP = 6; // на столько px он сдвигается в тряске
 const COPY_LABEL_DX = SOCKET_RADIUS; // метка «×N» — настолько левее центра гнезда, чтобы не столкнуться с «+N%»
 const COPY_LABEL_UP = 10; // и настолько выше подписи коллекционера костей (bonesLabel)
 const SPENT_ALPHA = 0.35; // заряд активного амулета кончился: значок тускнеет, пока не начнётся новый раунд
@@ -27,9 +29,11 @@ const SPENT_ALPHA = 0.35; // заряд активного амулета кон
  * Гнёзда для амулетов на верхушке корпуса, по три слева и справа от табло.
  * Закрытые — с заглушками. Амулет в гнезде подпрыгивает, когда срабатывает; при наведении — подсказка.
  * Отдельно справа от ряда — одно гнездо активного амулета: янтарное, с меткой зарядов (шаг 12а).
+ * Значок активного амулета нажимают: заряд есть — сцена включает эффект (use, шаг 12б), заряда нет — нажатие не проходит.
  */
 export class AmuletRack {
   private readonly scene: Phaser.Scene;
+  private readonly use: () => void; // нажали значок активного амулета: сцена тратит заряд и включает эффект
   private readonly caps: Phaser.GameObjects.Image[] = []; // заглушки закрытых гнёзд
   private readonly badges: Phaser.GameObjects.Image[] = []; // амулет в гнезде; пустое гнездо — картинка скрыта
   private readonly amulets: (Amulet | null)[] = []; // какой амулет в каком гнезде
@@ -42,9 +46,10 @@ export class AmuletRack {
   private active: Amulet | null = null; // какой активный амулет стоит (гнездо одно)
   private activeLeft = 0; // зарядов в этом раунде
 
-  /** sockets — сколько гнёзд открыто в начале. */
-  constructor(scene: Phaser.Scene, sockets: number, hint: Hint) {
+  /** sockets — сколько гнёзд открыто в начале; use — что делает нажатие на значок активного амулета. */
+  constructor(scene: Phaser.Scene, sockets: number, hint: Hint, use: () => void) {
     this.scene = scene;
+    this.use = use;
     createAmuletTextures(scene, AMULETS, AMULET_SIZE);
     createSocketCapTexture(scene, SOCKET_RADIUS);
     createActiveSocketCapTexture(scene, SOCKET_RADIUS);
@@ -72,8 +77,8 @@ export class AmuletRack {
     }
     // Гнездо активного амулета: пустое — янтарная заглушка, занятое — значок амулета и метка зарядов.
     this.activeBadge = scene.add.image(ACTIVE_SOCKET_X, ACTIVE_SOCKET_Y, amuletTexture(AMULETS[0])).setVisible(false);
-    this.activeBadge.setInteractive();
-    attachHint(this.activeBadge, hint, () => this.activeHint());
+    this.activeBadge.setInteractive({ useHandCursor: true }); // заряд есть — значок нажимают
+    attachHint(this.activeBadge, hint, () => this.activeHint(), () => this.pressActive());
     this.activeCap = scene.add.image(ACTIVE_SOCKET_X, ACTIVE_SOCKET_Y, ACTIVE_SOCKET_CAP_TEXTURE);
     this.activeCap.setInteractive();
     attachHint(this.activeCap, hint, () => [t('activeSocketEmpty'), t('activeAmuletHow')]);
@@ -104,11 +109,21 @@ export class AmuletRack {
     return [name, t(amulet.description)];
   }
 
-  /** Подсказка активного амулета: название, что делает и сколько зарядов осталось в раунде. */
+  /**
+   * Подсказка активного амулета: название, что делает, сколько зарядов осталось в раунде и что со значком делать.
+   * Заряда нет — так и говорит: эффект вернётся в следующем раунде.
+   */
   private activeHint(): [string, string] | null {
     const amulet = this.active;
     if (!amulet) return null;
-    return [t(amulet.name), `${t(amulet.description)}\n${t('activeUsesLeft', this.activeLeft)}`];
+    const how = this.activeLeft > 0 ? t('activeClickToUse') : t('activeNoCharges');
+    return [t(amulet.name), `${t(amulet.description)}\n${t('activeUsesLeft', this.activeLeft)}\n${how}`];
+  }
+
+  /** Нажали значок: заряд есть — сцена включает эффект; заряда нет — нажатие не проходит (подсказка это и говорит). */
+  private pressActive(): void {
+    if (this.active === null || this.activeLeft <= 0) return;
+    this.use();
   }
 
   /** Обновить метки «×N» под гнёздами: одна на гнездо, по счётчику, видна со второй копии. */
@@ -202,13 +217,33 @@ export class AmuletRack {
     this.showActiveUses();
   }
 
-  /** Метка зарядов у гнезда активного амулета; заряда нет — значок тусклый. */
+  /** Метка зарядов у гнезда активного амулета; заряда нет — значок тусклый и курсор обычный. */
   private showActiveUses(): void {
     const amulet = this.active;
     this.activeUsesLabel.setVisible(amulet !== null);
     if (!amulet) return;
     this.activeUsesLabel.setText(String(this.activeLeft));
     this.activeBadge.setAlpha(this.activeLeft > 0 ? 1 : SPENT_ALPHA);
+    // Заряда нет — нажимать нечего: курсор-рука снимается, иначе значок обещал бы нажатие, которого не будет.
+    const input = this.activeBadge.input;
+    if (!input) return;
+    input.cursor = this.activeLeft > 0 ? 'pointer' : '';
+    if (this.activeLeft === 0) this.scene.input.resetCursor();
+  }
+
+  /** Нажали значок, а включить нельзя (идёт прокрутка, раунд кончился): значок коротко трясётся, заряд не тратится. */
+  denyActive(): void {
+    const badge = this.activeBadge;
+    this.scene.tweens.killTweensOf(badge);
+    badge.setX(ACTIVE_SOCKET_X).setScale(1).setY(ACTIVE_SOCKET_Y);
+    this.scene.tweens.add({
+      targets: badge,
+      x: ACTIVE_SOCKET_X + SHAKE_STEP,
+      duration: SHAKE_TIME,
+      yoyo: true,
+      repeat: 2,
+      onComplete: () => badge.setX(ACTIVE_SOCKET_X),
+    });
   }
 
   /**
@@ -251,8 +286,12 @@ export class AmuletRack {
     this.refreshCopies();
   }
 
-  /** Амулет сработал: подпрыгивает его гнездо (у каждого амулета оно одно). */
+  /** Амулет сработал: подпрыгивает его гнездо (у каждого амулета оно одно; у активного — своё, янтарное). */
   trigger(id: AmuletId): void {
+    if (this.active?.id === id) {
+      this.bounce(this.activeBadge, ACTIVE_SOCKET_Y);
+      return;
+    }
     const index = this.amulets.findIndex((amulet) => amulet?.id === id);
     if (index >= 0) this.bounce(this.badges[index], SOCKET_Y);
   }
