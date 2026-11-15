@@ -17,15 +17,18 @@ export interface Progress {
 const PROGRESS_KEY = 'dolgovaya-yama-progress'; // ключ прогресса в localStorage
 const DEFAULT_PROGRESS: Progress = { tutorialDone: false, patterns: [], achievements: [] }; // новый игрок: тьма в первом забеге, стекло пустое, ачивок нет
 
-let progress: Progress = loadProgress();
-
-/** Id всех паттернов — по нему отбрасываем чужое в сохранении (и там, где читают запись кассеты). */
+/**
+ * Id всех паттернов — по нему отбрасываем чужое в сохранении (и там, где читают запись кассеты).
+ * Объявлен раньше progress: loadProgress читает его через patternsOf, а в TDZ это ReferenceError и сброс прогресса.
+ */
 const PATTERN_IDS = new Set(PATTERNS.map((pattern) => pattern.id));
 
 /** Существует ли такой паттерн в игре: чужие и битые id в прогресс и в запись кассеты не пускаем. */
 export function isPatternId(id: unknown): id is string {
   return typeof id === 'string' && PATTERN_IDS.has(id);
 }
+
+let progress: Progress = loadProgress();
 
 /** Открытые паттерны из сохранения: не массив — пусто, чужие id и повторы отбрасываем. */
 function patternsOf(value: unknown): string[] {
