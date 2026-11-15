@@ -149,7 +149,7 @@ export const AMULET_CASE_PRICE_Y = 136; // ценники под ними
 // Торговый автомат под витриной: предметы рядами, справа от предмета — ценник.
 export const VENDING: Box = { x: 625, y: 404, width: 280, height: 412 };
 // Витрина и панель со щелью стоят внутри окантовки лицевой части (она от 485 до 765, бок — левее), с равными полями.
-export const VENDING_GLASS: Box = { x: 609, y: 384, width: 178, height: 280 }; // витрина: 3 ряда
+export const VENDING_GLASS: Box = { x: 609, y: 384, width: 178, height: 280 }; // витрина: 4 ряда (три предмета и билеты)
 export const VENDING_GOOD_X = 557; // предмет в ряду: спираль под ним — на таком же поле от края витрины, как ценник
 export const VENDING_PRICE_X = 607; // ценник: фишка, правее — «× цена»
 export const VENDING_COIN_SLOT = { x: 731, y: 282 }; // щель для фишек на панели справа от витрины
@@ -184,7 +184,7 @@ export function shelfY(slot: number): number {
   return SHELF_TOP_Y + (slot % SHELF_COLUMN) * SHELF_STEP;
 }
 
-/** Ряд витрины номер row (0 — верхний): все ряды — предметы. */
+/** Ряд витрины номер row (0 — верхний): три ряда предметов и последний — билеты за фишки. */
 export function vendingRowY(row: number, rows: number): number {
   const step = VENDING_GLASS.height / rows;
   return VENDING_GLASS.y - VENDING_GLASS.height / 2 + step * (row + 0.5);

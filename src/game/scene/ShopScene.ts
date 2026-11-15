@@ -2,13 +2,14 @@ import { activeAmuletOf, activeUses, addCopy, amuletPrice, countOf, insuranceCop
 import { amuletKey, itemKey, see, WHO_COLLECTOR } from '../codex';
 import { pactDebt, pactEffects } from '../dealerGame';
 import { canWin, DRUM_SECTORS, drumChips, drumPrice, prizeItem, randomSector, type DrumPrize } from '../drum';
-import { itemPrice, MAX_SLOTS, offerReplacement, randomOffer, slotPrice, type ShopItem } from '../items';
+import { itemPrice, MAX_SLOTS, offerReplacement, randomOffer, slotPrice, TICKETS_PER_SHOP, ticketForChips, type ShopItem } from '../items';
 import { t } from '../lang';
 import { machineItemAllowed } from '../machines';
 import { debtForRound } from '../rules';
 import type { SoundName } from '../sound';
 import { GOLD_TEXT } from '../theme';
 import { SLOT_ROW, SOCKET_ROW } from '../parts/miniShop';
+import { TICKET_ROW } from '../parts/shop';
 import { DealerScene } from './DealerScene';
 
 const PRIZE_POPUP_RISE = 20; // «+N» за фишки из барабана всплывает чуть выше сектора
@@ -30,8 +31,16 @@ function prizeSound(prize: DrumPrize): SoundName {
 export abstract class ShopScene extends DealerScene {
   // Панель уезжает после leaveShop, и колбэк её хода ещё не сработал: раунд начнётся, только когда она уедет.
   private isLeavingShop = false;
+  // Сколько билетов за фишки уже куплено в этом магазине: выше items.TICKETS_PER_SHOP не продают, ряд гаснет.
+  private ticketsBoughtHere = 0;
   // Подсказка «в активном гнезде уже амулет» висит AMULET_DENY_HINT_TIME; новый отказ снимает прошлый таймер.
   private amuletDenyHint: Phaser.Time.TimerEvent | null = null;
+
+  /** Новый забег: в магазине ещё ничего не покупали — счётчик захода не переезжает через restart и откат кассеты. */
+  protected resetState(): void {
+    super.resetState();
+    this.ticketsBoughtHere = 0; // рядом с ticketsBought: тот считает билеты за забег, этот — за один заход
+  }
 
   /**
    * Долг отдан (или пропущен): на записке следующий долг (записка переворачивается), сверху съезжает панель магазина.
@@ -58,6 +67,7 @@ export abstract class ShopScene extends DealerScene {
     this.amuletOffer = amuletOffer;
     this.seeInShop(offer.map((item) => itemKey(item.id)), amuletOffer.map((amulet) => amuletKey(amulet.id)));
     this.drumSpins = 0; // в новом магазине барабан снова дешёвый
+    this.ticketsBoughtHere = 0; // и билеты за фишки снова продаются — ряд в автомате загорится при открытии панели
     const prices = offer.map((item) => itemPrice(item, this.debt, this.shopDiscount())); // цены — доля нового долга
     // Что открыто — по закрытым долгам: раунд уже увеличен, поэтому предикаты дают счёт этого магазина.
     this.amuletCase.setAvailable(isAmulets);
@@ -127,10 +137,11 @@ export abstract class ShopScene extends DealerScene {
     if (isNew) this.monitor.notify('new');
   }
 
-  /** Купить ряд торгового автомата row: предмет — на свободное место полки. */
+  /** Купить ряд торгового автомата row: предмет — на свободное место полки, ряд билетов — билет за фишки. */
   protected buy(row: number): void {
     if (!this.isShopping) return;
-    this.buyItem(row);
+    if (row === TICKET_ROW) this.buyTicket();
+    else this.buyItem(row);
   }
 
   /** Купить ряд маленького автомата row: место на полке или гнездо амулета. */
@@ -183,6 +194,47 @@ export abstract class ShopScene extends DealerScene {
     this.shop.refill(row, item, itemPrice(item, this.debt, this.shopDiscount()));
     see(itemKey(item.id)); // новый предмет уже встречен — во вкладке «Предметы» он не «???»
     this.refreshShop();
+  }
+
+  /**
+   * Купить билет за фишки (шаг 13): цена — доля фишек на руках, и с каждой покупкой за забег доля растёт
+   * (items.ticketForChips). За один заход в магазин продают не больше items.TICKETS_PER_SHOP — когда потолок выбран,
+   * ряд гаснет до следующего магазина. Цена в кассету не пишется (как drumSpins): откат не удешевляет следующую покупку.
+   */
+  private buyTicket(): void {
+    if (!this.isShopping) return;
+    if (TICKETS_PER_SHOP > 0 && this.ticketsBoughtHere >= TICKETS_PER_SHOP) {
+      this.sfx.play('deny');
+      this.showTicketLimit(); // почему ряд погас — подсказкой, как отказ амулету
+      return;
+    }
+    const price = ticketForChips(this.balance, this.ticketsBought, this.shopDiscount());
+    if (price > this.balance) {
+      this.sfx.play('deny');
+      this.shop.deny(TICKET_ROW); // не хватает фишек — ценник билета трясётся
+      return;
+    }
+    this.balance -= price;
+    this.tickets += 1;
+    this.ticketsBought += 1;
+    this.ticketsBoughtHere += 1;
+    this.shop.sellTicket();
+    this.afterPurchase();
+    // Потолок за заход выбран — ряд гаснет до следующего магазина, а подсказка говорит, почему.
+    if (TICKETS_PER_SHOP > 0 && this.ticketsBoughtHere >= TICKETS_PER_SHOP) {
+      this.shop.soldOutTickets();
+      this.showTicketLimit();
+    }
+  }
+
+  /** Подсказка «за заход билетов больше не продают»: висит AMULET_DENY_HINT_TIME, новый отказ снимает прошлый таймер. */
+  private showTicketLimit(): void {
+    this.tooltip.show(t('shopTicket'), t('shopTicketSold'));
+    this.amuletDenyHint?.remove();
+    this.amuletDenyHint = this.time.delayedCall(AMULET_DENY_HINT_TIME, () => {
+      this.amuletDenyHint = null;
+      this.tooltip.hide();
+    });
   }
 
   /** Купить место на полке: с новой клетки слетают доски. */
@@ -357,7 +409,8 @@ export abstract class ShopScene extends DealerScene {
    * и прокрутка барабана; на колесе затемнены сектора, которые выпасть не могут.
    */
   protected refreshShop(): void {
-    this.shop.refresh(this.balance, this.shelf.includes(null));
+    // Третий аргумент — цена билета: ряд билетов в торговом автомате живёт по фишкам на руках и покупкам за забег.
+    this.shop.refresh(this.balance, this.shelf.includes(null), ticketForChips(this.balance, this.ticketsBought, this.shopDiscount()));
     // Амулет в витрине готов, если есть свободное гнездо (для нового) или он уже стоит (копию докупаем в то же гнездо).
     // Активный готов, только пока его гнездо свободно: гнездо одно.
     const amuletReady = this.amuletOffer.map((amulet) => {

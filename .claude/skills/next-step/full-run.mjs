@@ -12,6 +12,10 @@
 //   SIM_NO_LAST_CHANCE=1 — диагностика без последнего шанса: нехватка фишек сразу конец забега (с ним спасается 95%
 //                          и забег упирается в 14+ долгов — числа ничего не говорят о правилах)
 //   SIM_REFUSE_PACTS=1 — бот отказывается от всех сделок Дилера: эталон «как до шага 9» для сравнения баланса
+//   SIM_TICKET_SHARE_START / _STEP / _MAX — доля фишек на руках за билет (items.ts: 0,4 / 0,3 / 1 — старт, шаг и потолок);
+//                        по умолчанию — числа игры, эти ручки замеряют другую цену без правки items.ts
+//   SIM_TICKETS_PER_SHOP=<целое ≥ 0> — сколько билетов можно купить за один заход в магазин (правило игры
+//                        items.TICKETS_PER_SHOP); 0 — без потолка; по умолчанию — потолок игры
 //   SIM_SKULL_SHARE=constant — старая доля черепов (26/121 ≈ 0,215) вместо роста 18→30% по раундам (замечание 19)
 //   SIM_PHASE_STEP=2 — старый шаг множителя в фазе 2 (+1 к шагу); без него в фазе 2 шаг 1 (×1, ×2, ×3)
 //   SIM_PHASE_SPINS=0 — фаза 2 без +1 прокрутки (как до замечания 19)
@@ -34,10 +38,12 @@
 // Политика игрока (BASE_STRATEGY) — это не правила игры, а выбор за игрока: «забрать», когда кон добирает долг
 // или набирает долю долга; риск, молот, свеча и фарт — по своим порогам; бусты символов, перемешка и подмена —
 // пока на долг не хватает; Дилер — сделка с приоритетом «шаг ×2 → раунд без черепов → билеты», иначе отказ; покупки в магазине по порядку «кассета →
-// амулеты по AMULET_POWER → предметы по ITEM_ORDER → барабан» с резервом reserveShare долга
+// билеты за фишки под нужный амулет → амулеты по AMULET_POWER → предметы по ITEM_ORDER → барабан» с резервом reserveShare долга
 // (ряды витрины пополняются после покупки, как ShopScene.refillRow); автомат игрок не выбирает —
 // в начале раунда он с шансом swapChance меняется сам (machineAtRoundStart). AMULET_POWER, ITEM_ORDER
 // и модель времени SECONDS (сколько секунд занимает действие на экране) — оценки игрока, не числа из src/game.
+// Билеты за фишки бот покупает только под конкретный амулет из витрины, которого иначе не хватает по билетам,
+// и только пока после покупки на руках остаётся резерв reserveShare долга: билет — не доход, а размен фишек на амулет.
 //
 // Проверки и страховки — разные вещи, и в отчёте они считаются отдельно. 5 ПРОВЕРОК ловят настоящую ошибку: долг —
 // debtForRound(раунд) плюс законные сдвиги сделок («долг −10%» и «+20%» из №12, «+8%» из №2), все числа конечны, табло билетов = учёт и не в минусе, откат по правилу игры
@@ -158,6 +164,67 @@ function swapChanceFromEnv() {
   return value;
 }
 
+/**
+ * Политика билета за фишки (шаг 13) для замера: цена — доля фишек на руках, и потолок покупок за магазин.
+ * По умолчанию всё из игры (items.ts), ручки окружения нужны, чтобы снять сетку вариантов без правки items.ts.
+ */
+const TICKET_SHARE = ticketSharesFromEnv();
+/** Хоть одна доля переопределена — цену считаем здесь по формуле items.ticketForChips, иначе зовём саму игру. */
+const TICKET_SHARE_OVERRIDE = ['SIM_TICKET_SHARE_START', 'SIM_TICKET_SHARE_STEP', 'SIM_TICKET_SHARE_MAX']
+  .some((name) => process.env[name] !== undefined && process.env[name] !== '');
+/**
+ * Сколько билетов можно купить за один заход в магазин — правило игры (items.TICKETS_PER_SHOP), 0 — без потолка.
+ * SIM_TICKETS_PER_SHOP=<целое ≥ 0> замеряет другой потолок: 0 — без потолка, 2 — не больше двух за магазин.
+ */
+const TICKETS_PER_SHOP = ticketsPerShopFromEnv();
+
+/** Доли банка за билет из окружения (SIM_TICKET_SHARE_*): не число 0…1 — падаем сразу, иначе цена молча стала бы NaN. */
+function ticketSharesFromEnv() {
+  const read = (name, fallback) => {
+    const raw = process.env[name];
+    if (raw === undefined || raw === '') return fallback;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0 || value > 1) {
+      throw new Error(`${name} должен быть числом 0…1, получено «${raw}»`);
+    }
+    return value;
+  };
+  return {
+    start: read('SIM_TICKET_SHARE_START', I.TICKET_SHARE_START),
+    step: read('SIM_TICKET_SHARE_STEP', I.TICKET_SHARE_STEP),
+    max: read('SIM_TICKET_SHARE_MAX', I.TICKET_SHARE_MAX),
+  };
+}
+
+/** Потолок покупок билета за магазин из окружения; без ручки — правило игры items.TICKETS_PER_SHOP (0 — нет потолка). */
+function ticketsPerShopFromEnv() {
+  const fallback = I.TICKETS_PER_SHOP ?? 0; // нет правила в игре — покупать можно, сколько хватит фишек
+  const raw = process.env.SIM_TICKETS_PER_SHOP;
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`SIM_TICKETS_PER_SHOP должен быть целым 0 или больше, получено «${raw}»`);
+  }
+  return value;
+}
+
+/** Доля банка за билет после bought покупок за забег — как items.ticketShare, но с ручками замера. */
+function ticketShareOf(bought) {
+  if (!Number.isFinite(bought)) return TICKET_SHARE.start;
+  return Math.min(TICKET_SHARE.max, TICKET_SHARE.start + TICKET_SHARE.step * Math.max(0, Math.floor(bought)));
+}
+
+/**
+ * Цена билета за фишки при balance на руках — та же дверь, что ShopScene.buyTicket: без ручек зовём
+ * items.ticketForChips, с ручками считаем её формулу, а округление берём из игры (items.roundPrice).
+ */
+function ticketPrice(balance, bought, mul = 1) {
+  if (!TICKET_SHARE_OVERRIDE) return I.ticketForChips(balance, bought, mul);
+  const bank = Number.isFinite(balance) && balance > 0 ? balance : 0;
+  return I.roundPrice(bank * ticketShareOf(bought), mul);
+}
+
+/** Политика игрока (не правила игры). */
 export const BASE_STRATEGY = {
   takeShare: 0.5, shieldShare: 0.25, boostShare: 0.25, reserveShare: 0.5, drumShare: 0.5,
   rustSkulls: 2,
@@ -936,6 +1003,42 @@ function openShop(s, st, g, econ) {
     g.tape = 'blank';
   };
   if (st.tape === 'first') buyTape();
+  // Билеты за фишки (шаг 13): четвёртый ряд торгового автомата — билет стоит долю фишек на руках (items.ticketForChips),
+  // и каждый следующий за забег дороже. Бот покупает их только с умыслом: в витрине есть амулет, который он всё равно
+  // взял бы (тот же порядок AMULET_POWER и те же проверки копий, гнезда и активного гнезда, что в цикле ниже),
+  // а билетов на него не хватает. Покупка — по одному, не больше потолка игры items.TICKETS_PER_SHOP за магазин
+  // (SIM_TICKETS_PER_SHOP замеряет другой потолок, 0 — без потолка), и только пока после неё фишек остаётся не меньше
+  // резерва (reserve()): билет — размен фишек на амулет, а не доход.
+  if (closed >= 1) {
+    /** Сколько билетов нужно на амулет: цена и, для нового амулета без гнезда, ещё и гнездо. null — бот его не возьмёт. */
+    const amuletNeed = (amulet) => {
+      if (A.countOf(s.amuletCounts, amulet.id) >= amulet.maxCopies) return null; // копий уже под потолок
+      const base = A.amuletPrice(amulet, shopMul);
+      // №5: каждая следующая копия страховки вдвое дороже, пока сделка жива (как в цикле ниже).
+      const price = fullInsurance && amulet.id === 'insurance' ? A.insuranceCopyPrice(base, A.countOf(s.amuletCounts, 'insurance')) : base;
+      if (A.isActive(amulet)) return A.activeAmuletOf(s.amuletCounts) === null ? price : null; // гнездо активного одно
+      const socket = s.amulets.findIndex((a) => a.id === amulet.id);
+      if (socket < 0 && s.amulets.length >= s.sockets) {
+        const sp = A.socketPrice(s.sockets, shopMul);
+        return sp === null ? null : sp + price; // новый амулет — только вместе с гнездом
+      }
+      return price;
+    };
+    for (const amulet of [...amuletOffer].sort((a, b) => AMULET_POWER[b.id] - AMULET_POWER[a.id])) {
+      const need = amuletNeed(amulet);
+      if (need === null) continue; // этот амулет бот не возьмёт и с билетами
+      if (need <= s.tickets) break; // лучший доступный уже по карману — докупать незачем
+      for (let bought = 0; (TICKETS_PER_SHOP === 0 || bought < TICKETS_PER_SHOP) && s.tickets < need; bought++) {
+        const price = ticketPrice(s.balance, g.ticketsBought, shopMul);
+        if (price > s.balance || reserve() - price < 0) break; // фишки ушли бы ниже резерва — запас кончился
+        s.balance -= price;
+        s.tickets += 1;
+        g.ticketsLedger += 1; // билет куплен, а не заработан: в ticketIncome по источникам он не идёт
+        g.ticketsBought += 1;
+      }
+      break;
+    }
+  }
   // Амулеты по силе; копия не требует свободного гнезда (шаг 62б), новому амулету — гнездо (отдельная покупка за билеты).
   // Активный (шаг 12б) встаёт в своё янтарное гнездо: пассивные гнёзда и докупка гнезда ему не нужны, но гнездо одно.
   if (closed >= 1) {
@@ -1092,6 +1195,7 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon()) {
     roundSpins: 0, maxRoundSpins: 0, roundsOverCap: 0, // прокруток в раунде: максимум и сколько раундов перевалило за потолок
     shops: 0, machineSwaps: 0, // автомат: сколько раз сменился сам в начале раунда
     amuletsBought: 0, socketsBought: 0, itemsBought: 0, slotsBought: 0, drumSpins: 0, paidEarly: 0,
+    ticketsBought: 0, // билеты за фишки (шаг 13): сколько куплено за забег — от него растёт цена следующего
     activesBought: 0, amuletPresses: 0, pressesById: {}, // активные амулеты (шаг 12б): куплено и сколько раз нажато
     itemSlotsDenied: 0, // сколько раз предмет не включился: все 4 места в столбике заняты
     roundPaid: 0,
@@ -1210,6 +1314,7 @@ export function summarizeRuns(runs) {
     activesBought: mean((r) => r.activesBought), amuletPresses: mean((r) => r.amuletPresses),
     pressesById: Object.fromEntries(A.AMULETS.filter(A.isActive).map((amulet) => [amulet.id, mean((r) => r.pressesById[amulet.id] ?? 0)])),
     items: mean((r) => r.itemsBought), slots: mean((r) => r.slotsBought), drumSpins: mean((r) => r.drumSpins),
+    ticketsBought: mean((r) => r.ticketsBought), // билеты за фишки (шаг 13) — сколько куплено за забег
     paidEarly: mean((r) => r.paidEarly),
     ticketIncome: { debt: income('debt'), early: income('early'), scatter: income('scatter'), jackpot: income('jackpot'), drum: income('drum'), pact: income('pact') },
     pactsTaken: mean((r) => r.pactsTaken), pactsRefused: mean((r) => r.pactsRefused), shopsClosed: mean((r) => r.shopsClosed),
@@ -1274,7 +1379,7 @@ export function report(name, x) {
   const chips = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
   console.log(`${name.padEnd(44)} в конце ${f(x.closed)} (мед ${x.median}), пик ${f(x.peak)} (среднее максимумов по забегам), 1-й ${pct(x.first)}, 10+ ${pct(x.ten)}, после 5-го раунда без долгов ${pct(x.flop5)}, рекорд ${x.best} | ${f(x.minutes, 1)} мин (мед ${f(x.minutesMedian, 1)}, >10 ${pct(x.over10)}) | попыток раунда ${f(x.attempts, 1)} (мед ${x.attemptsMedian}), магазинов ${f(x.shops, 1)}, прокруток ${f(x.spins, 0)} (платных ${f(x.paidSpins, 0)}), макс. за раунд ${f(x.maxRoundSpins, 0)} (больше потолка в ${pct(x.overCap)} раундов) | кассет ${f(x.tapesBought)} (берут ${pct(x.bought)}), откатов ${f(x.rewinds)} | множитель 1-й прокрутки ${f(x.firstSpinMult)}, упёрлись в 400 раундов ${pct(x.guard)} | сид ${SEED ?? '—'} | нарушений ${f(sum(Object.values(x.violations)), 0)}, страховок ${f(sum(Object.values(x.safeguards)), 0)}`);
   console.log(`${''.padEnd(44)} последний шанс: шансов ${f(x.lastChances)} за забег (не было у ${pct(x.noChance)}), спасено ${pct(x.rescue)} (${f(x.survived)} из ${f(x.lastChances)}; среднее по забегам ${pct(x.rescuePerRun)}), мгновенных ${pct(x.instantShare)}, цель мед ×${f(x.goalMedian, 1)} (полная нехватка ×${f(x.goalFullMedian, 1)}, у потолка ×10 — ${pct(x.goalAtCap)}), цель побита после 1-го действия ${pct(x.firstActionWins / Math.max(x.lastChances, 1e-9))} (в т.ч. позже снесена ${pct(x.firstWinLost / Math.max(x.lastChances, 1e-9))}), второе дыхание ${f(x.secondWind)} (макс ${x.secondWindMax}), KABOOM ${f(x.dead)}, действий на шанс ${f(x.lcActions / Math.max(x.lastChances, 1e-9), 1)}, доля цели ${f(SHARE, 2)}`);
-  console.log(`${''.padEnd(44)} билеты: за долг ${f(x.ticketIncome.debt)}, ранняя оплата ${f(x.ticketIncome.early)}, 🎟×3 ${f(x.ticketIncome.scatter)}, джекпот ${f(x.ticketIncome.jackpot)}, барабан ${f(x.ticketIncome.drum)}, сделка ${f(x.ticketIncome.pact)} | сделок взято ${f(x.pactsTaken)}, отказов ${f(x.pactsRefused)}, магазинов закрыто сделкой ${f(x.shopsClosed)} | по видам (за забег): ${PACT_SHORT.map(([id, name]) => `${name} ${f(x.pactsById[id])}`).join(', ')} | вторых забираний ${f(x.doubleTakes)}, амулетов по сделке ${f(x.amuletsFree)} | автомат: смен ${f(x.machineSwaps, 0)} | куплено: амулетов ${f(x.amulets)}, гнёзд ${f(x.sockets)}, предметов ${f(x.items)}, мест ${f(x.slots)}, прокруток барабана ${f(x.drumSpins)}, ранних оплат ${f(x.paidEarly)} | отказов по местам ${f(x.itemSlotsDenied)} | активных куплено ${f(x.activesBought)}, нажатий ${f(x.amuletPresses)} (${A.AMULETS.filter(A.isActive).map((amulet) => `${amulet.id} ${f(x.pressesById[amulet.id])}`).join(', ')}) | фриспины до ${f(x.freeMax, 1)} за раунд, предохранитель ${B.FREE_SPINS_GUARD} срезал ${f(x.guardStops)} раз (у ${pct(x.guardRuns)} забегов) | заряд замаха ${f(CHARGE, 2)}`);
+  console.log(`${''.padEnd(44)} билеты: за долг ${f(x.ticketIncome.debt)}, ранняя оплата ${f(x.ticketIncome.early)}, 🎟×3 ${f(x.ticketIncome.scatter)}, джекпот ${f(x.ticketIncome.jackpot)}, барабан ${f(x.ticketIncome.drum)}, сделка ${f(x.ticketIncome.pact)} | сделок взято ${f(x.pactsTaken)}, отказов ${f(x.pactsRefused)}, магазинов закрыто сделкой ${f(x.shopsClosed)} | по видам (за забег): ${PACT_SHORT.map(([id, name]) => `${name} ${f(x.pactsById[id])}`).join(', ')} | вторых забираний ${f(x.doubleTakes)}, амулетов по сделке ${f(x.amuletsFree)} | автомат: смен ${f(x.machineSwaps, 0)} | куплено: амулетов ${f(x.amulets)}, гнёзд ${f(x.sockets)}, предметов ${f(x.items)}, мест ${f(x.slots)}, прокруток барабана ${f(x.drumSpins)}, ранних оплат ${f(x.paidEarly)} | отказов по местам ${f(x.itemSlotsDenied)} | билетов куплено ${f(x.ticketsBought)} за забег | активных куплено ${f(x.activesBought)}, нажатий ${f(x.amuletPresses)} (${A.AMULETS.filter(A.isActive).map((amulet) => `${amulet.id} ${f(x.pressesById[amulet.id])}`).join(', ')}) | фриспины до ${f(x.freeMax, 1)} за раунд, предохранитель ${B.FREE_SPINS_GUARD} срезал ${f(x.guardStops)} раз (у ${pct(x.guardRuns)} забегов) | заряд замаха ${f(CHARGE, 2)}`);
   // Строка цели: в SIM_CHASE_RECORD=1 к ней добавляется вторая ступень — 10 000 000 и кто до неё дошёл.
   const recordLine = CHASE_RECORD
     ? ` | рекорд ${chips(RECORD)}: взяли ${pct(x.recordShare)} (${x.recordRuns} из ${x.runs}), у дошедших: раунд мед ${f(x.recordRoundMedian, 0)}, минут мед ${f(x.recordMinutesMedian, 1)}`

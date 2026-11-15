@@ -198,6 +198,37 @@ export function itemPrice(item: ShopItem, debt: number, mul = 1): number {
   return roundPrice(item.priceShare * debt, mul);
 }
 
+// Билет за фишки (шаг 13): четвёртый ряд торгового автомата. Цена — доля фишек НА РУКАХ, а не долга
+// (QUESTIONS.md, «Решено в СОЛО 15.11.2026»): доля банка сама растёт вместе с забегом, и в первом магазине
+// все билеты за копейки не скупить. Каждый купленный за забег билет делает следующий дороже, пока доля не упрётся в потолок.
+// Числа подобраны симулятором (.claude/skills/next-step/full-run.mjs, сетка шага 13): с дешёвой ценой механика
+// съедала экономику — 10+ долгов в 96% забегов и 1 млн в 56% вместо эталона шага 12 (81–84% и 22–25%).
+export const TICKET_SHARE_START = 0.4; // первый билет — 40% фишек на руках
+export const TICKET_SHARE_STEP = 0.3; // каждый следующий — ещё на 30% банка дороже
+export const TICKET_SHARE_MAX = 1; // потолок: дороже всех фишек на руках билет не стоит
+
+/**
+ * Сколько билетов за фишки продают за один заход в магазин. Это правило игры, а не политики бота: цена билета растёт
+ * с покупками за забег, и без потолка за один магазин их скупали пачкой (симулятор: 8 билетов за забег, 10+ у 91%).
+ * Когда потолок выбран, ряд гаснет до следующего магазина. `0` — без потолка: продают, пока хватает фишек.
+ */
+export const TICKETS_PER_SHOP = 1;
+
+/** Доля фишек на руках за билет после bought покупок за забег: 40, 70, 100% и дальше 100%. */
+export function ticketShare(bought: number): number {
+  if (!Number.isFinite(bought)) return TICKET_SHARE_START; // мусор в счётчике — как первый билет
+  return Math.min(TICKET_SHARE_MAX, TICKET_SHARE_START + TICKET_SHARE_STEP * Math.max(0, Math.floor(bought)));
+}
+
+/**
+ * Цена билета при balance фишек на руках, bought купленных за забег билетах и скидке сделки mul (№2):
+ * доля банка, округлённая до 5, но не меньше 5. balance — мусор, ноль или минус: билет стоит минимум.
+ */
+export function ticketForChips(balance: number, bought: number, mul = 1): number {
+  const bank = Number.isFinite(balance) && balance > 0 ? balance : 0;
+  return roundPrice(bank * ticketShare(bought), mul);
+}
+
 /** Цена следующего места на полке (сейчас мест slots). Мест уже MAX_SLOTS — null: больше не продаётся. */
 export function slotPrice(slots: number, debt: number, mul = 1): number | null {
   if (slots >= MAX_SLOTS) return null;

@@ -124,6 +124,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected activeUses = 0; // зарядов активного амулета в этом раунде (гнездо одно; 0 — амулета нет)
   protected amuletOffer: (Amulet | null)[] = []; // что лежит в витрине амулетов; купленное — null
   protected drumSpins = 0; // сколько раз крутил барабан в этом магазине — каждая следующая прокрутка дороже
+  protected ticketsBought = 0; // сколько билетов куплено за фишки за забег — с каждым следующий билет дороже (шаг 13)
   protected bones = 0; // сколько паттернов из черепов выпало за забег — для коллекционера костей
   protected roundShields = 0; // сколько ещё черепов в этом раунде отобьёт бронежилет
   // Какой из трёх автоматов стоит сейчас: игрок его не выбирает — в начале раунда он может смениться сам.
@@ -255,6 +256,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.activeUses = 0; // новый забег — активных амулетов нет
     this.amuletOffer = [];
     this.drumSpins = 0;
+    this.ticketsBought = 0; // новый забег — билеты снова по 40% банка
     this.bones = 0;
     this.roundShields = 0;
     this.machineId = 'classic'; // новый забег — всегда с классического

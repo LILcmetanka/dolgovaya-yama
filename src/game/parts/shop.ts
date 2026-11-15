@@ -30,9 +30,12 @@ import { addText, fitTextWidth, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TE
 import { fitBoardNumber } from './panel';
 import { attachHint, type Hint } from './tooltip';
 
-const ROWS = OFFER_SIZE; // ряды торгового автомата: все — предметы
+const ROWS = OFFER_SIZE + 1; // ряды торгового автомата: три с предметами и четвёртый — билеты за фишки (шаг 13)
+/** Ряд билетов: последний. Номера клавиши у него нет — все десять заняты, покупка только кликом. */
+export const TICKET_ROW = OFFER_SIZE;
 // Что где в ряду: предмет слева, ценник справа.
 const GOOD_SCALE = 0.9; // предмет в спирали
+const TICKET_GOOD_WIDTH = 46; // билет в ряду — шириной с предмет в соседних рядах (он вытянутый, поэтому по ширине)
 const PRICE_TEXT_OFFSET = 14; // «× 20» — правее фишки ценника
 const PRICE_FONT_SIZE = 19; // цена в ряду…
 const PRICE_MIN_FONT_SIZE = 13; // …длинная уменьшается, чтобы не вылезти за тёмную табличку и стекло…
@@ -55,8 +58,8 @@ const TICKET_FLY_TIME = 600; // билет летит в шапку панели
 
 /**
  * Магазин: панель поверх комнаты (съезжает сверху, как жалюзи, и так же уезжает), на ней торговый автомат с предметами
- * и ценниками, в шапке — сколько у тебя фишек и билетов. Чемодан с амулетами (его рисует AmuletCase), маленький
- * автомат с местом на полке и гнездом (MiniShop), барабан и кассета — тоже на панели.
+ * и ценниками и четвёртым рядом — билетом за фишки, в шапке — сколько у тебя фишек и билетов. Чемодан с амулетами
+ * (его рисует AmuletCase), маленький автомат с местом на полке и гнездом (MiniShop), барабан и кассета — тоже на панели.
  * Клик по ряду (или клавиша с его номером, её ловит сцена) — купить. При наведении — подсказка.
  */
 export class Shop {
@@ -65,8 +68,9 @@ export class Shop {
   private readonly goods: Phaser.GameObjects.Image[] = []; // что лежит в ряду
   private readonly priceChips: Phaser.GameObjects.Image[] = []; // ценник: фишка…
   private readonly priceTexts: Phaser.GameObjects.Text[] = []; // …и «× 20»
-  private prices: (number | null)[] = []; // цена ряда; null — ряд пуст: купили или в пуле ничего не осталось
+  private prices: (number | null)[] = []; // цена ряда; null — ряд пуст: купили или в пуле ничего не осталось (у ряда билетов цена есть всегда после refresh)
   private items: (Item | null)[] = []; // какой предмет в каком ряду
+  private ticketsExhausted = false; // билеты за фишки в этом магазине кончились (потолок items.TICKETS_PER_SHOP)
   private readonly hudChipsText: Phaser.GameObjects.Text; // шапка панели: сколько фишек
   private readonly hudTicketsText: Phaser.GameObjects.Text; // шапка панели: сколько билетов
   private readonly hudTicketScale: number; // билет в полёте — такого размера, как значок в шапке
@@ -91,7 +95,9 @@ export class Shop {
     // Порядок в витрине: корпус → товар → спираль → стекло. Предмет лежит за спиралью и стеклом, а не поверх корпуса.
     for (let row = 0; row < ROWS; row++) {
       const y = vendingRowY(row, ROWS);
-      const good = scene.add.image(VENDING_GOOD_X, goodY(row), itemTexture(ITEMS[0])).setScale(GOOD_SCALE).setVisible(false);
+      const isTicket = row === TICKET_ROW;
+      const good = scene.add.image(VENDING_GOOD_X, goodY(row), isTicket ? TICKET_TEXTURE : itemTexture(ITEMS[0])).setVisible(false);
+      good.setScale(isTicket ? TICKET_GOOD_WIDTH / good.width : GOOD_SCALE); // билет — размером с предмет в соседних рядах
       good.setInteractive({ useHandCursor: true });
       attachHint(good, hint, () => this.hintFor(row), () => buy(row));
       this.goods.push(good);
@@ -172,8 +178,13 @@ export class Shop {
     return zone;
   }
 
-  /** Подсказка ряда: что за предмет и что он делает. */
+  /** Подсказка ряда: что за предмет и что он делает. У ряда билетов — что это за билет (или почему он погас). */
   private hintFor(row: number): [string, string] | null {
+    if (row === TICKET_ROW) {
+      // Потолок покупок за заход выбран: ряд тусклый, а подсказка говорит, где взять следующий билет.
+      if (this.ticketsExhausted) return [t('shopTicket'), t('shopTicketSold')];
+      return [t('shopTicket'), t('shopTicketWhat')];
+    }
     if (this.prices[row] === null) return null;
     const item = this.items[row];
     return item ? [t(item.name), t(item.description)] : null;
@@ -183,22 +194,30 @@ export class Shop {
   open(offer: Item[], prices: number[], ready: () => void): void {
     this.items = [];
     this.prices = [];
+    this.ticketsExhausted = false; // новый заход — билеты за фишки снова продаются
     for (let row = 0; row < OFFER_SIZE; row++) {
       const item = offer[row] ?? null;
       this.items.push(item);
       this.prices.push(item ? prices[row] : null);
       if (item) this.goods[row].setTexture(itemTexture(item));
     }
+    this.items.push(null); // ряд билетов: предмета нет, он на витрине всегда
+    this.prices.push(null); // цену билета ставит refresh — она зависит от фишек на руках
     for (let row = 0; row < ROWS; row++) this.showRow(row);
     this.show(ready);
   }
 
-  /** Ряд как есть: предмет в спирали и ценник справа; пустой ряд — ничего. */
+  /** Ряд как есть: предмет в спирали и ценник справа; пустой ряд — ничего. Билет с витрины не пропадает никогда. */
   private showRow(row: number): void {
     const price = this.prices[row];
-    const isEmpty = price === null;
+    const isEmpty = price === null && row !== TICKET_ROW; // билет остаётся, даже когда цена ещё не посчитана
     this.goods[row].setPosition(VENDING_GOOD_X, goodY(row)).setAlpha(1).setVisible(!isEmpty);
-    this.priceChips[row].setVisible(!isEmpty);
+    this.setPriceShown(row, price);
+  }
+
+  /** Значок ценника и «× 170» — только вместе: нет цены, нет и половины ценника (пустой значок читается как поломка). */
+  private setPriceShown(row: number, price: number | null): void {
+    this.priceChips[row].setVisible(price !== null);
     this.setPriceText(row, price);
   }
 
@@ -212,12 +231,20 @@ export class Shop {
     fitTextWidth(text, `× ${price}`, PRICE_MAX_WIDTH, PRICE_FONT_SIZE, PRICE_MIN_FONT_SIZE);
   }
 
-  /** Ценники по фишкам на табло: хватает — жёлтые, нет — красные. Некуда положить предмет — предметы тусклые. */
-  refresh(balance: number, hasFreeSlot: boolean): void {
+  /**
+   * Ценники по фишкам на табло: хватает — жёлтые, нет — красные. Некуда положить предмет — предметы тусклые.
+   * ticketPrice — цена билета сейчас (items.ticketForChips): она меняется с фишками на руках и покупками за забег.
+   * Ряд билетов, распроданный за этот заход, цены не получает: он тусклый до следующего магазина.
+   */
+  refresh(balance: number, hasFreeSlot: boolean, ticketPrice: number): void {
+    if (!this.ticketsExhausted) {
+      this.prices[TICKET_ROW] = ticketPrice; // ряд билетов: цена — доля банка, её считает сцена
+      this.setPriceShown(TICKET_ROW, ticketPrice);
+    }
     this.prices.forEach((price, row) => {
       if (price === null) return;
       this.priceTexts[row].setColor(price <= balance ? LED_COLOR : RED_TEXT);
-      this.goods[row].setAlpha(hasFreeSlot ? 1 : DIM_ALPHA);
+      if (row !== TICKET_ROW) this.goods[row].setAlpha(hasFreeSlot ? 1 : DIM_ALPHA); // билет на полку не ложится — он не тускнеет
     });
   }
 
@@ -250,9 +277,28 @@ export class Shop {
     this.prices[row] = price;
     const good = this.goods[row];
     good.setTexture(itemTexture(item)).setPosition(VENDING_GOOD_X, goodY(row)).setAlpha(1).setVisible(true).setScale(0);
-    this.priceChips[row].setVisible(true);
-    this.setPriceText(row, price);
+    this.setPriceShown(row, price);
     this.scene.tweens.add({ targets: good, scale: GOOD_SCALE, duration: REFILL_TIME, ease: 'Back.easeOut' });
+  }
+
+  /**
+   * Купили билет: фишки летят в щель, билет — из ряда в шапку панели, к числу билетов. Ряд не пустеет,
+   * пока магазин не продал свою норму (items.TICKETS_PER_SHOP): её сторожит сцена, а гаснет ряд — soldOutTickets.
+   */
+  sellTicket(): void {
+    this.payChips();
+    this.flyTicket(VENDING_GOOD_X, goodY(TICKET_ROW));
+  }
+
+  /**
+   * Билеты за фишки в этом магазине кончились: ряд тускнеет и теряет ценник до следующего захода (open его снова
+   * зажигает). Тусклый билет можно навести, и подсказка скажет, почему больше не продают (ShopScene.showTicketLimit).
+   */
+  soldOutTickets(): void {
+    this.ticketsExhausted = true;
+    this.prices[TICKET_ROW] = null;
+    this.goods[TICKET_ROW].setAlpha(DIM_ALPHA);
+    this.setPriceShown(TICKET_ROW, null); // ценника нет целиком: значок без числа читается как поломка
   }
 
   /** Фишки летят с табло панели (а не с закрытого корпусом) в щель торгового автомата. */

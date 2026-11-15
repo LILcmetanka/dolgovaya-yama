@@ -152,6 +152,17 @@ const TEXTS = {
   activeAmuletHow: { ru: 'Эффект активного амулета включает клик по значку', en: 'An active amulet works when you click its icon' },
   ticket: { ru: 'Билет', en: 'Ticket' }, // без эмодзи 🎟: билет в игре — одна красная картинка (decor.ts)
   ticketWhat: { ru: 'На амулеты и гнёзда', en: 'Buys amulets and sockets' },
+  // Билет за фишки — четвёртый ряд торгового автомата (шаг 13): цена — доля фишек на руках, и она растёт с покупками.
+  shopTicket: { ru: 'Билет', en: 'Ticket' },
+  shopTicketWhat: {
+    ru: 'Один билет за долю фишек на руках; каждый следующий дороже',
+    en: 'One ticket for a share of your chips; each next one costs more',
+  },
+  // Потолок билетов за магазин (items.TICKETS_PER_SHOP): ряд погас после покупки — почему и где взять ещё.
+  shopTicketSold: {
+    ru: 'За заход больше не продают — приходи в следующий магазин',
+    en: 'No more this visit — come back to the next shop',
+  },
   drum: { ru: 'Барабан', en: 'Wheel' }, // колесо в магазине
   drumWhat: { ru: 'Крути за фишки. Каждая следующая прокрутка — цена ×{0}', en: 'Spin for chips. Each next spin: price ×{0}' },
   tape: { ru: 'Кассета', en: 'Cassette' },
