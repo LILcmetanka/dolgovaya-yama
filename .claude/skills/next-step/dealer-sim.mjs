@@ -22,7 +22,8 @@ if (!Number.isInteger(VISITS) || VISITS <= 0) {
 
 /** Политика бота — та же, что в full-run.mjs: чем выше в списке, тем охотнее берём. */
 const PACT_PRIORITY = [
-  'double-step', 'quiet-round', 'tickets-shop', 'price-up', 'skull-calm', 'soft-skull',
+  'extra-breath', 'double-take', 'double-step', 'quiet-round', 'tickets-shop', 'free-amulet',
+  'price-up', 'machine-delay', 'safe-bank', 'skull-calm', 'soft-skull',
   'cheap-shop', 'debt-cut', 'full-insurance', 'jackpot-weight', 'symbol-weight',
 ];
 const ROUNDS = 30; // длина модельного забега
@@ -36,6 +37,7 @@ const pick = (offers, pacts, round) =>
 /**
  * Запись сделки в кассету: для №11 бот выбирает самый дорогой символ, как в full-run.mjs. Выбирать не из чего —
  * null: сделку без символа не берём (она ничего не делает, как отказ карты в DealerTable).
+ * У №13 здесь нет проверки свободного гнезда: в этой модели амулетов и гнёзд нет (стол за это отвечает в full-run).
  */
 const take = (choice, round) => {
   if (choice.id !== 'symbol-weight') return D.pactOf(choice.id, round);
@@ -96,6 +98,10 @@ const effectsOn = {
   'страховка 100%': (effects) => effects.insuranceShare === D.INSURANCE_FULL_SHARE,
   'джекпот тяжелее': (effects) => effects.jackpotWeightMul > 1,
   'символ выбран': (effects) => effects.symbolLuck !== null,
+  'автомат замер': (effects) => effects.noMachineSwap,
+  'кон не жжёт': (effects) => effects.bankSurvivesSkull,
+  'слоты короче': (effects) => effects.effectSlotsDelta < 0,
+  'забрать дважды': (effects) => effects.doubleTake,
 };
 const roundsOn = Object.fromEntries(Object.keys(effectsOn).map((name) => [name, 0]));
 let roundsSeen = 0;

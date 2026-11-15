@@ -64,12 +64,15 @@ const TEXTS = {
   lcSurrenderWhat: { ru: 'Клавиша 4. Сразу провал последнего шанса', en: 'Key 4. Fail the last chance right away' },
   lcSecondWind: { ru: 'ВТОРОЕ ДЫХАНИЕ', en: 'SECOND WIND' },
   // Пояснение к попапу: почему забег жив, хотя последний шанс провален (DONTLIKE б.12).
+  // Со сделкой №9 запасов может быть больше одного, поэтому «второй провал» заранее не обещаем.
   lcSecondWindWhat: {
-    ru: 'первый провал за забег прощён: счёт на один долг назад. Второй провал — конец забега',
-    en: 'the first failure of the run is forgiven: the score goes one debt back. The second failure ends the run',
+    ru: 'провал прощён: счёт на один долг назад. Запасы кончились — конец забега',
+    en: 'the failure is forgiven: the score goes one debt back. No reserves left — the run ends',
   },
-  // Плашка у записки долга: есть ли ещё второе дыхание (DONTLIKE б.12).
+  // Плашка у записки долга: есть ли ещё второе дыхание (DONTLIKE б.12). Со сделкой №9 запасов может быть больше одного —
+  // тогда на плашке число (secondWindHaveMany), при 1 и 0 — прежние две надписи.
   secondWindHave: { ru: '🫁 ДЫХАНИЕ: ЕСТЬ', en: '🫁 SECOND WIND: ON' },
+  secondWindHaveMany: { ru: '🫁 ДЫХАНИЯ: {0}', en: '🫁 SECOND WINDS: {0}' },
   secondWindSpent: { ru: '🫁 ДЫХАНИЕ: НЕТ', en: '🫁 SECOND WIND: OFF' },
   // Последний шанс, входная сетка уже перекрыла цель: долг закроется сам (DONTLIKE б.13).
   lcAlreadyWin: { ru: 'СЕТКА УЖЕ БЬЁТ ЦЕЛЬ', en: 'THE GRID ALREADY BEATS THE GOAL' },
@@ -120,6 +123,8 @@ const TEXTS = {
   pactPickSymbol: { ru: 'ВЫБЕРИ СИМВОЛ', en: 'PICK A SYMBOL' }, // карта №11: ряд кнопок-символов на сукне
   pactNews: { ru: 'СДЕЛКА: {0} / {1}', en: 'DEAL: {0} / {1}' }, // новость на стекле, когда сделку взяли
   pactOver: { ru: 'СДЕЛКА КОНЧИЛАСЬ', en: 'THE DEAL IS OVER' }, // новость на стекле, когда срок вышел
+  pactNoRoom: { ru: 'НЕТ МЕСТА ПОД АМУЛЕТ', en: 'NO ROOM FOR AN AMULET' }, // карта №13: сосуд занят — взять нельзя
+  pactAlreadyTaken: { ru: 'ЭТО УЖЕ БРАЛИ', en: 'ALREADY TAKEN' }, // карта №9: запас дыхания один раз за забег
   shopClosedByPact: { ru: 'МАГАЗИН ЗАКРЫТ СДЕЛКОЙ', en: 'SHOP CLOSED BY THE DEAL' }, // вместо панели магазина
   // Замах рычага (DONTLIKE п. 8): подсказка к шкале заряда.
   chargeTitle: { ru: 'Замах', en: 'Charge' },

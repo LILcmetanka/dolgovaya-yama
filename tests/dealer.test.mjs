@@ -202,6 +202,10 @@ test('pactEffects без сделок: эффектов нет, всё по ум
   assert.equal(none.skullWipesStreak, false, 'череп оставляет треть');
   assert.equal(none.skullSoft, false, 'череп обычный');
   assert.equal(none.multiplierCap, Number.POSITIVE_INFINITY, 'потолка нет');
+  assert.equal(none.noMachineSwap, false, 'автомат меняется сам');
+  assert.equal(none.bankSurvivesSkull, false, 'череп жжёт кон');
+  assert.equal(none.effectSlotsDelta, 0, 'столбик обычный');
+  assert.equal(none.doubleTake, false, 'одно забирание за прокрутку');
 });
 
 test('эффекты всех сделок конечные и без NaN на любом раунде', () => {
@@ -218,6 +222,11 @@ test('эффекты всех сделок конечные и без NaN на �
       assert.ok(Number.isFinite(effects.jackpotWeightMul) && effects.jackpotWeightMul > 0, `${spec.id}: вес джекпота конечный`);
       assert.ok(Number.isFinite(effects.blackWeightAdd) && effects.blackWeightAdd >= 0, `${spec.id}: прибавка «чёрным» не отрицательная и не NaN`);
       assert.equal(typeof effects.insuranceDoubles, 'boolean', `${spec.id}: признак дорогой страховки — да/нет`);
+      assert.equal(typeof effects.noMachineSwap, 'boolean', `${spec.id}: запрет смены автомата — да/нет`);
+      assert.equal(typeof effects.bankSurvivesSkull, 'boolean', `${spec.id}: «череп не жжёт кон» — да/нет`);
+      assert.equal(typeof effects.doubleTake, 'boolean', `${spec.id}: «забрать дважды» — да/нет`);
+      assert.ok(Number.isFinite(effects.effectSlotsDelta), `${spec.id}: поправка столбика — конечное число`);
+      assert.ok(Number.isInteger(effects.effectSlotsDelta), `${spec.id}: поправка столбика целая`);
       if (effects.symbolLuck !== null) {
         assert.equal(typeof effects.symbolLuck.id, 'string', `${spec.id}: у поправки символа есть id`);
         assert.ok(Number.isFinite(effects.symbolLuck.plus) && Number.isFinite(effects.symbolLuck.minus), `${spec.id}: поправки символа конечные`);
@@ -377,4 +386,129 @@ test('skullShareWeightMul: отрицательная поправка (тише
   assert.ok(floorShare >= D.SKULL_SHARE_MIN - 1e-12, 'доля не падает ниже SKULL_SHARE_MIN, получено ' + floorShare.toFixed(4));
   assert.ok(Number.isFinite(floor) && floor > 0, 'и множитель не NaN и не отрицательный');
   assert.equal(D.skullShareWeightMul(0.01, -0.03), 1, 'у нижней границы двигать нечего');
+});
+
+// ---------- Партия Б шага 11: последние пять связок автора ----------
+
+test('связка №8 «смена автомата отложена / черепа +2 п.п. навсегда»', () => {
+  const held = D.pactOf('machine-delay', TAKEN);
+  assert.equal(rounds('machine-delay'), D.PACT_LAST_ROUNDS, 'сделка живёт до конца забега');
+  assert.equal(D.NO_SWAP_ROUNDS, 4, 'автомат замирает на четыре раунда сделки');
+  assert.equal(D.MACHINE_DELAY_SKULL_DELTA, 0.02, 'плата — +2 п.п. черепов');
+  for (let step = 0; step < D.NO_SWAP_ROUNDS; step++) {
+    const effects = D.pactEffects([held], TAKEN + step);
+    assert.equal(effects.noMachineSwap, true, `раунд ${step + 1}: автомат не меняется`);
+    assert.equal(effects.skullShareDelta, D.MACHINE_DELAY_SKULL_DELTA, 'черепа чаще весь срок сделки');
+  }
+  const fifth = D.pactEffects([held], TAKEN + D.NO_SWAP_ROUNDS);
+  assert.equal(fifth.noMachineSwap, false, 'пятый раунд — смена автомата снова обычная');
+  assert.equal(fifth.skullShareDelta, D.MACHINE_DELAY_SKULL_DELTA, 'а черепа по-прежнему чаще');
+  assert.equal(D.pactEffects([held], TAKEN - 1).noMachineSwap, false, 'до взятия запрета нет');
+  const after = D.pactEffects([held], held.untilRound + 1);
+  assert.equal(after.noMachineSwap, false, 'после срока — обычная смена');
+  assert.equal(after.skullShareDelta, 0, 'и обычная доля черепов');
+  assert.equal(D.pactEffects([], TAKEN).noMachineSwap, false, 'без сделки автомат меняется');
+  assert.equal(D.pactEffects([{ id: 'machine-delay', untilRound: 0 }], 1).noMachineSwap, false, 'битый срок — сделки нет');
+});
+
+test('связка №9 «+1 запас второго дыхания (не больше 2) / серия −1 ступень»', () => {
+  const breath = D.pactOf('extra-breath', TAKEN);
+  assert.equal(breath.untilRound, TAKEN + D.PACT_LAST_ROUNDS - 1, 'запись живёт до конца забега — маркер «уже брал»');
+  assert.equal(rounds('extra-breath'), D.EXTRA_BREATH_ROUNDS, 'срок — EXTRA_BREATH_ROUNDS');
+  assert.equal(D.EXTRA_BREATH_COUNT, 1, 'запас один');
+  assert.equal(D.EXTRA_BREATH_STREAK_COST, 1, 'ступень серии одна');
+  assert.equal(D.SECOND_WIND_MAX, 2, 'потолок запасов — два');
+  // Как DealerScene.applyPactOnce: запас +1, но не выше потолка; серия вниз на ступень, но не в минус.
+  const take = (left, streak) => ({
+    left: Math.min(D.SECOND_WIND_MAX, left + D.EXTRA_BREATH_COUNT),
+    streak: Math.max(0, streak - D.EXTRA_BREATH_STREAK_COST),
+  });
+  assert.deepEqual(take(1, 5), { left: 2, streak: 4 }, 'один запас был, стал два');
+  assert.deepEqual(take(1, 0), { left: 2, streak: 0 }, 'серия не уходит в минус');
+  assert.deepEqual(take(2, 1), { left: 2, streak: 0 }, 'выше двух запасов карта не поднимает');
+  assert.deepEqual(take(0, 3), { left: 1, streak: 2 }, 'потраченный запас восполняется до потолка');
+  // Повторно карту не берут: запись живёт весь забег, pactLive её видит.
+  assert.equal(D.pactLive([breath], 'extra-breath', TAKEN + 1), true, 'на следующий раунд карта уже не берётся');
+  assert.equal(D.pactLive([breath], 'extra-breath', breath.untilRound), true, 'и в последнем раунде срока');
+  // Два запаса кончились — третий провал последнего шанса кончает забег (как CollectorScene.failLastChance).
+  const failures = [];
+  let left = S.SECOND_WIND_START;
+  left = take(left, 0).left;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (left <= 0) { failures.push('kaboom'); continue; }
+    left -= 1;
+    failures.push('secondWind');
+  }
+  assert.deepEqual(failures, ['secondWind', 'secondWind', 'kaboom'], 'два запаса прощают два провала, третий — конец забега');
+  // В раунде эффекта нет: и ступень, и запас сработали в момент взятия (ветка switch с комментарием).
+  const effects = D.pactEffects([breath], TAKEN);
+  assert.equal(effects.spinsDelta, 0, 'прокруток не трогает');
+  assert.equal(effects.skullSoft, false, 'череп обычный');
+  assert.equal(effects.bankSurvivesSkull, false, 'к кону не относится');
+  // Кассета: новый счётчик, старые записи с флагом, мусор.
+  assert.equal(S.SECOND_WIND_START, 1, 'обычный забег — один запас');
+  assert.equal(S.secondWindLeftOf({}), S.SECOND_WIND_START, 'старая запись без полей — дыхание есть');
+  assert.equal(S.secondWindLeftOf({ secondWindUsed: false }), S.SECOND_WIND_START, 'старый флаг «не потрачено»');
+  assert.equal(S.secondWindLeftOf({ secondWindUsed: true }), 0, 'старый флаг «потрачено» — 0');
+  assert.equal(S.secondWindLeftOf({ secondWindLeft: 2 }), 2, 'счётчик со сделкой читается как есть');
+  assert.equal(S.secondWindLeftOf({ secondWindLeft: 2.9 }), 2, 'дробное вниз');
+  assert.equal(S.secondWindLeftOf({ secondWindLeft: -3 }), 0, 'минус — 0');
+  assert.equal(S.secondWindLeftOf({ secondWindLeft: Number.NaN, secondWindUsed: true }), 0, 'мусор — к старому флагу');
+  assert.equal(S.secondWindLeftOf({ secondWindLeft: Number.POSITIVE_INFINITY }), 1, '∞ — к флагу, флага нет — 1');
+});
+
+test('связка №10 «первый череп не жжёт кон / набранное не идёт в цель»', () => {
+  const bank = D.pactOf('safe-bank', TAKEN);
+  assert.equal(rounds('safe-bank'), D.SAFE_BANK_ROUNDS, 'сделка живёт один раунд');
+  assert.equal(D.pactEffects([bank], TAKEN).bankSurvivesSkull, true, 'в раунде взятия первый череп не жжёт кон');
+  assert.equal(D.pactEffects([bank], TAKEN + 1).bankSurvivesSkull, false, 'следующий раунд — обычные правила');
+  assert.equal(D.pactEffects([], TAKEN).bankSurvivesSkull, false, 'без сделки череп жжёт кон');
+  // Кон цел — и страховке нечего возвращать, сработка копии не тратится.
+  const effects = D.pactEffects([bank], TAKEN);
+  assert.equal(A.insuranceRefund(0, ['insurance'], 0, effects.insuranceShare), 0, 'сгорать нечему — возврат 0');
+  assert.equal(A.insuranceRefund(100, ['insurance'], 0, effects.insuranceShare), Math.floor(100 * A.INSURANCE_SHARE), 'доля страховки обычная');
+  assert.equal(effects.bankSurvivesSkull, true, 'карта не подменяет долю страховки');
+});
+
+test('связка №13 «бесплатный амулет / −2 места в столбике»', () => {
+  const cup = D.pactOf('free-amulet', TAKEN);
+  const last = TAKEN + D.FREE_AMULET_ROUNDS - 1;
+  assert.equal(rounds('free-amulet'), D.FREE_AMULET_ROUNDS, 'срок — FREE_AMULET_ROUNDS');
+  assert.equal(D.FREE_AMULET_SLOTS, 2, 'столбик короче на два места');
+  assert.equal(D.pactEffects([cup], TAKEN).effectSlotsDelta, -D.FREE_AMULET_SLOTS, 'поправка в раунде взятия');
+  assert.equal(D.pactEffects([cup], last).effectSlotsDelta, -D.FREE_AMULET_SLOTS, 'и в последнем раунде срока');
+  assert.equal(D.pactEffects([cup], last + 1).effectSlotsDelta, 0, 'после срока столбик обычный');
+  assert.equal(I.effectSlotLimit(D.pactEffects([cup], TAKEN).effectSlotsDelta), I.EFFECT_SLOTS - D.FREE_AMULET_SLOTS, 'предел — EFFECT_SLOTS − 2');
+  assert.equal(I.effectSlotLimit(0), I.EFFECT_SLOTS, 'без сделки — обычный предел');
+  // Две записи (например, с кассеты) не уводят предел ниже нуля.
+  const twice = [cup, D.pactOf('free-amulet', TAKEN + 1)];
+  assert.equal(I.effectSlotLimit(D.pactEffects(twice, TAKEN + 1).effectSlotsDelta), 0, 'ниже нуля мест не бывает');
+  assert.equal(I.effectSlotLimit(Number.NaN), I.EFFECT_SLOTS, 'мусор — обычный предел');
+  assert.equal(I.effectSlotLimit(Number.POSITIVE_INFINITY), I.EFFECT_SLOTS, '∞ — обычный предел');
+  assert.equal(I.effectSlotLimit(-99), 0, 'большой минус — ноль мест');
+  // Кандидаты на бесплатный амулет: пул уважает maxCopies; всё набрано — брать нечего, карта не берётся.
+  const all = A.AMULETS.flatMap((amulet) => new Array(amulet.maxCopies).fill(amulet.id));
+  assert.equal(A.randomAmuletOffer(all).length, 0, 'все копии набраны — кандидатов нет');
+  assert.ok(A.randomAmuletOffer([]).length > 0, 'пустой забег — кандидаты есть');
+  assert.ok(A.randomAmuletOffer(all.slice(0, -1)).length > 0, 'одной копии не хватает — кандидат есть');
+});
+
+test('связка №15 «забрать дважды 3 раунда / второе забирание теряет 20%»', () => {
+  const again = D.pactOf('double-take', TAKEN);
+  assert.equal(again.untilRound, TAKEN + D.DOUBLE_TAKE_ROUNDS - 1, 'живёт DOUBLE_TAKE_ROUNDS раундов');
+  assert.equal(rounds('double-take'), D.DOUBLE_TAKE_ROUNDS, 'срок — DOUBLE_TAKE_ROUNDS');
+  assert.equal(D.DOUBLE_TAKE_ROUNDS, 3, 'срок — три раунда, а не весь забег');
+  assert.equal(D.pactEffects([again], TAKEN).doubleTake, true, 'в раунде взятия второе забирание можно');
+  assert.equal(D.pactEffects([again], again.untilRound).doubleTake, true, 'и в последнем раунде');
+  assert.equal(D.pactEffects([again], again.untilRound + 1).doubleTake, false, 'после срока — одно забирание');
+  assert.equal(D.pactEffects([], TAKEN).doubleTake, false, 'без сделки второго нет');
+  assert.ok(D.DOUBLE_TAKE_SHARE > 0 && D.DOUBLE_TAKE_SHARE < 1, 'доля второго забирания в (0…1)');
+  assert.equal(D.DOUBLE_TAKE_SHARE, 0.8, '20% — число автора из DONTLIKE.md');
+  assert.equal(D.pactDoubleTake(true, 1000), 800, 'второе забирание — 80% первого');
+  assert.equal(D.pactDoubleTake(true, 3), 2, 'округление до целого');
+  assert.equal(D.pactDoubleTake(false, 1000), 0, 'без сделки второго нет');
+  assert.equal(D.pactDoubleTake(true, 0), 0, 'первого забирания не было — второго тоже');
+  assert.equal(D.pactDoubleTake(true, -5), 0, 'минус — нет');
+  assert.equal(D.pactDoubleTake(true, Number.NaN), 0, 'мусор — нет');
+  assert.equal(D.pactDoubleTake(true, Number.POSITIVE_INFINITY), 0, '∞ — нет');
 });

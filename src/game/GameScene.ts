@@ -508,6 +508,8 @@ export class GameScene extends CollectorScene {
     else if (this.isRerolling) this.skipReroll(); // окно открыто: ни прокрутки, ни «забрать» — только пропуск
     else if (this.isAtMonitor) this.lookBack();
     else if (this.isShopping) this.leaveShop();
+    // Сделка №15: кон уже забран, но второе забирание ещё доступно — Пробел берёт его, а не машет рычагом.
+    else if (!this.isGameOver && this.canTakeAgain()) this.take();
     else if (!this.isGameOver) this.beginCharge('key');
     else if (this.canRestartWithSpace) this.restartGame();
   }
@@ -521,8 +523,8 @@ export class GameScene extends CollectorScene {
     else if (this.isRerolling) this.skipReroll();
     else if (this.isAwaitingPayment) this.payDebt();
     else if (this.isDealing) this.refusePacts();
-    // Кон на кону — Enter забирает; пусто — замахивается, как пробел.
-    else if (this.pot === 0 && this.canAct()) this.beginCharge('key');
+    // Кон на кону — Enter забирает; пусто — замахивается, как пробел. Сделка №15: второе «забрать» тоже по Enter.
+    else if (this.pot === 0 && this.canAct() && !this.canTakeAgain()) this.beginCharge('key');
     else this.take();
   }
 

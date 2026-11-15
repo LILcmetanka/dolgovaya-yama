@@ -12,6 +12,7 @@ import { Atm } from './atm';
 import { CENTER_X, CENTER_Y, GOAL_NOTE, GOAL_NOTE_ANGLE, NOTE, NOTE_ANGLE, SCREEN, VIEW_WIDTH } from '../layout';
 import { CHIP_GOAL } from '../gameConfig';
 import { GOOD_LUCK_TIME } from '../lastChance';
+import { SECOND_WIND_START } from '../save';
 import { addText, fitTextWidth, GAME_OVER_DEPTH, GOLD_TEXT, GREEN_TEXT, LED_STYLE, POPUP_DEPTH, RED_TEXT } from '../theme';
 
 // Записка светится, когда долг можно отдать раньше: клик по ней или D.
@@ -83,7 +84,7 @@ export class Collector {
   private isPayable = false; // записка светится: по ней можно кликнуть и отдать долг раньше
   private readonly secondWindPlate: Phaser.GameObjects.Rectangle; // плашка «второе дыхание» под запиской долга
   private readonly secondWindText: Phaser.GameObjects.Text;
-  private isSecondWindUsed: boolean | null = null; // что на плашке: null — ещё не рисовали
+  private shownSecondWind: number | null = null; // сколько запасов дыхания нарисовано на плашке: null — ещё не рисовали
   private goodLuck: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = []; // KABOOM на экране автомата, пока идёт взрыв
 
   /**
@@ -112,7 +113,7 @@ export class Collector {
       .setRounded(6)
       .setStrokeStyle(2, SECOND_WIND_HAVE);
     this.secondWindText = addText(scene, NOTE.x, windY, '', { fontSize: SECOND_WIND_FONT_SIZE, fontStyle: 'bold', color: GREEN_TEXT }).setOrigin(0.5);
-    this.showSecondWind(false); // новый забег: дыхание ещё есть
+    this.showSecondWind(SECOND_WIND_START); // новый забег: дыхание ещё есть
 
     // Вторая записка — цель забега: на стене над экраном, чуть в другую сторону. Сумма ступени и процент до десятых.
     this.redrawGoalNote();
@@ -185,22 +186,25 @@ export class Collector {
   }
 
   /**
-   * Второе дыхание: есть или потрачено — плашка под запиской долга (DONTLIKE б.12). Зовёт refreshHud:
-   * флаг secondWindUsed меняется только на провале последнего шанса.
+   * Второе дыхание: сколько провалов ещё простят — плашка под запиской долга (DONTLIKE б.12). Зовёт refreshHud:
+   * счётчик secondWindLeft меняется на провале последнего шанса и когда сделку №9 берут.
    */
-  showSecondWind(used: boolean): void {
-    if (used === this.isSecondWindUsed) return;
-    this.isSecondWindUsed = used;
+  showSecondWind(left: number): void {
+    if (left === this.shownSecondWind) return;
+    this.shownSecondWind = left;
     this.paintSecondWind();
   }
 
-  /** Обновить плашку второго дыхания: надпись по текущему языку и цвет по состоянию. */
+  /** Обновить плашку второго дыхания: надпись по текущему языку и числу запасов, цвет по тому, остались ли они. */
   private paintSecondWind(): void {
-    const used = this.isSecondWindUsed ?? false;
+    const left = this.shownSecondWind ?? SECOND_WIND_START;
+    const spent = left <= 0;
+    // «ЕСТЬ» / «НЕТ» — как раньше, а лишний запас из сделки №9 показывает число: ДЫХАНИЯ: 2.
+    const words = left > 1 ? t('secondWindHaveMany', left) : t(spent ? 'secondWindSpent' : 'secondWindHave');
     // Вписываем надпись в плашку: кегль 11 у обоих языков, MIN_FONT — только страховка от чужого шрифта.
-    fitTextWidth(this.secondWindText, t(used ? 'secondWindSpent' : 'secondWindHave'), SECOND_WIND_PLATE.width - 8, SECOND_WIND_FONT, SECOND_WIND_MIN_FONT);
-    this.secondWindText.setColor(used ? SECOND_WIND_SPENT_TEXT : GREEN_TEXT);
-    this.secondWindPlate.setStrokeStyle(2, used ? SECOND_WIND_SPENT : SECOND_WIND_HAVE);
+    fitTextWidth(this.secondWindText, words, SECOND_WIND_PLATE.width - 8, SECOND_WIND_FONT, SECOND_WIND_MIN_FONT);
+    this.secondWindText.setColor(spent ? SECOND_WIND_SPENT_TEXT : GREEN_TEXT);
+    this.secondWindPlate.setStrokeStyle(2, spent ? SECOND_WIND_SPENT : SECOND_WIND_HAVE);
   }
 
   /**

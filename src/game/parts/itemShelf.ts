@@ -61,6 +61,7 @@ export class ItemShelf {
   private readonly doors: Phaser.GameObjects.Container[] = []; // стальные дверцы с кодом на закрытых отсеках; открытый — скрыта
   private readonly digits: Phaser.GameObjects.Text[][] = []; // цифры кода на дверце каждого отсека
   private readonly effectIcons = new Map<SlotEffectId, Phaser.GameObjects.Image>(); // включённые предметы у экрана
+  private readonly effectSpots: Phaser.GameObjects.Image[] = []; // пустые гнёзда столбика: сделка №13 их прячет
   private readonly effectCounts = new Map<SlotEffectId, Phaser.GameObjects.Text>(); // «2», если включено больше одного
   private readonly shelfItems: (Item | null)[] = []; // какой предмет в какой клетке — для подсказки
   private readonly canDiscard: () => boolean; // сейчас можно снимать предмет у экрана (не во время прокрутки и прочего)
@@ -102,7 +103,7 @@ export class ItemShelf {
     // Пустые гнёзда столбика у экрана: места видно всегда, даже когда ни один предмет не включён (DONTLIKE хоч. 11).
     for (let index = 0; index < EFFECT_SLOTS; index++) {
       const { x, y } = effectSpot(index);
-      scene.add.image(x, y, EFFECT_SLOT_TEXTURE);
+      this.effectSpots.push(scene.add.image(x, y, EFFECT_SLOT_TEXTURE));
     }
 
     // Иконки — на каждый предмет столбика: showEffects расставит первые EFFECT_SLOTS активных, остальные спрятаны.
@@ -286,8 +287,13 @@ export class ItemShelf {
   /**
    * Столбик у экрана: первые EFFECT_SLOTS включённых предметов сверху вниз (страховка от старой записи кассеты,
    * где эффектов могло быть больше); если включено несколько одинаковых — рядом число.
+   * limit — сколько мест показывает сделка №13: лишние пустые гнёзда прячутся, но уже включённые предметы
+   * остаются на своих местах (они и раньше жили до clearEffect).
    */
-  showEffects(effects: ItemEffects): void {
+  showEffects(effects: ItemEffects, limit = EFFECT_SLOTS): void {
+    // Не число, NaN или ∞ из чужой сделки — обычный столбик, иначе Math.trunc(NaN) погасил бы все гнёзда.
+    const places = Number.isFinite(limit) ? Math.max(0, Math.min(EFFECT_SLOTS, Math.trunc(limit))) : EFFECT_SLOTS;
+    for (const [index, spot] of this.effectSpots.entries()) spot.setVisible(index < places);
     const active = activeSlotEffects(effects).slice(0, EFFECT_SLOTS);
     for (const [index, id] of active.entries()) {
       const count = effectCount(effects, id);

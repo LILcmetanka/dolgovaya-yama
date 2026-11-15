@@ -267,6 +267,15 @@ export function isItemOn(id: ItemId, effects: ItemEffects): boolean {
  */
 export const EFFECT_SLOTS = 4;
 
+/**
+ * Сколько мест в столбике доступно при поправке сделки delta (№13 «−2 слота на 3 раунда»):
+ * EFFECT_SLOTS + delta, но не ниже нуля и не выше обычного. Мусор в поправке — обычный столбик.
+ */
+export function effectSlotLimit(delta: number): number {
+  if (!Number.isFinite(delta)) return EFFECT_SLOTS;
+  return Math.max(0, Math.min(EFFECT_SLOTS, EFFECT_SLOTS + Math.trunc(delta)));
+}
+
 /** Предметы, которые занимают место в столбике. Чеснока и сигареты тут нет: чеснок красит огни, сигарета мгновенная. */
 export type SlotEffectId = Exclude<ItemId, 'garlic' | 'cigarette'>;
 

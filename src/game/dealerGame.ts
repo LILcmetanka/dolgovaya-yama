@@ -11,6 +11,9 @@ import { DEBT_ROUND_TO, isPaying, isUnlocked, streakAfterSkull, SYMBOLS, type Sl
  * Шаг 10 — ещё три: №4 «тише черепа / потолок серии», №14 «мягкий череп / −1 прокрутка», №17 «выигрыш +25% / черепа навсегда».
  * Шаг 11 — пять: №2 «−20% цен / долг +8%», №5 «страховка 100% / каждая копия вдвое дороже»,
  * №7 «вес джекпота +50% / вес чёрных паттернов +1», №11 «выбранный символ +2 веса / остальным −0,5», №12 «долг −10% / +20%».
+ * Шаг 11, партия Б — последние пять: №8 «смена автомата отложена / черепа +2 п.п. навсегда»,
+ * №9 «ещё одно второе дыхание / серия −1 ступень», №10 «первый череп не жжёт кон / кон не идёт в цель»,
+ * №13 «бесплатный амулет / −2 места в столбике», №15 «забрать дважды / второе забирание дешевле на 20%».
  * Остальные связки автора добавляются так же: поле в PactEffects и ветка в pactEffects + карта в PACTS.
  * Сделка живёт на кассете как запись { id, untilRound, symbol? } — сколько раундов действует, столько и лежит.
  * Без Phaser — только числа и маленькие функции.
@@ -19,7 +22,8 @@ import { DEBT_ROUND_TO, isPaying, isUnlocked, streakAfterSkull, SYMBOLS, type Sl
 export type PactId =
   | 'tickets-shop' | 'quiet-round' | 'double-step'
   | 'skull-calm' | 'soft-skull' | 'price-up'
-  | 'cheap-shop' | 'full-insurance' | 'jackpot-weight' | 'symbol-weight' | 'debt-cut';
+  | 'cheap-shop' | 'full-insurance' | 'jackpot-weight' | 'symbol-weight' | 'debt-cut'
+  | 'machine-delay' | 'extra-breath' | 'safe-bank' | 'free-amulet' | 'double-take';
 
 /** Карта-сделка: id, сколько раундов живёт и две строки на карте — баф зелёным, дебаф красным. */
 export interface PactSpec {
@@ -67,6 +71,10 @@ export interface PactEffects {
   jackpotWeightMul: number; // во сколько раз тяжелее джекпот в удаче клевера (1 — обычный)
   blackWeightAdd: number; // сколько веса прибавляется «чёрным» паттернам в удаче клевера (0 — ничего)
   symbolLuck: SymbolLuck | null; // №11: выбранный символ и его поправки к весам (null — сделки нет)
+  noMachineSwap: boolean; // №8: автомат в начале этого раунда не меняется сам (только первые NO_SWAP_ROUNDS раундов сделки)
+  bankSurvivesSkull: boolean; // №10: первый череп в раунде не жжёт кон, а собранное в конце раунда в цель не идёт
+  effectSlotsDelta: number; // №13: столько мест в столбике включённых предметов прибавится (+) или убавится (−)
+  doubleTake: boolean; // №15: после «забрать» в этой прокрутке можно забрать ещё раз (80% забранного, DOUBLE_TAKE_SHARE)
 }
 
 /** Сколько карт Дилер кладёт на сукно. */
@@ -132,6 +140,33 @@ export const SYMBOL_LUCK_ROUNDS = 2;
 export const DEBT_CUT_MUL = 0.9;
 export const DEBT_NEXT_MUL = 1.2;
 export const DEBT_CUT_ROUNDS = 1;
+// ---------- Связки шага 11, партия Б ----------
+/** №8 «смена автомата отложена на 4 раунда»: столько раундов сделки автомат не меняется сам. */
+export const NO_SWAP_ROUNDS = 4;
+/** №8 «черепа +2 п.п. навсегда»: доля черепов выше до конца забега (срок сделки — PACT_LAST_ROUNDS). */
+export const MACHINE_DELAY_SKULL_DELTA = 0.02;
+/** №9 «+1 запас второго дыхания»: сколько запасов даёт карта (разово, но не выше потолка) и сколько ступеней серии снимает. */
+export const EXTRA_BREATH_COUNT = 1;
+export const EXTRA_BREATH_STREAK_COST = 1;
+/** №9: потолок запасов «второго дыхания» — базовый и один от карты; больше двух не даёт ни одна карта. */
+export const SECOND_WIND_MAX = 2;
+/**
+ * №9: числа разовые, а срок — до конца забега: запись сделки остаётся маркером «уже брал» (pactLive не даёт взять
+ * второй раз), эффекта в раунде у неё нет (ветка в pactEffects без действия).
+ */
+export const EXTRA_BREATH_ROUNDS = PACT_LAST_ROUNDS;
+/** №10: столько раундов первый череп не жжёт кон (и собранное за раунд не идёт в цель). */
+export const SAFE_BANK_ROUNDS = 1;
+/** №13 «бесплатный случайный амулет»: столько раундов у столбика предметов на два места меньше. */
+export const FREE_AMULET_ROUNDS = 3;
+export const FREE_AMULET_SLOTS = 2;
+/**
+ * №15 «можно забрать дважды за прокрутку / второе забирание стоит 20% банка»: второе забирание отдаёт
+ * DOUBLE_TAKE_SHARE только что забранного кона. 20 % — число автора из DONTLIKE.md, симулятором не подкручивается.
+ */
+export const DOUBLE_TAKE_SHARE = 0.8;
+/** №15: столько раундов живёт «забрать дважды» (в брифе было до конца забега, но +80% к каждому забиранию на весь забег — слишком сильно). */
+export const DOUBLE_TAKE_ROUNDS = 3;
 
 /**
  * Число в тексте карты: целые без дробной части, дробные — с одним знаком (0,5 / 0.5).
@@ -264,6 +299,57 @@ export const PACTS: readonly PactSpec[] = [
       en: `next debt +${cardNum((DEBT_NEXT_MUL - 1) * 100, true)}%`,
     },
   },
+  {
+    id: 'machine-delay',
+    rounds: PACT_LAST_ROUNDS,
+    bonus: {
+      ru: `автомат не меняется ${NO_SWAP_ROUNDS} раунда`,
+      en: `the machine holds ${NO_SWAP_ROUNDS} rounds`,
+    },
+    cost: {
+      ru: `черепа +${cardNum(MACHINE_DELAY_SKULL_DELTA * 100, false)} п.п. навсегда`,
+      en: `skulls +${cardNum(MACHINE_DELAY_SKULL_DELTA * 100, true)} pp forever`,
+    },
+  },
+  {
+    id: 'extra-breath',
+    rounds: EXTRA_BREATH_ROUNDS,
+    bonus: {
+      ru: `+${EXTRA_BREATH_COUNT} запас «второго дыхания» (не больше ${SECOND_WIND_MAX})`,
+      en: `+${EXTRA_BREATH_COUNT} second wind (max ${SECOND_WIND_MAX})`,
+    },
+    cost: {
+      ru: `серия −${EXTRA_BREATH_STREAK_COST} ступень прямо сейчас`,
+      en: `streak −${EXTRA_BREATH_STREAK_COST} step right now`,
+    },
+  },
+  {
+    id: 'safe-bank',
+    rounds: SAFE_BANK_ROUNDS,
+    bonus: { ru: 'первый череп в раунде не жжёт кон', en: 'first skull spares the pot' },
+    cost: { ru: 'набранное в раунде не идёт в цель', en: 'round pot never reaches the goal' },
+  },
+  {
+    id: 'free-amulet',
+    rounds: FREE_AMULET_ROUNDS,
+    bonus: { ru: 'бесплатный случайный амулет', en: 'a free random amulet' },
+    cost: {
+      ru: `слотов предметов −${FREE_AMULET_SLOTS} на ${FREE_AMULET_ROUNDS} раунда`,
+      en: `item slots −${FREE_AMULET_SLOTS} for ${FREE_AMULET_ROUNDS} rounds`,
+    },
+  },
+  {
+    id: 'double-take',
+    rounds: DOUBLE_TAKE_ROUNDS,
+    bonus: {
+      ru: `можно забрать дважды ${DOUBLE_TAKE_ROUNDS} раунда`,
+      en: `take twice for ${DOUBLE_TAKE_ROUNDS} rounds`,
+    },
+    cost: {
+      ru: `каждое второе «забирание» теряет ${cardNum((1 - DOUBLE_TAKE_SHARE) * 100, false)}%`,
+      en: `each second take loses ${cardNum((1 - DOUBLE_TAKE_SHARE) * 100, true)}%`,
+    },
+  },
 ];
 
 /** Сделка по id: id типизирован, поэтому сделка есть всегда (цикл-проверка — для чужих данных кассеты). */
@@ -381,6 +467,10 @@ export function pactEffects(pacts: readonly Pact[], round: number): PactEffects 
     jackpotWeightMul: 1, // джекпот в удаче весит как обычно
     blackWeightAdd: 0,
     symbolLuck: null,
+    noMachineSwap: false, // автомат меняется сам, как обычно
+    bankSurvivesSkull: false, // череп жжёт кон как обычно
+    effectSlotsDelta: 0, // столбик включённых предметов обычный
+    doubleTake: false, // «забрать» одно за прокрутку
   };
   for (const pact of pacts) {
     if (!isPactActive(pact, round)) continue;
@@ -435,6 +525,27 @@ export function pactEffects(pacts: readonly Pact[], round: number): PactEffects 
       case 'debt-cut':
         // Долг −10% и +20% — разовые: они срабатывают в момент взятия и при назначении следующего долга
         // (DealerScene.acceptPact, ShopScene.takeDebtForRound), а не каждый раунд сделки.
+        break;
+      case 'machine-delay':
+        // Черепа чаще до конца забега, а сам автомат замирает только на первые NO_SWAP_ROUNDS раундов сделки.
+        effects.skullShareDelta += MACHINE_DELAY_SKULL_DELTA;
+        if (round - firstRoundOf(pact) < NO_SWAP_ROUNDS) effects.noMachineSwap = true;
+        break;
+      case 'extra-breath':
+        // Запас дыхания и минус ступень серии — разовые (DealerScene.applyPactOnce): в раунде эффекта нет.
+        // Запись живёт до конца забега только маркером «уже брал» — pactLive не даёт взять карту второй раз.
+        break;
+      case 'safe-bank':
+        // Первый череп в раунде кон не жжёт, но собранное за раунд сгорает вместо автозабора (RoundScene.closeRound).
+        effects.bankSurvivesSkull = true;
+        break;
+      case 'free-amulet':
+        // Столбик у экрана на два места короче, пока сделка жива; амулет выдаётся один раз при взятии.
+        effects.effectSlotsDelta -= FREE_AMULET_SLOTS;
+        break;
+      case 'double-take':
+        // Второе «забрать» в той же прокрутке отдаёт DOUBLE_TAKE_SHARE забранного (RoundScene.take); срок — 3 раунда.
+        effects.doubleTake = true;
         break;
     }
   }
@@ -506,6 +617,15 @@ export function skullStreakAfter(streak: number, effects: PactEffects): number {
   const safe = Number.isFinite(streak) ? Math.max(0, Math.floor(streak)) : 0;
   if (!effects.skullSoft) return streakAfterSkull(safe);
   return Math.max(0, safe - 1);
+}
+
+/**
+ * Сколько отдаст второе «забрать» в той же прокрутке (№15): DOUBLE_TAKE_SHARE только что забранного.
+ * Сделки нет, первого забирания не было (0, минус, NaN, ∞) — 0, то есть второго забирания не бывает.
+ */
+export function pactDoubleTake(isOn: boolean, lastTaken: number): number {
+  if (!isOn || !Number.isFinite(lastTaken) || lastTaken <= 0) return 0;
+  return Math.round(lastTaken * DOUBLE_TAKE_SHARE);
 }
 
 /**

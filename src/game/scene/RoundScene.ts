@@ -14,13 +14,13 @@ import {
 import { CIGARETTES_FOR_ACHIEVEMENT, isBloodSpill, ITEM_ACHIEVEMENTS } from '../achievements';
 import { FREE_SPINS_GUARD } from '../bonus';
 import { bloodBurn, BLOOD_WIN, cellsOf, diceWeight, spiderBite } from '../evil';
-import { pactEffects, skullShareWeightMul, skullStreakAfter } from '../dealerGame';
+import { pactDoubleTake, pactEffects, skullShareWeightMul, skullStreakAfter } from '../dealerGame';
 import {
   activeSlotEffects,
   CIGARETTE_SPINS,
   clearEffect,
   clearRoundEffects,
-  EFFECT_SLOTS,
+  effectSlotLimit,
   GARLIC_SKULL_FACTOR,
   isItemOn,
   RISK_WIN_FACTOR,
@@ -110,6 +110,11 @@ export abstract class RoundScene extends MachineScene {
   private spinCharge = 0;
   /** Раунд закрыт ранней оплатой: Коллектор забирает долг сам (и после «ДАЛЬШЕ» с экрана победы — тоже). */
   protected isPaidEarly = false;
+  // Сделка №15 «забрать дважды»: в одной прокрутке после обычного «забрать» можно забрать ещё раз.
+  private tookThisSpin = false; // «забрать» в этой прокрутке уже было
+  private tookExtraThisSpin = false; // второе «забрать» уже потрачено (больше двух за прокрутку нельзя)
+  private lastTakeAmount = 0; // сколько дало первое забирание: от него считается второе
+  private bankKeptThisRound = false; // сделка №10: первый череп в этом раунде кон уже не сжёг
 
   /** Новый забег: прокруток ещё не было, окно перемешки не висит, сделок Дилера нет. */
   protected resetState(): void {
@@ -119,6 +124,10 @@ export abstract class RoundScene extends MachineScene {
     this.rerollTimer = undefined;
     this.spinCharge = 0;
     this.isPaidEarly = false;
+    this.tookThisSpin = false;
+    this.tookExtraThisSpin = false;
+    this.lastTakeAmount = 0;
+    this.bankKeptThisRound = false;
   }
 
   // ---------- Прокрутка ----------
@@ -128,6 +137,7 @@ export abstract class RoundScene extends MachineScene {
     if (!this.canAct()) return;
     this.spinCharge = charge;
     this.spinsThisRun += 1;
+    this.forgetTakeThisSpin();
     if (this.spinsThisRun === REVEAL_NOTE_SPIN) this.openRevealNote(); // записка впервые видна не с начала
     const spinsBefore = this.spinsLeft;
     this.spinsLeft -= 1;
@@ -141,7 +151,19 @@ export abstract class RoundScene extends MachineScene {
   private spinFree(): void {
     if (this.isGameOver) return; // победа или KABOOM: забег кончен, бесплатные прокрутки за экраном не крутятся
     this.freeSpins -= 1;
+    // Это тоже новая прокрутка: второе «забрать» (сделка №15) из прошлой не переживает чужие авто-прокрутки.
+    this.forgetTakeThisSpin();
     this.roll(true);
+  }
+
+  /**
+   * Новая прокрутка: «забрать» снова одно. Сделка №15 даёт второе только в той же прокрутке (take),
+   * поэтому флаги второго забирания снимаются и в spin(), и в spinFree().
+   */
+  private forgetTakeThisSpin(): void {
+    this.tookThisSpin = false;
+    this.tookExtraThisSpin = false;
+    this.lastTakeAmount = 0;
   }
 
   /** Рычаг дёргается, столбцы мелькают и останавливаются слева направо. isFree — бесплатная прокрутка. */
@@ -235,6 +257,10 @@ export abstract class RoundScene extends MachineScene {
   protected override refreshHud(): void {
     super.refreshHud();
     this.panel.showSkullShare(this.skullShareNext());
+    // Сделка №15: кон уже забран, но второе забирание ещё можно — окно выплаты горит и показывает его сумму
+    // (обычное «кон пуст — окно гаснет» сделало бы второе забирание невидимой кнопкой).
+    const extra = this.canTakeAgain() ? this.extraTake() : 0;
+    if (extra > 0) this.payout.showPot(extra, this.debt);
   }
 
   /**
@@ -434,7 +460,10 @@ export abstract class RoundScene extends MachineScene {
       this.itemShelf.spend('shield', CENTER_X, GRID_Y); // щит летит на сетку и тает
       this.blockSkulls(result);
     } else {
-      this.burnPot(result);
+      // Сделка №10: первый череп в этом раунде кон не жжёт (потом жжёт как обычно). Серия падает в любом случае.
+      const keepsPot = pactEffects(this.pacts, this.round).bankSurvivesSkull && !this.bankKeptThisRound;
+      if (keepsPot) this.bankKeptThisRound = true;
+      this.burnPot(result, keepsPot);
       if (isBloody) this.burnBoard();
     }
   }
@@ -453,11 +482,12 @@ export abstract class RoundScene extends MachineScene {
    * Черепа сжигают кон вместе с выигрышем этой прокрутки, серия падает до трети. Страховка возвращает на табло
    * `INSURANCE_SHARE` сгоревшего — по разу за копию: каждая копия даёт в раунде ещё одно спасение (`insuranceSaves`).
    * Сделка №5 «страховка возвращает 100%» поднимает долю возврата до всего кона (pactEffects.insuranceShare).
+   * keepsPot (сделка №10) — кон остаётся: сгорать нечему, страховка не тратится, но серия падает как обычно.
    */
-  private burnPot(result: SpinResult): void {
-    const lost = this.pot;
+  private burnPot(result: SpinResult, keepsPot = false): void {
+    const lost = keepsPot ? 0 : this.pot;
     const refund = insuranceRefund(lost, this.amuletIds(), this.insuranceSaves, pactEffects(this.pacts, this.round).insuranceShare);
-    this.pot = 0;
+    if (!keepsPot) this.pot = 0;
     // Сделки с черепом: «череп в ×1» обнуляет серию, «мягкий череп» снимает одну ступень (одно очко серии),
     // иначе остаётся треть (SKULL_KEEPS_STREAK).
     this.streak = skullStreakAfter(this.streak, pactEffects(this.pacts, this.round));
@@ -547,14 +577,50 @@ export abstract class RoundScene extends MachineScene {
 
   // ---------- Забрать ----------
 
-  /** «Забрать»: кон уходит на табло. Бесплатно, но множитель уменьшается вдвое. */
+  /**
+   * «Забрать»: кон уходит на табло. Бесплатно, но множитель уменьшается вдвое.
+   * Сделка №15: после обычного забирания в этой же прокрутке можно забрать ещё раз — оно отдаёт
+   * DOUBLE_TAKE_SHARE (80%) только что забранного кона и серию второй раз не режет.
+   */
   protected take(): void {
-    if (!this.canAct() || this.pot === 0) return;
-    this.cancelChargeNow(); // забираешь кон — замах снят, отпускание клавиши после этого не крутит
+    if (!this.canAct()) return;
+    if (this.pot > 0) {
+      this.cancelChargeNow(); // забираешь кон — замах снят, отпускание клавиши после этого не крутит
+      this.payout.press();
+      this.sfx.play('take');
+      this.payPot();
+      this.refreshHud();
+      return;
+    }
+    const extra = this.extraTake();
+    if (extra === 0) return;
+    this.cancelChargeNow();
     this.payout.press();
     this.sfx.play('take');
-    this.payPot();
+    this.takeExtra(extra);
     this.refreshHud();
+  }
+
+  /** Сколько отдаст второе «забрать»: сделка №15, только если кон уже забран в этой прокрутке и второго ещё не было. */
+  private extraTake(): number {
+    if (!this.tookThisSpin || this.tookExtraThisSpin || this.pot > 0) return 0;
+    return pactDoubleTake(pactEffects(this.pacts, this.round).doubleTake, this.lastTakeAmount);
+  }
+
+  /** Второе «забрать» в этой прокрутке ещё доступно — по нему Enter берёт, а не замахивается (GameScene.onEnter). */
+  protected canTakeAgain(): boolean {
+    return this.canAct() && this.extraTake() > 0;
+  }
+
+  /** Второе «забрать» (сделка №15): фишки летят на табло, серию не режем — она уже упала на первом. */
+  private takeExtra(amount: number): void {
+    this.tookExtraThisSpin = true;
+    this.earn(amount);
+    this.payout.takeAll(amount, () => {
+      this.effects.burstFromBoard();
+      this.panel.pulseBoard();
+    });
+    this.markDebt();
   }
 
   /**
@@ -571,6 +637,12 @@ export abstract class RoundScene extends MachineScene {
       this.showItemEffects();
     }
     this.earn(amount); // кон — доход забега: так его считает цель 1 000 000
+    if (!isRoundEnd) {
+      // Сделка №15: запоминаем, сколько дало это забирание, — от него считается второе в той же прокрутке.
+      this.lastTakeAmount = amount;
+      this.tookThisSpin = true;
+      this.tookExtraThisSpin = false;
+    }
     this.pot = 0;
     if (this.itemEffects.candle) {
       this.itemEffects.candle = false;
@@ -618,7 +690,9 @@ export abstract class RoundScene extends MachineScene {
       return;
     }
     // Все места у экрана заняты: место освобождает сам игрок — кликом по включённому предмету, автозамены нет.
-    if (takesEffectSlot(item.id) && activeSlotEffects(this.itemEffects).length >= EFFECT_SLOTS) {
+    // Сделка №13 короче столбик: предел — effectSlotLimit (EFFECT_SLOTS минус её поправка).
+    const places = effectSlotLimit(pactEffects(this.pacts, this.round).effectSlotsDelta);
+    if (takesEffectSlot(item.id) && activeSlotEffects(this.itemEffects).length >= places) {
       this.sfx.play('deny');
       this.itemShelf.deny(slot);
       this.tooltip.show(t('effectsFull'), '');
@@ -716,7 +790,8 @@ export abstract class RoundScene extends MachineScene {
 
   /** Включённые предметы у экрана и цвет огней вокруг экрана в покое (чеснок, кровь, фаза — calmLampColor). */
   protected showItemEffects(): void {
-    this.itemShelf.showEffects(this.itemEffects);
+    // Сделка №13: столбик короче на FREE_AMULET_SLOTS — лишние пустые места прячутся.
+    this.itemShelf.showEffects(this.itemEffects, effectSlotLimit(pactEffects(this.pacts, this.round).effectSlotsDelta));
     this.screen.setCalmColor(this.calmLampColor());
   }
 
@@ -730,7 +805,8 @@ export abstract class RoundScene extends MachineScene {
     const ids = this.amuletIds();
     this.cigarettesThisRound = 0; // и сигареты тоже
     // Автомат сам редко меняется в начале раунда: первый раунд — всегда тот, что стоит с забега.
-    const machine = machineAtRoundStart(this.machineId, this.round);
+    // Сделка №8 держит автомат первые NO_SWAP_ROUNDS своих раундов: тогда он остаётся прежним и новости о смене нет.
+    const machine = pactEffects(this.pacts, this.round).noMachineSwap ? this.machineId : machineAtRoundStart(this.machineId, this.round);
     if (machine !== this.machineId) {
       this.machineId = machine;
       this.showNewMachine(); // корпус, значок и UPDATE на мониторе — сразу
@@ -751,6 +827,10 @@ export abstract class RoundScene extends MachineScene {
     this.freeSpinsAwarded = 0;
     clearRoundEffects(this.itemEffects); // бусты и флаги прошлого раунда не переходят в новый
     this.insuranceSaves = 0; // страховка снова готова: сработок на новый раунд — по числу копий
+    this.bankKeptThisRound = false; // сделка №10: «первый череп не жжёт кон» — снова первый
+    this.tookThisSpin = false; // сделка №15: в новом раунде «забрать» ещё не было
+    this.tookExtraThisSpin = false;
+    this.lastTakeAmount = 0;
     this.isBloodNext = false; // кровь из последнего шанса не переходит в новый раунд
     this.showItemEffects(); // спокойные огни — по новому раунду (кровь погасла)
     this.spinsLeft = spinsPerRound(SPINS_PER_ROUND, ids);
@@ -835,8 +915,17 @@ export abstract class RoundScene extends MachineScene {
     this.luckyClovers = 0; // и удача клевера
     this.clearRust(); // и ржавчина
     if (this.pot > 0) {
-      this.sfx.play('chips');
-      this.payPot(true); // кон забирается сам: серия остаётся на следующий раунд
+      if (pactEffects(this.pacts, this.round).bankSurvivesSkull) {
+        // Сделка №10 «набранное в раунде не идёт в цель»: автозабор не отдаёт кон — он сгорает, цель не растёт.
+        const lost = this.pot;
+        this.pot = 0;
+        this.effects.popup(`−${lost}`, RED_TEXT);
+        this.sfx.play('burn', 0.15);
+        this.payout.burn();
+      } else {
+        this.sfx.play('chips');
+        this.payPot(true); // кон забирается сам: серия остаётся на следующий раунд
+      }
     }
     clearRoundEffects(this.itemEffects); // чеснок, вишни и прочее действуют только до конца раунда
     this.showItemEffects();

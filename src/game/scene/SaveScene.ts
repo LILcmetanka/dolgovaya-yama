@@ -1,7 +1,7 @@
-import { readPacts } from '../dealerGame';
+import { readPacts, SECOND_WIND_MAX } from '../dealerGame';
 import { copyEffects } from '../items';
 import { isPatternId } from '../progress';
-import { debtNextMulOf, luckyCloversOf, tapePrice, type RunSave } from '../save';
+import { debtNextMulOf, luckyCloversOf, secondWindLeftOf, tapePrice, type RunSave } from '../save';
 import { ShopScene } from './ShopScene';
 
 /**
@@ -96,7 +96,8 @@ export abstract class SaveScene extends ShopScene {
       debtNextMul: this.debtNextMul, // «следующий долг +20%» ещё не применён — откат его не теряет
       diceDrought: this.diceDrought,
       patterns: [...this.patternSet], // стекло на плёнке: откат вернёт ровно этот набор
-      secondWindUsed: this.secondWindUsed, // на записи флаг такой, какой был: запись до провала — дыхание ещё есть
+      secondWindLeft: this.secondWindLeft, // на записи счётчик такой, какой был: запись до провала — дыхание ещё есть
+      breathTaken: this.breathTaken, // сделка №9 уже бралась — откат этого не забывает (иначе карту возьмут второй раз)
       insuranceSaves: this.insuranceSaves,
       devUsed: this.devUsedThisRun, // кассета помнит, что забег трогали в «ТЕСТ»: откат не делает такой рекорд честным
     };
@@ -129,7 +130,8 @@ export abstract class SaveScene extends ShopScene {
     // Страховка живёт в раунде: к записи из прошлого раунда её трата не относится.
     const tape: RunSave = {
       ...record,
-      secondWindUsed: this.secondWindUsed || (record.secondWindUsed ?? false),
+      secondWindLeft: Math.min(secondWindLeftOf(record), this.secondWindLeft),
+      breathTaken: this.breathTaken || !!record.breathTaken, // липкий, как devUsed: карту №9 второй раз не взять
       // Откат не пополняет страховку: сработки из этого раунда и с плёнки берём по большей.
       insuranceSaves: Math.max(record.round === this.round ? this.insuranceSaves : 0, record.insuranceSaves ?? 0),
     };
@@ -173,7 +175,9 @@ export abstract class SaveScene extends ShopScene {
     // Корпус его цвета и значок покажет MachineBadge — части строятся после.
     this.diceDrought = record.diceDrought;
     // Откат не пополняет ни дыхание, ни страховку: то, что уже потрачено, записью не возвращается.
-    this.secondWindUsed = this.secondWindUsed || (record.secondWindUsed ?? false);
+    // Потолок — дело сцены: `secondWindLeftOf` читает запись терпимо (битые плёнки бывают), а два запаса — правило игры.
+    this.secondWindLeft = Math.min(SECOND_WIND_MAX, secondWindLeftOf(record));
+    this.breathTaken = this.breathTaken || !!record.breathTaken; // карта №9 одна на забег, даже после отката
     this.insuranceSaves = Math.max(this.insuranceSaves, record.insuranceSaves ?? 0);
     // След «трогали в ТЕСТ» липкий в обе стороны: накрученный до записи забег остаётся помеченным и после отката,
     // а старая кассета без поля (devUsed нет) ничего не помечает. resetState() этот флаг уже обнулил —

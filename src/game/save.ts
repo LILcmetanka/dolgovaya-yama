@@ -44,7 +44,9 @@ export interface RunSave {
   debtNextMul?: number; // сделка №12: следующий долг дороже во столько раз (1 — обычный); в старых записях поля нет
   diceDrought: number;
   patterns?: string[]; // какие паттерны были открыты на момент записи: откат возвращает стекло как на плёнке
-  secondWindUsed?: boolean; // «второе дыхание» уже потрачено; в старых записях поля нет — считаем, что нет
+  secondWindLeft?: number; // сколько «вторых дыханий» осталось; в старых записях поля нет — secondWindUsed
+  secondWindUsed?: boolean; // старые записи: дыхание уже потрачено; новые пишут счётчик, но чтение терпит и флаг
+  breathTaken?: boolean; // сделка №9 «+1 запас дыхания» уже бралась в этом забеге; откат этой памяти не снимает
   insuranceSaves?: number; // сколько раз страховка сработала в этом раунде; в старых записях поля нет — считаем 0
   devUsed?: boolean; // забег трогали во вкладке «ТЕСТ» до записи: откат этого не забывает, рекорд фишек не пишется; в старых записях поля нет — считаем, что нет
 }
@@ -74,4 +76,18 @@ export function debtNextMulOf(record: { debtNextMul?: unknown }): number {
   const mul = record.debtNextMul;
   if (typeof mul !== 'number' || !Number.isFinite(mul) || mul <= 0) return 1;
   return mul;
+}
+
+/** Сколько «вторых дыханий» у забега без сделок Дилера: одно, как было до счётчика (DONTLIKE б.12). */
+export const SECOND_WIND_START = 1;
+
+/**
+ * Сколько «вторых дыханий» осталось по записи. Новые плёнки пишут счётчик (secondWindLeft), старые — флаг
+ * secondWindUsed: потрачен → 0, поля нет или флаг снят → SECOND_WIND_START. Дробное вниз, мусор — к флагу.
+ * Чтение нарочно терпимое: потолок (SECOND_WIND_MAX) ставит сцена в loadTape — save.ts про него не знает.
+ */
+export function secondWindLeftOf(record: { secondWindLeft?: unknown; secondWindUsed?: unknown }): number {
+  const left = record.secondWindLeft;
+  if (typeof left === 'number' && Number.isFinite(left)) return Math.max(0, Math.floor(left));
+  return record.secondWindUsed === true ? 0 : SECOND_WIND_START;
 }

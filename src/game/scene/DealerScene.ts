@@ -1,14 +1,18 @@
+import { addCopy, randomAmuletOffer } from '../amulets';
 import { see, WHO_DEALER } from '../codex';
 import {
   CHEAP_SHOP_DEBT_MUL,
   DEBT_CUT_MUL,
   DEBT_NEXT_MUL,
+  EXTRA_BREATH_COUNT,
+  EXTRA_BREATH_STREAK_COST,
   offerPacts,
   PACT_TICKETS,
   pactDebt,
   pactLive,
   pactOf,
   pactSymbols,
+  SECOND_WIND_MAX,
   type PactSpec,
   type PactId,
 } from '../dealerGame';
@@ -19,6 +23,7 @@ import { LAMP_PURPLE } from '../theme';
 import { RoundScene } from './RoundScene';
 
 const DEALER_LAMPS_TIME = 1500; // пока Дилер за столом, огни бегут фиолетовым, мс
+const PACT_DENY_HINT_TIME = 1500; // сколько висит надпись «нет места под амулет» у курсора, мс
 
 /**
  * Слой Дилера: выпал кубик 🎲 — поверх экрана сукно с тремя картами-сделками (dealerGame.PACTS).
@@ -74,6 +79,22 @@ export abstract class DealerScene extends RoundScene {
       this.sfx.play('deny');
       return;
     }
+    // №9: запас дыхания даётся один раз за забег. Пока сделка на кассете, её отсекает pactLive; после отката кассетой
+    // записи уже нет, и второй раз карту не взять только по флагу breathTaken (он откат переживает).
+    if (spec.id === 'extra-breath' && this.breathTaken) {
+      this.sfx.play('deny');
+      this.tooltip.show(t('pactAlreadyTaken'), '');
+      this.time.delayedCall(PACT_DENY_HINT_TIME, () => this.tooltip.hide());
+      return;
+    }
+    // №13: бесплатный амулет некуда поставить (нет свободного сосуда или брать уже нечего) — карта не берётся,
+    // стол остаётся, а игроку у курсора всплывает короткая надпись: стекло под сукном не видно.
+    if (spec.id === 'free-amulet' && !this.freeAmuletCandidate()) {
+      this.sfx.play('deny');
+      this.tooltip.show(t('pactNoRoom'), '');
+      this.time.delayedCall(PACT_DENY_HINT_TIME, () => this.tooltip.hide());
+      return;
+    }
     this.isDealerClosing = true;
     this.dealerTable.close(() => this.endDealerGame());
     this.pacts.push(pactOf(spec.id, this.round, lucky));
@@ -84,7 +105,8 @@ export abstract class DealerScene extends RoundScene {
 
   /**
    * Что сделка делает один раз, в момент взятия (в PactEffects этого нет — там только то, что живёт раундами):
-   * №6 — билет, №2 — долг +8%, №12 — текущий долг −10% и следующий +20%.
+   * №6 — билет, №2 — долг +8%, №12 — текущий долг −10% и следующий +20%, №9 — ещё один запас «второго дыхания»
+   * и −1 ступень серии, №13 — бесплатный случайный амулет.
    */
   private applyPactOnce(id: PactId): void {
     switch (id) {
@@ -98,9 +120,36 @@ export abstract class DealerScene extends RoundScene {
         this.debt = pactDebt(this.debt, DEBT_CUT_MUL);
         this.debtNextMul = DEBT_NEXT_MUL; // следующий долг дороже: применит и сбросит ShopScene.takeDebtForRound
         break;
+      case 'extra-breath':
+        // Запас дыхания — навсегда, но не выше SECOND_WIND_MAX; ступень серии — сразу: панель множителя обновит refreshHud.
+        this.secondWindLeft = Math.min(SECOND_WIND_MAX, this.secondWindLeft + EXTRA_BREATH_COUNT);
+        this.streak = Math.max(0, this.streak - EXTRA_BREATH_STREAK_COST);
+        this.breathTaken = true; // карта одна на забег: откат кассетой этой памяти не снимает
+        break;
+      case 'free-amulet':
+        this.gainFreeAmulet();
+        break;
     }
     this.collector.markNote(this.debt); // долг на записке — уже с поправкой сделки
     this.refreshHud();
+  }
+
+  /**
+   * №13: можно ли взять карту «бесплатный случайный амулет» — нужен свободный сосуд и хоть один кандидат
+   * (randomAmuletOffer уважает maxCopies). Нет — карта не берётся, как отказ Дилера.
+   */
+  private freeAmuletCandidate(): boolean {
+    if (this.amulets.length >= this.sockets) return false;
+    return randomAmuletOffer(this.amuletIds()).length > 0;
+  }
+
+  /** №13: случайный амулет из пула (maxCopies) — сразу в свободное гнездо, без билетов. Копия — в гнездо своего амулета. */
+  private gainFreeAmulet(): void {
+    const [amulet] = randomAmuletOffer(this.amuletIds());
+    if (!amulet) return;
+    if (!this.amulets.some((owned) => owned.id === amulet.id)) this.amulets.push(amulet); // гнездо занято сразу
+    addCopy(this.amuletCounts, amulet.id);
+    this.amuletRack.setAmulets(this.amulets, this.amuletCounts); // звук и новость сделки — в acceptPact
   }
 
   /** Отказались: стол закрывается, раунд идёт дальше как без Дилера. */

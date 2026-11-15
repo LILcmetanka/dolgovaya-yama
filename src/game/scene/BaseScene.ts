@@ -14,7 +14,7 @@ import type { Pattern } from '../patterns';
 import { grantAchievement, hasPattern, markPatternOpen, markTutorialDone, openedPatterns } from '../progress';
 import { debtForRound, multiplierForStreak, SPINS_PER_ROUND } from '../rules';
 import { skullShareOf, type WeightContext } from '../skullShare';
-import type { RunSave, TapeState } from '../save';
+import { SECOND_WIND_START, type RunSave, type TapeState } from '../save';
 import { Sound } from '../sound';
 import { LAMP_ANGRY, LAMP_BLOOD, LAMP_GARLIC, LAMP_GOLD, LAMP_LUCK } from '../theme';
 import type { AmuletCase } from '../parts/amuletCase';
@@ -159,7 +159,8 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isAwaitingPayment = false; // банкомат выехал и фишек хватает — ждём «отдать» (клик по банкомату или Enter)
   protected isDealing = false; // идёт стол Дилера со сделками — крутить и забирать нельзя
   protected isLastChance = false; // фишек не хватило: одна чистая прокрутка и два действия игрока (CollectorScene)
-  protected secondWindUsed = false; // второе дыхание потрачено: следующий провал последнего шанса — KABOOM
+  protected secondWindLeft = SECOND_WIND_START; // сколько провалов последнего шанса ещё простят: обычный забег — 1 (сделка №9 даёт ещё)
+  protected breathTaken = false; // сделка №9 «+1 запас дыхания» уже бралась: второй раз её не берут, откат этого не снимает
   protected insuranceSaves = 0; // сколько раз страховка уже спасла кон в этом раунде: копий две — сработок две
   protected pacts: Pact[] = []; // сделки Дилера (dealerGame.Pact): что из них действует в раунде, решает pactEffects
   protected isGameOver = false; // долг не отдан — DEATH, конец забега
@@ -270,7 +271,8 @@ export abstract class BaseScene extends Phaser.Scene {
     this.patternSet = [...openedPatterns()]; // открытое копится навсегда: «заново» и конец забега схемы не гасят
     this.isDealing = false;
     this.isLastChance = false;
-    this.secondWindUsed = false;
+    this.secondWindLeft = SECOND_WIND_START;
+    this.breathTaken = false;
     this.insuranceSaves = 0;
     this.pacts = []; // новый забег — Дилер ещё ничего не предлагал
     this.isSpinning = false;
@@ -303,7 +305,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.payout.setEnabled(this.canAct());
     this.collector.showPayable(this.canPayEarly());
     this.collector.showProgress(this.debt, this.balance, this.pot);
-    this.collector.showSecondWind(this.secondWindUsed); // плашка у записки: простится ли ещё один провал (DONTLIKE б.12)
+    this.collector.showSecondWind(this.secondWindLeft); // плашка у записки: сколько провалов ещё простят (DONTLIKE б.12)
     this.cassette.showUsable(this.canRecord() || this.canRewind());
     this.monitor.setEnabled(this.canAct() || this.isAtMonitor); // к монитору — между прокрутками, от него — всегда
     const tension = this.tension();
