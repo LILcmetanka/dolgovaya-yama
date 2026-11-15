@@ -459,9 +459,11 @@ export abstract class BaseScene extends Phaser.Scene {
     return Math.min(1, missing * (0.3 + 0.7 * spent) + angry);
   }
 
-  /** Множитель следующей прокрутки: серия × шаг (с «Разгоном» шаг больше, в фазе 2 — ещё больше). */
+  /**
+   * Множитель следующей прокрутки: серия × шаг (с «Разгоном» шаг больше, в фазе 2 — ещё больше), но не выше потолка.
+   */
   protected multiplier(): number {
-    return multiplierForStreak(this.streak, this.streakStep());
+    return Math.min(multiplierForStreak(this.streak, this.streakStep()), this.multiplierCap());
   }
 
   /**
@@ -470,6 +472,14 @@ export abstract class BaseScene extends Phaser.Scene {
    */
   protected streakStep(): number {
     return multiplierStep(this.amuletIds()) + this.phase.multiplierBonus;
+  }
+
+  /**
+   * Потолок множителя серии: без сделок его нет. Сделка «серия не выше ×N» ставит его — RoundScene.multiplierCap.
+   * Потолок режется здесь же, где считается множитель: другого места с этой формулой нет.
+   */
+  protected multiplierCap(): number {
+    return Number.POSITIVE_INFINITY;
   }
 
   /**

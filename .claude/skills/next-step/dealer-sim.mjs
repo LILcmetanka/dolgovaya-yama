@@ -21,7 +21,7 @@ if (!Number.isInteger(VISITS) || VISITS <= 0) {
 }
 
 /** Политика бота — та же, что в full-run.mjs: чем выше в списке, тем охотнее берём. */
-const PACT_PRIORITY = ['double-step', 'quiet-round', 'tickets-shop'];
+const PACT_PRIORITY = ['double-step', 'quiet-round', 'tickets-shop', 'price-up', 'skull-calm', 'soft-skull'];
 const ROUNDS = 30; // длина модельного забега
 const DICE_CHANCE = 0.95; // кубик приходит почти каждый раунд (его вес подстраивает evil.diceWeight)
 const DEATH_CHANCE = 0.12; // провал последнего шанса: счёт идёт назад, сроки сделок едут с ним
@@ -70,9 +70,14 @@ console.log('');
 // ---------- 3: сколько эффект живёт на модельном забеге ----------
 const effectsOn = {
   'без черепов': (effects) => effects.noSkulls,
-  [`доля +${(D.QUIET_SKULL_DELTA * 100).toFixed(0)} п.п.`]: (effects) => effects.skullShareDelta > 0,
+  'доля выше': (effects) => effects.skullShareDelta > 0,
+  'доля ниже': (effects) => effects.skullShareDelta < 0,
   [`шаг ×${D.PACT_STEP_FACTOR}`]: (effects) => effects.multiplierStepMul > 1,
+  [`потолок ×${D.PACT_CAP}`]: (effects) => Number.isFinite(effects.multiplierCap),
   'череп в ×1': (effects) => effects.skullWipesStreak,
+  'мягкий череп': (effects) => effects.skullSoft,
+  '−1 прокрутка': (effects) => effects.spinsDelta < 0,
+  'выигрыш больше': (effects) => effects.winMul > 1,
   'магазин закрыт': (effects) => effects.shopClosed,
 };
 const roundsOn = Object.fromEntries(Object.keys(effectsOn).map((name) => [name, 0]));

@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const D = await import('../src/game/dealerGame.ts');
+const R = await import('../src/game/rules.ts');
 
 const rounds = (id) => D.pactSpec(id).rounds;
 const TAKEN = 5; // раунд, в котором берут сделку
@@ -115,6 +116,80 @@ test('действующую сделку второй раз не берут: p
   assert.equal(D.pactEffects(steps, TAKEN).multiplierStepMul, D.PACT_STEP_FACTOR, 'шаг ×2, а не ×4: сделка «вдвое»');
 });
 
+test('связка №4 «тише черепа»: доля ниже, серия не выше ×PACT_CAP', () => {
+  const calm = D.pactOf('skull-calm', TAKEN);
+  const effects = D.pactEffects([calm], TAKEN);
+  assert.equal(effects.skullShareDelta, D.SKULL_CALM_DELTA, 'доля черепов ниже на SKULL_CALM_DELTA');
+  assert.ok(D.SKULL_CALM_DELTA < 0, 'поправка отрицательная');
+  assert.equal(effects.multiplierCap, D.PACT_CAP, 'потолок множителя — PACT_CAP');
+
+  // Как считает сцена: шаг = streakStep (база + «Разгон» + фаза 2) × сделка «шаг вдвое», множитель = правила.
+  const stepOf = (deltaSteps) => {
+    const mixed = D.pactEffects([calm, ...deltaSteps], TAKEN);
+    return { step: R.MULTIPLIER_STEP * mixed.multiplierStepMul, cap: mixed.multiplierCap };
+  };
+  const show = (multiplier, cap) => Math.min(multiplier, cap);
+
+  const plain = stepOf([]); // только «тише черепа»: шаг 1, потолок 3
+  assert.equal(show(R.multiplierForStreak(2, plain.step), plain.cap), 3, 'серия 2 при шаге 1 — ровно ×3');
+  assert.equal(show(R.multiplierForStreak(10, plain.step), plain.cap), D.PACT_CAP, 'серия 10 — всё равно ×3');
+  assert.equal(show(R.multiplierForStreak(1, plain.step), plain.cap), 2, 'ниже потолка множитель обычный');
+
+  // «Шаг вдвое» + потолок: без потолка серия 2 дала бы ×5, с потолком — ×3.
+  const both = stepOf([D.pactOf('double-step', TAKEN)]);
+  assert.equal(both.step, R.MULTIPLIER_STEP * D.PACT_STEP_FACTOR, 'шаг сделки «вдвое» — PACT_STEP_FACTOR');
+  assert.equal(R.multiplierForStreak(2, both.step), 5, 'серия 2 при шаге 2 — ×5 (потолка нет)');
+  assert.equal(show(R.multiplierForStreak(2, both.step), both.cap), D.PACT_CAP, 'с потолком ×3');
+  assert.equal(show(R.multiplierForStreak(10, both.step), both.cap), 3, 'серия 10 с потолком — ×3');
+  assert.equal(show(R.multiplierForStreak(2, both.step), Number.POSITIVE_INFINITY), 5, 'без потолка (cap = Infinity) — ×5');
+
+  const last = TAKEN + rounds('skull-calm') - 1;
+  assert.equal(D.pactEffects([calm], last).multiplierCap, D.PACT_CAP, 'потолок живёт весь срок');
+  assert.equal(D.pactEffects([calm], last + 1).multiplierCap, Number.POSITIVE_INFINITY, 'после срока потолка нет');
+});
+
+test('связка №14 «мягкий череп»: −1 прокрутка, ступень вместо трети', () => {
+  const soft = D.pactOf('soft-skull', TAKEN);
+  const effects = D.pactEffects([soft], TAKEN);
+  assert.equal(effects.skullSoft, true, 'череп мягкий');
+  assert.equal(effects.spinsDelta, D.SOFT_SKULL_SPINS, 'прокруток в раунде меньше на SOFT_SKULL_SPINS');
+  assert.ok(D.SOFT_SKULL_SPINS < 0, 'поправка прокруток отрицательная');
+  // Серия после черепа: мягкий снимает ровно одну ступень — одно очко серии, шаг множителя на это не влияет
+  // (при шаге 2 ступень просто дороже в шкале: ×19 → ×17). «Череп в ×1» — ноль, без сделок — треть.
+  assert.equal(D.skullStreakAfter(9, effects), 8, 'мягкий череп: 9 → 8');
+  // Шага у функции нет: ступень — это одно очко серии. В шкале множителя 1 + серия × шаг она стоит разного,
+  // но ступень всегда одна.
+  assert.equal(R.multiplierForStreak(9, 1) - R.multiplierForStreak(8, 1), 1, 'шаг 1: ×9 → ×8');
+  assert.equal(R.multiplierForStreak(9, 2) - R.multiplierForStreak(8, 2), 2, 'шаг 2: ×19 → ×17, но ступень одна');
+  assert.equal(D.skullStreakAfter(1, effects), 0, 'с короткой серии не уходит в минус');
+  assert.equal(D.skullStreakAfter(0, effects), 0, 'и с нуля тоже');
+  assert.equal(D.skullStreakAfter(9, { ...effects, skullWipesStreak: true }), 0, '«череп в ×1» сильнее — обнуляет');
+  assert.equal(D.skullStreakAfter(9, { ...effects, skullSoft: false }), 3, 'обычный череп оставляет треть');
+});
+
+test('связка №17 «выигрыш +25%»: winMul и +0,5 п.п. черепов до конца забега', () => {
+  const price = D.pactOf('price-up', TAKEN);
+  const effects = D.pactEffects([price], TAKEN);
+  assert.equal(effects.winMul, D.PRICE_UP_WIN, 'выигрыш паттернов ×PRICE_UP_WIN');
+  assert.ok(D.PRICE_UP_WIN > 1, 'поправка выигрыша больше единицы');
+  assert.equal(effects.skullShareDelta, D.PRICE_UP_SKULL_DELTA, 'доля черепов выше на PRICE_UP_SKULL_DELTA');
+  assert.equal(price.untilRound, TAKEN + D.PACT_LAST_ROUNDS - 1, 'действует до конца забега (сентинел)');
+  assert.equal(D.pactEffects([price], TAKEN + 200).winMul, D.PRICE_UP_WIN, 'и через двести раундов');
+});
+
+test('эффекты всех сделок конечные и без NaN на любом раунде', () => {
+  for (const spec of D.PACTS) {
+    for (const round of [1, TAKEN, TAKEN + 5, TAKEN + 500]) {
+      const effects = D.pactEffects([D.pactOf(spec.id, TAKEN)], round);
+      assert.ok(Number.isFinite(effects.skullShareDelta), `${spec.id}: skullShareDelta конечная`);
+      assert.ok(Number.isFinite(effects.spinsDelta), `${spec.id}: spinsDelta конечный`);
+      assert.ok(Number.isFinite(effects.winMul) && effects.winMul > 0, `${spec.id}: winMul — конечное > 0`);
+      assert.ok(Number.isFinite(effects.multiplierStepMul) && effects.multiplierStepMul > 0, `${spec.id}: шаг конечный`);
+      assert.ok(effects.multiplierCap > 0, `${spec.id}: потолок положительный`);
+    }
+  }
+});
+
 test('skullShareWeightMul: нет черепов, потолок, нулевая поправка', () => {
   assert.equal(D.skullShareWeightMul(0, D.QUIET_SKULL_DELTA), 1, 'черепов нет — двигать нечего');
   assert.equal(D.skullShareWeightMul(0.2, 0), 1, 'поправки нет — вес прежний');
@@ -125,4 +200,18 @@ test('skullShareWeightMul: нет черепов, потолок, нулевая
   const share = (mul * 0.2) / (mul * 0.2 + 0.8);
   assert.ok(Math.abs(share - (0.2 + D.QUIET_SKULL_DELTA)) < 1e-12, 'доля 20% + поправка, получено ' + share.toFixed(4));
   assert.ok(Number.isFinite(mul) && mul > 1, 'множитель конечный и больше единицы');
+});
+
+test('skullShareWeightMul: отрицательная поправка (тише черепа) и её границы', () => {
+  assert.equal(D.skullShareWeightMul(0, -0.03), 1, 'черепов нет — снижать нечего');
+  assert.equal(D.skullShareWeightMul(0.18, 0), 1, 'нулевая поправка — вес прежний');
+  const mul = D.skullShareWeightMul(0.18, -0.03);
+  const share = (mul * 0.18) / (mul * 0.18 + 0.82);
+  assert.ok(Math.abs(share - 0.15) < 1e-12, 'доля 18% − 3 п.п. = 15%, получено ' + share.toFixed(4));
+  assert.ok(Number.isFinite(mul) && mul > 0 && mul < 1, 'множитель конечный и меньше единицы');
+  const floor = D.skullShareWeightMul(0.02, -0.03);
+  const floorShare = (floor * 0.02) / (floor * 0.02 + 0.98);
+  assert.ok(floorShare >= D.SKULL_SHARE_MIN - 1e-12, 'доля не падает ниже SKULL_SHARE_MIN, получено ' + floorShare.toFixed(4));
+  assert.ok(Number.isFinite(floor) && floor > 0, 'и множитель не NaN и не отрицательный');
+  assert.equal(D.skullShareWeightMul(0.01, -0.03), 1, 'у нижней границы двигать нечего');
 });

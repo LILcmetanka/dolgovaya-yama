@@ -14,7 +14,7 @@ import {
 import { CIGARETTES_FOR_ACHIEVEMENT, isBloodSpill, ITEM_ACHIEVEMENTS } from '../achievements';
 import { FREE_SPINS_GUARD } from '../bonus';
 import { bloodBurn, BLOOD_WIN, cellsOf, diceWeight, spiderBite } from '../evil';
-import { pactEffects, skullShareWeightMul, type Pact } from '../dealerGame';
+import { pactEffects, skullShareWeightMul, skullStreakAfter, type Pact } from '../dealerGame';
 import {
   activeSlotEffects,
   CIGARETTE_SPINS,
@@ -48,7 +48,6 @@ import {
   randomSymbol,
   spinsAfterBonus,
   SPINS_PER_ROUND,
-  streakAfterSkull,
   streakAfterTake,
   symbolsUnlockedAt,
   TICKET_SCATTER,
@@ -74,6 +73,7 @@ const TICKET_BORDER = 0xf59e0b; // рамки на клетках с билет�
 const SPIDER_BORDER = 0xa855f7; // рамки на пауках, когда они съели часть кона
 const REVEAL_NOTE_SPIN = 3; // после третьей прокрутки из тьмы проступает долг (первый забег)
 const REROLL_WINDOW_TIME = 10_000; // сколько ждём выбора в окне перемешки и подмены, мс: прошло — сетка посчитана как есть
+const MIN_ROUND_SPINS = 1; // сделка «−1 прокрутка» не может оставить раунд без прокруток вовсе
 
 /** «+12», «+4 ×3 = +12» или с амулетами «+4 ×3 ×2 = +24». */
 function formatWin(win: number, multiplier: number, factor: number, gain: number): string {
@@ -171,7 +171,7 @@ export abstract class RoundScene extends MachineScene {
   /**
    * Веса раунда — те же, что считает rules.weightsForRound, с поправкой сделок Дилера (dealerGame.pactEffects):
    * «до конца раунда нет черепов» — черепам этого раунда вес 0, и в прокрутке их не будет.
-   * Второй раунд той же сделки (доля черепов +5 п.п.) веса не гасит: он двигает вес черепа в weightContext.
+   * Остальные сделки веса не гасят: они двигают вес черепа в weightContext (поправка доли любого знака).
    */
   private baseWeights(): WeightOf {
     const base = weightsForRound(this.round, diceWeight(this.diceDrought));
@@ -180,13 +180,13 @@ export abstract class RoundScene extends MachineScene {
   }
 
   /**
-   * Всё, от чего зависит вес символа, плюс поправка сделки «+5 п.п. черепов»: множитель веса черепа выводим из доли,
+   * Всё, от чего зависит вес символа, плюс поправка сделки к доле черепов (±): множитель веса черепа выводим из доли,
    * которую видит игрок (dealerGame.skullShareWeightMul), поэтому прокрутка и плашка «💀 N%» показывают одно число.
    */
   protected override weightContext(charge = lastCharge()): WeightContext {
     const base = super.weightContext(charge);
-    const delta = pactEffects(this.pacts, this.round).skullShareDelta;
-    if (delta <= 0) return base;
+    const delta = pactEffects(this.pacts, this.round).skullShareDelta; // может быть и отрицательной: «тише черепа»
+    if (delta === 0 || !Number.isFinite(delta)) return base;
     const mul = skullShareWeightMul(skullShareOf(this.round, this.diceDrought, base), delta);
     return mul === 1 ? base : { ...base, skullMul: mul };
   }
@@ -194,6 +194,11 @@ export abstract class RoundScene extends MachineScene {
   /** Шаг множителя серии: сделка «шаг вдвое» его удваивает (dealerGame.pactEffects). */
   protected override streakStep(): number {
     return super.streakStep() * pactEffects(this.pacts, this.round).multiplierStepMul;
+  }
+
+  /** Потолок множителя: сделка «тише черепа» держит серию не выше ×PACT_CAP (dealerGame.pactEffects). */
+  protected override multiplierCap(): number {
+    return pactEffects(this.pacts, this.round).multiplierCap;
   }
 
   /** Доля черепов для ачивки «50 на 50» — как плашка на корпусе: в раунде без черепов она 0. */
@@ -452,8 +457,9 @@ export abstract class RoundScene extends MachineScene {
     const lost = this.pot;
     const refund = insuranceRefund(lost, this.amuletIds(), this.insuranceSaves);
     this.pot = 0;
-    // Сделка «череп роняет серию в ×1»: серия обнуляется, а не оставляет треть (SKULL_KEEPS_STREAK).
-    this.streak = pactEffects(this.pacts, this.round).skullWipesStreak ? 0 : streakAfterSkull(this.streak);
+    // Сделки с черепом: «череп в ×1» обнуляет серию, «мягкий череп» снимает одну ступень (одно очко серии),
+    // иначе остаётся треть (SKULL_KEEPS_STREAK).
+    this.streak = skullStreakAfter(this.streak, pactEffects(this.pacts, this.round));
     this.sfx.play('skulls');
     this.screen.highlightSkulls(result.hits);
     this.effects.flashAndShake();
@@ -507,7 +513,8 @@ export abstract class RoundScene extends MachineScene {
       winFactor(ids, this.bones) *
       (isBloody ? BLOOD_WIN : 1) * // кровавая прокрутка — ×3
       machineWinFactor(this.machineId) *
-      (this.itemEffects.risk ? RISK_WIN_FACTOR : 1); // риск: выигрыш ×10 (видно в подсказке как ×10)
+      (this.itemEffects.risk ? RISK_WIN_FACTOR : 1) * // риск: выигрыш ×10 (видно в подсказке как ×10)
+      pactEffects(this.pacts, this.round).winMul; // сделка «выигрыш паттернов +N%» — только паттерны, не «забрать»
     const gain = Math.round(win * multiplier * factor);
     this.pot += gain;
     // Колокольчик: прокрутки, но не выше потолка. Показываем, сколько добавилось на самом деле: у потолка бывает и 0.
@@ -749,6 +756,8 @@ export abstract class RoundScene extends MachineScene {
     // Фаза 2: +1 прокрутка в раунде (замечание 19). Фазу берём по закрытым долгам сразу, а не this.phase:
     // checkPhase идёт в конце startRound (после зелёных огней), а прокрутки нужны уже сейчас.
     this.spinsLeft = spinsAfterBonus(this.spinsLeft, phaseAt(this.closedDebts()).bonusSpins);
+    // Сделка «−1 прокрутка в раунде»: после амулетов и фазы, но не меньше MIN_ROUND_SPINS — иначе раунд кончился бы сразу.
+    this.spinsLeft = Math.max(MIN_ROUND_SPINS, this.spinsLeft + pactEffects(this.pacts, this.round).spinsDelta);
     this.roundShields = vestShields(ids);
     if (owns(ids, 'greed')) this.amuletRack.trigger('greed');
     // Сделка кончилась — одна короткая новость. Новый символ важнее, поэтому announceNewSymbols идёт следом

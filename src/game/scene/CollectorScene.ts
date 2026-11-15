@@ -1,5 +1,5 @@
 import { interestCoins, TICKETS_PER_DEBT, winFactor } from '../amulets';
-import { shiftPacts } from '../dealerGame';
+import { pactEffects, shiftPacts } from '../dealerGame';
 import { diceWeight } from '../evil';
 import { CHIP_RECORD } from '../gameConfig';
 import {
@@ -184,13 +184,13 @@ export abstract class CollectorScene extends SaveScene {
   }
 
   /**
-   * Множители выигрыша амулетов и автомата — как в addToPot (RoundScene): во сколько раз паттерн на кону
-   * больше своей цены. Кровавая прокрутка и предмет риска сюда не входят: их флаги к приходу Коллектора сняты.
-   * Замах рычага в формулу не входит тоже: он двигает только веса символов, выплаты не множит (DONTLIKE п. 8).
-   * Симулятор считает так же.
+   * Множители выигрыша амулетов, автомата и сделки «выигрыш паттернов +N%» — как в addToPot (RoundScene):
+   * во сколько раз паттерн на кону больше своей цены. Кровавая прокрутка и предмет риска сюда не входят:
+   * их флаги к приходу Коллектора сняты. Замах рычага в формулу не входит тоже: он двигает только веса символов,
+   * выплаты не множит (DONTLIKE п. 8). Симулятор считает так же (full-run.mjs, collector).
    */
   private chanceWinFactor(): number {
-    return winFactor(this.amuletIds(), this.bones) * machineWinFactor(this.machineId);
+    return winFactor(this.amuletIds(), this.bones) * machineWinFactor(this.machineId) * pactEffects(this.pacts, this.round).winMul;
   }
 
   /** Одна прокрутка последнего шанса: обычные веса раунда, но без черепов и злых символов. */
