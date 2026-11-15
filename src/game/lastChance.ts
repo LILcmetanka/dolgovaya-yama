@@ -1,3 +1,4 @@
+import { roundPrice } from './items';
 import { PATTERNS, TOP_MULTIPLIER, type SpinResult } from './patterns';
 import { isPaying, SYMBOLS, weightsForRound, type SlotSymbol } from './rules';
 
@@ -5,7 +6,9 @@ import { isPaying, SYMBOLS, weightsForRound, type SlotSymbol } from './rules';
  * Последний шанс: фишек на долг не хватило — на экране банкомата GOOD LUCK, автомат делает ОДНУ прокрутку сам,
  * но чистую: без черепов и злых символов (🕷 🔒 🩸 🎲), чтобы дальше решал игрок, а не удача.
  * Сетка остаётся, и у игрока два действия: перекрутить столбец или поставить джокера в клетку (заморозка столбца —
- * бесплатно, она действий не тратит). Собрал паттерн, который оплачивает долю нехватки фишек (см. LAST_CHANCE_GOAL_SHARE), —
+ * бесплатно, она действий не тратит). Действия кончились, цель не взята — можно докупить ещё одно действие за долю
+ * фишек на руках (шаг 14, до LAST_CHANCE_BUY_MAX раз, каждая следующая докупка дороже).
+ * Собрал паттерн, который оплачивает долю нехватки фишек (см. LAST_CHANCE_GOAL_SHARE), —
  * чемодан платит долг, фишки целы, билета нет, счёт на один долг назад. Не собрал — провал: первый за забег даёт
  * «второе дыхание» (счёт −1 и магазин), второй — KABOOM.
  * Здесь только числа и маленькие правила; как идут прокрутки и окно действий — в CollectorScene. Без Phaser.
@@ -34,6 +37,76 @@ export const LAST_CHANCE_GOAL_SHARE = 0.2;
 export const BEST_WITHOUT_JACKPOT = Math.max(
   ...PATTERNS.filter((pattern) => pattern.id !== 'jackpot').map((pattern) => pattern.multiplier),
 );
+
+// Докупка прокрутки (шаг 14): действия кончились, цель не взята — можно купить ещё одно действие,
+// заплатив долю фишек НА РУКАХ. Доля растёт с каждой докупкой, поэтому третья заметно дороже первой,
+// и скупать действия без счёта невыгодно. Решения автора 15.11.2026: платим фишками (не билетами),
+// цена — процент от текущего банка, докупок 1–3, цель остаётся «нехватка долга» (LAST_CHANCE_GOAL_SHARE).
+/** Сколько докупок прокрутки можно сделать за один последний шанс. */
+export const LAST_CHANCE_BUY_MAX = 3;
+/** Доля фишек на руках за первую докупку. */
+export const LAST_CHANCE_BUY_SHARE_START = 0.25;
+/** Насколько доля растёт с каждой следующей докупкой. */
+export const LAST_CHANCE_BUY_SHARE_STEP = 0.15;
+/** Потолок доли: больше 55% фишек на руках за одну докупку не берут. */
+export const LAST_CHANCE_BUY_SHARE_MAX = 0.55;
+
+/**
+ * Числа докупки одним объектом: симулятор подменяет их ручками SIM_LC_BUY_*, чтобы замерить другую цену
+ * без правки констант (так же, как SIM_LC_SHARE подменяет долю цели). В игре — всегда LAST_CHANCE_BUY_RULES.
+ */
+export interface LastChanceBuyRules {
+  max: number;
+  start: number;
+  step: number;
+  maxShare: number;
+}
+
+export const LAST_CHANCE_BUY_RULES: LastChanceBuyRules = {
+  max: LAST_CHANCE_BUY_MAX,
+  start: LAST_CHANCE_BUY_SHARE_START,
+  step: LAST_CHANCE_BUY_SHARE_STEP,
+  maxShare: LAST_CHANCE_BUY_SHARE_MAX,
+};
+
+/** Доля фишек на руках за докупку после bought покупок: 25, 40, 55% и дальше 55%. Мусор и минус — первая доля. */
+export function lastChanceBuyShare(bought: number, rules: LastChanceBuyRules = LAST_CHANCE_BUY_RULES): number {
+  if (!Number.isFinite(bought) || bought < 0) return rules.start;
+  return Math.min(rules.maxShare, rules.start + rules.step * Math.floor(bought));
+}
+
+/** Цена докупки при balance фишек на руках: доля банка, округлённая до 5, но не меньше 5 (items.roundPrice). */
+export function lastChanceBuyPrice(balance: number, bought: number, rules: LastChanceBuyRules = LAST_CHANCE_BUY_RULES): number {
+  const bank = Number.isFinite(balance) && balance > 0 ? balance : 0;
+  return roundPrice(bank * lastChanceBuyShare(bought, rules));
+}
+
+/**
+ * Почему докупка недоступна: early — действия ещё не кончились (докупать рано), limit — докупки кончились,
+ * poor — цена больше банка, hopeless — цель у потолка (её бьёт только джекпот).
+ */
+export type LastChanceBuyVerdict = 'ok' | 'early' | 'limit' | 'poor' | 'hopeless';
+
+/**
+ * Единственное правило докупки — чистая функция, её зовут сцена и симулятор, своих копий условия они не держат.
+ * Докупать можно только когда бесплатные действия кончились: при actionsLeft > 0 — early (покупка не нужна,
+ * ничего не списывается). Дальше по порядку: limit — докупки кончились; poor — цена больше банка;
+ * hopeless — цель у потолка, покупка только ухудшит (действие добавится, а цель останется недостижимой без джекпота).
+ */
+export function lastChanceBuyVerdict(
+  actionsLeft: number,
+  bought: number,
+  balance: number,
+  goal: number,
+  rules: LastChanceBuyRules = LAST_CHANCE_BUY_RULES,
+): LastChanceBuyVerdict {
+  if (!Number.isFinite(actionsLeft) || actionsLeft > 0) return 'early';
+  if (bought >= rules.max) return 'limit';
+  const bank = Number.isFinite(balance) ? balance : 0;
+  if (lastChanceBuyPrice(bank, bought, rules) > bank) return 'poor';
+  if (goal >= BEST_WITHOUT_JACKPOT) return 'hopeless';
+  return 'ok';
+}
 
 /** Бывает ли символ в чистой прокрутке последнего шанса. */
 export function isLastChanceSymbol(symbol: SlotSymbol): boolean {

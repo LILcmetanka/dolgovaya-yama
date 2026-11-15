@@ -9,6 +9,9 @@ import {
   isLastChanceGoalMet,
   isLastChanceSymbol,
   LAST_CHANCE_ACTIONS,
+  lastChanceBuyPrice,
+  lastChanceBuyShare,
+  lastChanceBuyVerdict,
   lastChanceGoal,
 } from '../lastChance';
 import { t } from '../lang';
@@ -38,7 +41,8 @@ const VICTORY_PAUSE = 1400; // лампы погасли, новое число 
  * Слой Коллектора: в конце раунда к автомату приходит Коллектор. Хватает фишек — из темноты выезжает банкомат, отдаёшь долг,
  * получаешь купон (билет), дальше магазин. Не хватает — на экране банкомата GOOD LUCK, автомат делает ОДНУ чистую прокрутку
  * (без черепов и злых символов), и у игрока два действия: перекрутить столбец или поставить джокера в клетку; заморозка
- * столбца бесплатная. Собрал паттерн, который оплачивает долю нехватки фишек (lastChanceGoal), — выезжает чемодан с фишками:
+ * столбца бесплатная. Действия кончились, цель не взята — можно докупить ещё одно за долю фишек на руках (шаг 14).
+ * Собрал паттерн, который оплачивает долю нехватки фишек (lastChanceGoal), — выезжает чемодан с фишками:
  * долг оплачен, фишки целы, билета нет, счёт на один долг назад. Не собрал (или сдался) — провал: первый за забег даёт
  * «второе дыхание» (счёт −1, магазин), следующий — KABOOM. Счётчик secondWindLeft живёт в записи забега и в кассете:
  * откат дыхание не пополняет, а сделка №9 кладёт ещё один запас.
@@ -48,6 +52,8 @@ export abstract class CollectorScene extends SaveScene {
   private lastChanceGrid: Grid | null = null;
   private lastChanceGoal = 0; // какой множитель паттерна надо перекрыть; 0 — нехватки нет, годится любой паттерн
   private lastChanceActions = 0;
+  private lastChanceBought = 0; // сколько докупок прокрутки сделано за этот последний шанс (шаг 14)
+  private isLastChanceAwaitingBuy = false; // действия кончились, цель не взята, но докупка ещё возможна — ждём решения
   private readonly frozenColumns = new Set<number>(); // замороженные столбцы: перекрут их не трогает
   private isFreezeMode = false; // кнопка «лёд» включена: клик по столбцу морозит, а не перекручивает
   private isLastChanceWinPending = false; // входная сетка уже бьёт цель: полоса показана, через мгновение долг закроется
@@ -60,6 +66,8 @@ export abstract class CollectorScene extends SaveScene {
     this.lastChanceGrid = null;
     this.lastChanceGoal = 0;
     this.lastChanceActions = 0;
+    this.lastChanceBought = 0;
+    this.isLastChanceAwaitingBuy = false;
     this.frozenColumns.clear();
     this.isFreezeMode = false;
     this.isLastChanceWinPending = false;
@@ -153,6 +161,8 @@ export abstract class CollectorScene extends SaveScene {
   private startLastChance(): void {
     this.isLastChance = true;
     this.pot = 0;
+    this.lastChanceBought = 0; // докупки считаются заново: это новый последний шанс
+    this.isLastChanceAwaitingBuy = false;
     this.frozenColumns.clear();
     this.isFreezeMode = false;
     this.screen.showFrozen([]);
@@ -171,6 +181,7 @@ export abstract class CollectorScene extends SaveScene {
         this.isLastChanceWinPending = true;
         this.screen.announceNews(t('lcAlreadyWin'));
         this.lastChanceBar.open(goal, this.lastChanceActions);
+        this.refreshLastChanceBuyLine(); // цель уже взята: плашка докупки гаснет, но строка цены на месте
         // Страховка от «победы без причины»: за эти 1,2 с шанс могли закрыть (перезапуск сцены, откат),
         // и тогда таймер не должен ни платить долг, ни открывать магазин со счётом −2.
         this.time.delayedCall(INSTANT_WIN_PAUSE, () => {
@@ -180,6 +191,7 @@ export abstract class CollectorScene extends SaveScene {
       }
       this.sfx.play('news', 0.3);
       this.lastChanceBar.open(goal, this.lastChanceActions);
+      this.refreshLastChanceBuyLine();
     });
   }
 
@@ -216,13 +228,24 @@ export abstract class CollectorScene extends SaveScene {
 
   /**
    * Нажали кнопку в полосе: «сдаться» — сразу провал, «лёд» — режим заморозки (бесплатно и без действий),
-   * «перекрут» и «джокер» ждут клика по сетке.
+   * «перекрут» и «джокер» ждут клика по сетке. Действия кончились — остаются только «докупить» и «сдаться»:
+   * бесплатно перекручивать и ставить джокера нельзя (иначе цель не растёт, а шанс не кончается).
    */
   protected onLastChanceButton(action: LastChanceAction): void {
     if (!this.isLastChance || !this.lastChanceGrid || this.isSpinning) return; // пока столбец крутится, кнопки ждут
     if (this.isLastChanceWinPending) return; // сетка уже бьёт цель: долг закроется сам, кнопки не нужны
     if (action === 'surrender') {
       this.failLastChance();
+      return;
+    }
+    if (action === 'buy') {
+      this.buyLastChanceSpin(); // докупка действия за долю фишек на руках (шаг 14)
+      return;
+    }
+    // Вход в выбор (заморозка, перекрут, джокер) без действия запрещён: в ожидании докупки — только «докупить» и «сдаться».
+    if (this.lastChanceActions <= 0) {
+      this.sfx.play('deny');
+      this.refreshLastChanceBuyLine();
       return;
     }
     if (action === 'freeze') {
@@ -240,6 +263,14 @@ export abstract class CollectorScene extends SaveScene {
   /** Клик по сетке в последнем шансе: морозим столбец, перекручиваем столбец или ставим джокера. */
   private onLastChancePick(action: 'freeze' | 'reroll' | 'joker', row: number, col: number): void {
     if (!this.isLastChance || !this.lastChanceGrid || this.isLastChanceWinPending) return;
+    // Действий нет — выбор снят и ничего не делаем: бесплатных перекрутов и джокеров не бывает.
+    if (this.lastChanceActions <= 0) {
+      this.screen.endPick();
+      this.isFreezeMode = false;
+      this.lastChanceBar.setFreezeMode(false);
+      this.sfx.play('deny');
+      return;
+    }
     if (action === 'freeze') {
       this.toggleFreeze(col);
       return;
@@ -295,16 +326,95 @@ export abstract class CollectorScene extends SaveScene {
     });
   }
 
+  /** Трата одного действия. Пол нуля — только страховка: без остатка кнопки и выбор не работают (см. выше). */
   private spendAction(): void {
     this.lastChanceActions = Math.max(0, this.lastChanceActions - 1);
     this.lastChanceBar.setActions(this.lastChanceActions);
+    this.refreshLastChanceBuyLine(); // остаток изменился: плашка докупки гаснет/загорается по правилу
   }
 
-  /** Действие отработало: есть ещё — ждём следующей кнопки, кончились — проверяем цель. */
+  /**
+   * Докупка прокрутки (шаг 14): докупать можно только когда бесплатные действия кончились и цель не взята —
+   * решает lastChanceBuyVerdict, одна дверь для сцены и симулятора. Цена — lastChanceBuyPrice, цель после покупки
+   * пересчитывается тем же lastChanceGoal: нехватка выросла ровно на заплаченное.
+   * Нельзя (действия ещё есть, лимит, не хватает фишек, цель у потолка) — только звук отказа и обновлённая подпись,
+   * фишки целы. Покупка снимает открытый выбор, как обычные ветки кнопок.
+   */
+  private buyLastChanceSpin(): void {
+    const verdict = lastChanceBuyVerdict(this.lastChanceActions, this.lastChanceBought, this.balance, this.lastChanceGoal);
+    if (verdict !== 'ok') {
+      this.sfx.play('deny');
+      this.refreshLastChanceBuyLine();
+      return;
+    }
+    this.screen.endPick(); // выбор сетки снят: действие уже куплено, ждать клика нечего
+    this.isFreezeMode = false;
+    this.lastChanceBar.setFreezeMode(false);
+    const price = lastChanceBuyPrice(this.balance, this.lastChanceBought);
+    this.balance -= price;
+    this.lastChanceBought += 1;
+    this.lastChanceActions += 1;
+    const need = this.debt - this.balance;
+    this.lastChanceGoal = lastChanceGoal(need, chancePrice(this.round), this.multiplier(), this.chanceWinFactor());
+    this.lastChanceBar.setGoal(this.lastChanceGoal);
+    this.lastChanceBar.setActions(this.lastChanceActions);
+    this.isLastChanceAwaitingBuy = false;
+    this.refreshLastChanceBuyLine();
+    this.refreshHud();
+    this.sfx.play('payment');
+    this.effects.popup(`+1 · −${price}`, GOLD_TEXT);
+  }
+
+  /**
+   * Строка цены докупки — одним хелпером по lastChanceBuyVerdict: цена с процентом, лимит, нехватка фишек
+   * или цель у потолка. Пока действия ещё есть (early) — обычная цена и погашенная плашка: игрок видит, сколько
+   * докупка будет стоить, когда действия кончатся. Ждём решения после последнего действия — «цель не взята ·
+   * докупить ещё?».
+   */
+  private refreshLastChanceBuyLine(): void {
+    if (this.isLastChanceAwaitingBuy) {
+      this.lastChanceBar.setBuy(t('lcBuyMissed'), true);
+      return;
+    }
+    const verdict = lastChanceBuyVerdict(this.lastChanceActions, this.lastChanceBought, this.balance, this.lastChanceGoal);
+    if (verdict === 'limit') {
+      this.lastChanceBar.setBuy(t('lcBuyLimit'), false);
+      return;
+    }
+    if (verdict === 'poor') {
+      this.lastChanceBar.setBuy(t('lcBuyPoor', lastChanceBuyPrice(this.balance, this.lastChanceBought)), false);
+      return;
+    }
+    if (verdict === 'hopeless') {
+      this.lastChanceBar.setBuy(t('lcBuyHopeless'), false);
+      return;
+    }
+    // Процент — целое: доля 0,25 читается как «25», а не как «0.25».
+    const share = Math.round(lastChanceBuyShare(this.lastChanceBought) * 100);
+    const price = lastChanceBuyPrice(this.balance, this.lastChanceBought);
+    // early — действия ещё есть: подпись обычная, но купить нельзя; ok — покупка доступна (кроме мгновенной победы).
+    this.lastChanceBar.setBuy(t('lcBuyPrice', share, price), verdict === 'ok' && !this.isLastChanceWinPending);
+  }
+
+  /**
+   * Действие отработало: есть ещё — ждём следующей кнопки, кончились — проверяем цель.
+   * Цель не взята, но докупка ещё возможна — не проваливаем сразу: игрок может купить ещё действие (шаг 14).
+   */
   private afterLastChanceAction(): void {
     if (!this.isLastChance) return;
     this.refreshHud();
-    if (this.lastChanceActions > 0) return;
+    if (this.lastChanceActions > 0) {
+      this.refreshLastChanceBuyLine(); // действия ещё есть: плашка докупки снова погашена (early)
+      return;
+    }
+    const grid = this.lastChanceGrid;
+    const best = grid ? bestMultiplier(evaluateGrid(grid)) : 0;
+    const canBuy = lastChanceBuyVerdict(this.lastChanceActions, this.lastChanceBought, this.balance, this.lastChanceGoal) === 'ok';
+    if (!isLastChanceGoalMet(best, this.lastChanceGoal) && canBuy) {
+      this.isLastChanceAwaitingBuy = true;
+      this.refreshLastChanceBuyLine();
+      return;
+    }
     this.finishLastChance();
   }
 
@@ -368,6 +478,8 @@ export abstract class CollectorScene extends SaveScene {
     this.isFreezeMode = false;
     this.isLastChanceWinPending = false;
     this.lastChanceGrid = null;
+    this.lastChanceBought = 0;
+    this.isLastChanceAwaitingBuy = false;
     this.isLastChance = false;
     this.isSpinning = false;
     this.pot = 0;

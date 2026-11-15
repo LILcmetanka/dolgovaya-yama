@@ -50,10 +50,10 @@ const TEXTS = {
   rerollColumn: { ru: 'КАКОЙ СТОЛБЕЦ?', en: 'WHICH COLUMN?' },
   rerollCell: { ru: 'КАКАЯ КЛЕТКА?', en: 'WHICH CELL?' },
   rerollSkip: { ru: 'Пропустить', en: 'Skip' }, // ✕ в окне
-  // Последний шанс: цель (множитель паттерна), два действия и четыре кнопки.
+  // Последний шанс: цель (множитель паттерна), два действия и пять кнопок (пятая — докупка действия).
   lcGoalPattern: { ru: 'ЦЕЛЬ: ПАТТЕРН ×{0}', en: 'GOAL: PATTERN ×{0}' },
   lcGoalJackpot: { ru: 'ЦЕЛЬ: ТОЛЬКО ДЖЕКПОТ', en: 'GOAL: JACKPOT ONLY' },
-  lcActions: { ru: 'ДЕЙСТВИЙ: {0} · КЛАВИШИ 1–4', en: 'ACTIONS: {0} · KEYS 1–4' },
+  lcActions: { ru: 'ДЕЙСТВИЙ: {0} · КЛАВИШИ 1–5', en: 'ACTIONS: {0} · KEYS 1–5' },
   lcFreeze: { ru: 'Заморозка', en: 'Freeze' },
   lcFreezeWhat: { ru: 'Клавиша 1. Столбец останется как есть, перекрут его не тронет. Бесплатно, действий не тратит', en: 'Key 1. The column stays as it is: a reroll won\'t touch it. Free, costs no actions' },
   lcReroll: { ru: 'Перекрут', en: 'Respin' },
@@ -62,6 +62,18 @@ const TEXTS = {
   lcJokerWhat: { ru: 'Клавиша 3. Выбери клетку мышью — в ней встанет 🃏. Одно действие', en: 'Key 3. Pick a cell with the mouse — a 🃏 takes its place. One action' },
   lcSurrender: { ru: 'Сдаться', en: 'Give up' },
   lcSurrenderWhat: { ru: 'Клавиша 4. Сразу провал последнего шанса', en: 'Key 4. Fail the last chance right away' },
+  // Докупка прокрутки (шаг 14): действия кончились и цель не взята — можно купить ещё одно действие.
+  // Цена — доля фишек на руках, с каждой докупкой доля растёт; платят фишками, цель остаётся «нехватка долга».
+  lcBuy: { ru: 'Докупить', en: 'Buy in' },
+  lcBuyWhat: {
+    ru: 'Клавиша 5. Ещё одно действие за долю фишек на руках; каждая следующая докупка дороже',
+    en: 'Key 5. One more action for a share of the chips in hand; every next buy costs more',
+  },
+  lcBuyPrice: { ru: 'ДОКУПИТЬ: {0}% ФИШЕК · {1}', en: 'BUY IN: {0}% OF CHIPS · {1}' },
+  lcBuyLimit: { ru: 'ДОКУПОК БОЛЬШЕ НЕТ', en: 'NO MORE BUY-INS' },
+  lcBuyPoor: { ru: 'НЕ ХВАТАЕТ ФИШЕК: {0}', en: 'NOT ENOUGH CHIPS: {0}' },
+  lcBuyHopeless: { ru: 'ЦЕЛЬ У ПОТОЛКА: НЕ ПОМОЖЕТ', en: 'GOAL AT THE CAP: WON\'T HELP' },
+  lcBuyMissed: { ru: 'ЦЕЛЬ НЕ ВЗЯТА · ДОКУПИТЬ ЕЩЁ?', en: 'GOAL MISSED · BUY ONE MORE?' },
   lcSecondWind: { ru: 'ВТОРОЕ ДЫХАНИЕ', en: 'SECOND WIND' },
   // Пояснение к попапу: почему забег жив, хотя последний шанс провален (DONTLIKE б.12).
   // Со сделкой №9 запасов может быть больше одного, поэтому «второй провал» заранее не обещаем.

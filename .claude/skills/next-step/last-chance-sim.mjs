@@ -13,11 +13,17 @@
 //  • Действий ровно LAST_CHANCE_ACTIONS = 2 (lastChance.ts): перекрут столбца — три клетки выпадают заново
 //    (CollectorScene.rerollColumn) — или джокер в клетку. В занятую джокером клетку и в замороженный столбец
 //    игра не даёт, действие при этом не тратится. Заморозка бесплатна и действий не тратит:
-//    она только запрещает перекрут, поэтому политика ею не пользуется — она сужает выбор.
+//    она только запрещает перекрут, поэтому политика ею не пользуется — она сужает выбор. Без действия нельзя
+//    ни перекрутить, ни поставить джокера, ни войти в выбор: бесплатных действий нет (CollectorScene.onLastChanceButton).
 //  • Раньше проверить нельзя: исход считается, когда действия кончились (finishLastChance), «сдаться» —
 //    сразу провал (onLastChanceButton). Задача: best > goal (isLastChanceGoalMet, lastChance.ts).
 //  • Победа: чемодан платит долг, фишки целы, билета нет, счёт −1 (winLastChance). Провал: первое за забег —
 //    «второе дыхание» (счёт −1, магазин), второе — KABOOM (failLastChance).
+//  • Докупка действия (шаг 14): докупать можно только когда бесплатные действия кончились и цель не взята — одно
+//    правило lastChance.ts: lastChanceBuyVerdict (early/ok/limit/poor/hopeless), своих копий условия здесь нет.
+//    Цена — lastChanceBuyPrice, не больше LAST_CHANCE_BUY_MAX докупок, цель после покупки пересчитывается тем же
+//    lastChanceGoal. Бот сразу тратит купленное действие, поэтому каждый шаг цикла докупки снова начинается с нуля.
+//    Ручки: SIM_LC_BUY=0, SIM_LC_BUY_MAX/START/STEP/MAX_SHARE, SIM_LC_BUY_GOAL=frozen (см. ниже).
 //
 // ПОЛИТИКА (объявлена явно, это выбор игрока, а не правило игры):
 //  • жадная: на каждом шаге берём действие с наибольшей вероятностью побить цель. Для перекрута вероятность оценивается
@@ -45,6 +51,44 @@ export const SIM_SEED = Number(process.env.SIM_SEED ?? 20261113);
  */
 export const SHARE = Number(process.env.SIM_LC_SHARE ?? LC.LAST_CHANCE_GOAL_SHARE);
 if (!Number.isFinite(SHARE) || SHARE <= 0) throw new Error(`SIM_LC_SHARE должен быть положительным числом, получено «${process.env.SIM_LC_SHARE}»`);
+
+/**
+ * Ручки докупки (шаг 14). Числа — из lastChance.ts; SIM_LC_BUY_* подменяют их для замера цены без правки кода.
+ * SIM_LC_BUY=0 — докупок нет (эталон шага 13). Невалидное число — падаем сразу, а не считаем молча с NaN.
+ */
+function envNumber(name, fallback, { integer = false, min = 0 } = {}) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < min || (integer && !Number.isInteger(value))) {
+    throw new Error(`${name} должно быть ${integer ? 'целым ' : ''}числом не меньше ${min}, получено «${raw}»`);
+  }
+  return value;
+}
+
+/** Докупки включены: SIM_LC_BUY=0 их выключает (замер «как до шага 14»). */
+export const BUY_ON = (() => {
+  const raw = process.env.SIM_LC_BUY;
+  if (raw === undefined || raw === '' || raw === '1') return true;
+  if (raw === '0') return false;
+  throw new Error(`SIM_LC_BUY должен быть 0 или 1, получено «${raw}»`);
+})();
+
+/** Числа докупки одним объектом — их и зовут чистые функции lastChance.ts. */
+export const BUY_RULES = {
+  max: envNumber('SIM_LC_BUY_MAX', LC.LAST_CHANCE_BUY_MAX, { integer: true, min: 1 }),
+  start: envNumber('SIM_LC_BUY_START', LC.LAST_CHANCE_BUY_SHARE_START),
+  step: envNumber('SIM_LC_BUY_STEP', LC.LAST_CHANCE_BUY_SHARE_STEP),
+  maxShare: envNumber('SIM_LC_BUY_MAX_SHARE', LC.LAST_CHANCE_BUY_SHARE_MAX, { min: Number.MIN_VALUE }),
+};
+
+/** SIM_LC_BUY_GOAL=frozen — диагностика: цель после докупки не растёт (не правило игры, а замер). */
+export const BUY_GOAL_FROZEN = (() => {
+  const raw = process.env.SIM_LC_BUY_GOAL;
+  if (raw === undefined || raw === '') return false;
+  if (raw === 'frozen') return true;
+  throw new Error(`SIM_LC_BUY_GOAL знает только «frozen», получено «${raw}»`);
+})();
 
 const cloneGrid = (grid) => grid.map((line) => line.slice());
 
@@ -133,25 +177,61 @@ function applyAction(grid, action, weight) {
 }
 
 /**
- * Играет последний шанс по жадной политике. Возвращает { won, goal, goalFull, actions, instant, firstWin }.
+ * Играет последний шанс по жадной политике. Возвращает { won, goal, goalFull, actions, instant, firstWin, bought, paid }.
  * Цель считается от денег: need — сколько фишек не хватило, streak — множитель серии, factor — множители выигрыша
- * (амулеты и автомат, как в addToPot). Действий всегда LAST_CHANCE_ACTIONS: игра не даёт проверить исход раньше
+ * (амулеты и автомат, как в addToPot). Сначала действий LAST_CHANCE_ACTIONS: игра не даёт проверить исход раньше
  * (после первого действия полоса ждёт второго), поэтому и политика делает оба. firstWin — цель была побита уже
  * после первого действия (диагностика). instant — входная сетка уже бьёт цель: победа сразу, полоса не открывается.
  * goalFull — та же цель при share = 1, для сравнения с прежним ориентиром «закрой весь долг».
+ * Докупка (шаг 14): действия кончились и цель не взята — бот покупает ещё действие, если так решила чистая
+ * функция lastChance.ts (lastChanceBuyVerdict: действия кончились 'ok', не больше max, не дороже банка,
+ * не при цели у потолка). Цена — lastChanceBuyPrice от balance; после покупки баланс меньше, цель пересчитывается
+ * тем же lastChanceGoal: нехватка выросла ровно на заплаченное. Купленное действие тратится сразу, и следующий
+ * шаг цикла снова начинается с нуля действий (иначе движок покупки в игре не даст — раннее состояние 'early').
+ * Возвращает bought и paid за шанс.
  */
-export function playLastChance({ round, diceDrought, need, streak = 1, factor = 1, share = SHARE, samples = GREEDY_SAMPLES }) {
+export function playLastChance({
+  round,
+  diceDrought,
+  need,
+  streak = 1,
+  factor = 1,
+  share = SHARE,
+  samples = GREEDY_SAMPLES,
+  balance = 0,
+  rules = BUY_RULES,
+}) {
   const weight = cleanWeight(round, diceDrought);
   let grid = R.spinGrid(weight);
-  const goal = moneyGoal(need, round, streak, factor, share);
+  let goal = moneyGoal(need, round, streak, factor, share);
   const goalFull = fullGoal(need, round, streak, factor);
-  if (isGoalMet(grid, goal)) return { won: true, goal, goalFull, actions: 0, instant: true, firstWin: true };
+  if (isGoalMet(grid, goal)) {
+    return { won: true, goal, goalFull, actions: 0, instant: true, firstWin: true, bought: 0, paid: 0 };
+  }
   let firstWin = false;
+  let actions = 0;
+  let actionsLeft = LC.LAST_CHANCE_ACTIONS;
   for (let step = 0; step < LC.LAST_CHANCE_ACTIONS; step++) {
     grid = applyAction(grid, chooseAction(grid, goal, weight, samples), weight);
+    actions += 1;
+    actionsLeft -= 1;
     if (step === 0) firstWin = isGoalMet(grid, goal);
   }
-  return { won: isGoalMet(grid, goal), goal, goalFull, actions: LC.LAST_CHANCE_ACTIONS, instant: false, firstWin };
+  let bought = 0;
+  let paid = 0;
+  let bank = balance;
+  // Докупки: только когда действия кончились — решает lastChanceBuyVerdict (раннее состояние 'early' покупку не пускает).
+  while (BUY_ON && !isGoalMet(grid, goal) && LC.lastChanceBuyVerdict(actionsLeft, bought, bank, goal, rules) === 'ok') {
+    const price = LC.lastChanceBuyPrice(bank, bought, rules);
+    bank -= price;
+    paid += price;
+    bought += 1;
+    if (!BUY_GOAL_FROZEN) goal = moneyGoal(need + paid, round, streak, factor, share);
+    grid = applyAction(grid, chooseAction(grid, goal, weight, samples), weight);
+    actions += 1;
+    actionsLeft = Math.max(0, actionsLeft - 1); // купленное действие израсходовано
+  }
+  return { won: isGoalMet(grid, goal), goal, goalFull, actions, instant: false, firstWin, bought, paid };
 }
 
 /** Нижняя граница: ничего не делать — побеждает, только если входная сетка уже бьёт цель. */

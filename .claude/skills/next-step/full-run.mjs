@@ -16,6 +16,10 @@
 //                        по умолчанию — числа игры, эти ручки замеряют другую цену без правки items.ts
 //   SIM_TICKETS_PER_SHOP=<целое ≥ 0> — сколько билетов можно купить за один заход в магазин (правило игры
 //                        items.TICKETS_PER_SHOP); 0 — без потолка; по умолчанию — потолок игры
+//   SIM_LC_BUY=0       — без докупки действия в последнем шансе (эталон шага 13 для сравнения баланса)
+//   SIM_LC_BUY_MAX / _START / _STEP / _MAX_SHARE — числа докупки (lastChance.ts: 3 докупки, доли 0,25/0,15/0,55);
+//                        это ручки замера, по умолчанию — числа игры
+//   SIM_LC_BUY_GOAL=frozen — диагностика: цель после докупки не растёт (не правило игры, а замер)
 //   SIM_SKULL_SHARE=constant — старая доля черепов (26/121 ≈ 0,215) вместо роста 18→30% по раундам (замечание 19)
 //   SIM_PHASE_STEP=2 — старый шаг множителя в фазе 2 (+1 к шагу); без него в фазе 2 шаг 1 (×1, ×2, ×3)
 //   SIM_PHASE_SPINS=0 — фаза 2 без +1 прокрутки (как до замечания 19)
@@ -78,7 +82,7 @@
 // растягивало забег; долю можно переопределить без правки кода: SIM_LC_SHARE=0.2|0.5|1. Диагноз с числами
 // печатает SIM_ROUNDS=1; подробно — HANDOFF.md, «Симулятор».
 import { fileURLToPath } from 'node:url';
-import { chanceReport, playLastChance, roundReport, SHARE } from './last-chance-sim.mjs';
+import { BUY_GOAL_FROZEN, BUY_ON, BUY_RULES, chanceReport, playLastChance, roundReport, SHARE } from './last-chance-sim.mjs';
 
 const SRC = process.env.SIM_SRC ?? fileURLToPath(new URL('../../../src/game/', import.meta.url));
 // lastChance.ts нужен здесь для потолка цели (BEST_WITHOUT_JACKPOT) в сводке; правила цели — в last-chance-sim.
@@ -127,7 +131,8 @@ const AMULET_POWER = { bones: 5.39, boost: 5.11, interest: 5.09, insurance: 5.02
 const ITEM_ORDER = ['garlic', 'triple', 'cigarette', 'shield', 'cherries', 'bells', 'diamonds', 'luck', 'shuffle', 'swap', 'risk', 'hammer', 'candle', 'luckSpin'];
 // Модель времени: сколько секунд занимает действие на экране. Числа не из игры — это оценка, для «минут забега».
 // lastChance — весь эпизод: GOOD LUCK, чистая прокрутка, два действия, чемодан; secondWind — пауза перед магазином.
-const SECONDS = { spin: 2.5, take: 1, dealer: 6, collector: 2.5, shop: 10, rewind: 5, rec: 1, lastChance: 12, secondWind: 2 };
+// lastChanceBuy — одна докупка действия (шаг 14): столько стоит игроку ещё одна прокрутка по времени.
+const SECONDS = { spin: 2.5, take: 1, dealer: 6, collector: 2.5, shop: 10, rewind: 5, rec: 1, lastChance: 12, lastChanceBuy: 2, secondWind: 2 };
 
 // ---------- Диагностика замечания 19: старые правила против новых ----------
 // Доля черепов до правки была постоянной, а фаза 2 множила её вес и росла множителем. Теперь доля растёт по раундам,
@@ -1153,19 +1158,26 @@ function collector(s, g) {
   const need = s.debt - s.balance;
   const streak = multiplier(s);
   const factor = A.winFactor(ids(s), s.bones) * M.machineWinFactor(s.machineId) * D.pactEffects(s.pacts, s.round).winMul;
-  const lastChance = playLastChance({ round: s.round, diceDrought: s.diceDrought, need, streak, factor });
+  const lastChance = playLastChance({ round: s.round, diceDrought: s.diceDrought, need, streak, factor, balance: s.balance });
   g.lastChances += 1;
   g.lcActions += lastChance.actions;
+  // Докупка действия (шаг 14) платится фишками на руках: банк уменьшается ровно на заплаченное.
+  if (lastChance.paid > 0) s.balance -= lastChance.paid;
+  g.lcBuys += lastChance.bought;
+  g.lcPaid += lastChance.paid;
+  g.time += SECONDS.lastChanceBuy * lastChance.bought;
   if (lastChance.instant) g.instantWins += 1;
   if (lastChance.firstWin && !lastChance.instant) g.firstActionWins += 1; // цель была побита уже после первого действия
   if (lastChance.firstWin && !lastChance.won) g.firstWinLost += 1; // второе действие снесло уже собранную победу
   g.time += SECONDS.lastChance;
   // Кривая для study(): где случался шанс, какая цель вышла из нехватки и побили ли её. goal — по правилу игры
   // (доля LAST_CHANCE_GOAL_SHARE), goalFull — та же цель при share = 1 («закрой весь долг»), для сравнения.
+  // bought/paid — докупка шага 14: сколько действий куплено за шанс и сколько фишек за них отдано.
   g.collectorSamples.push({
     round: s.round, debt: s.debt, balance: s.balance, diceDrought: s.diceDrought,
     goal: lastChance.goal, goalFull: lastChance.goalFull, won: lastChance.won, actions: lastChance.actions,
     instant: lastChance.instant, firstWin: lastChance.firstWin, need, streak, factor,
+    bought: lastChance.bought, paid: lastChance.paid,
   });
   if (lastChance.won) { g.survived += 1; return 'survived'; }
   if (s.secondWindLeft <= 0) { g.dead += 1; return 'dead'; } // запасы кончились — KABOOM
@@ -1188,7 +1200,7 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon()) {
   const g = {
     time: 0, tape: 'forSale', record: null, recordCounters: null, tapesBought: 0, tapeClosedAtBuy: 0, recs: 0, rewinds: 0,
     illegalRewinds: 0, maxClosed: 0, collectorSamples: [],
-    lastChances: 0, survived: 0, secondWind: 0, dead: 0, instantWins: 0, firstActionWins: 0, firstWinLost: 0, lcActions: 0, attempts: 0, // последний шанс (шаг 68б)
+    lastChances: 0, survived: 0, secondWind: 0, dead: 0, instantWins: 0, firstActionWins: 0, firstWinLost: 0, lcActions: 0, lcBuys: 0, lcPaid: 0, attempts: 0, // последний шанс (шаг 68б) и докупка (шаг 14)
     freeSpinsGiven: 0, freeInRound: 0, freeMax: 0, crownEvents: 0, guardStops: 0, // бесплатные прокрутки: счётчик предохранителя, за раунд, максимум за раунд, срабатывания предохранителя
     shuffleUsed: 0, swapUsed: 0, // перемешка и подмена (шаг 63б): сколько раз применили
     normalSpins: 0, spins: 0, paidSpins: 0, // прокрутки: платные (заряд один на забег) и всего
@@ -1262,6 +1274,10 @@ export function summarizeRuns(runs) {
   // Цель последнего шанса: медиана по всем приходам Коллектора (goal) и та же цель при share = 1 (goalFull).
   const samples = runs.flatMap((r) => r.collectorSamples);
   const goalAtCap = samples.filter((sample) => sample.goal >= LC.BEST_WITHOUT_JACKPOT).length / Math.max(samples.length, 1);
+  // Докупка действия (шаг 14): где бот её брал и как часто такие шансы спасались — против шансов без докупки.
+  const boughtSamples = samples.filter((sample) => sample.bought > 0);
+  const freeSamples = samples.filter((sample) => !(sample.bought > 0));
+  const rescueOf = (list) => (list.length ? list.filter((sample) => sample.won).length / list.length : 0);
   const violations = {};
   const safeguards = {};
   for (const run of runs) {
@@ -1296,6 +1312,10 @@ export function summarizeRuns(runs) {
     dead: mean((r) => r.dead), instantWins: mean((r) => r.instantWins), lcActions: mean((r) => r.lcActions),
     attempts: mean((r) => r.attempts), attemptsMedian: medianOf(runs.map((r) => r.attempts)), // попыток раунда за забег
     firstActionWins: mean((r) => r.firstActionWins), firstWinLost: mean((r) => r.firstWinLost),
+    // Докупка действия (шаг 14): сколько куплено за забег, сколько фишек заплачено, сколько шансов с ней и без.
+    lcBuys: mean((r) => r.lcBuys), lcPaid: mean((r) => r.lcPaid),
+    buyChances: boughtSamples.length, buyChanceShare: boughtSamples.length / Math.max(samples.length, 1),
+    buyRescue: rescueOf(boughtSamples), noBuyRescue: rescueOf(freeSamples),
     rescue: runs.reduce((a, r) => a + r.survived, 0) / Math.max(runs.reduce((a, r) => a + r.lastChances, 0), 1),
     rescuePerRun: mean((r) => (r.lastChances > 0 ? r.survived / r.lastChances : 0)), // среднее по забегам от долей: короче забег — сильнее вес
     instantShare: mean((r) => (r.lastChances > 0 ? r.instantWins / r.lastChances : 0)),
@@ -1379,6 +1399,8 @@ export function report(name, x) {
   const chips = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
   console.log(`${name.padEnd(44)} в конце ${f(x.closed)} (мед ${x.median}), пик ${f(x.peak)} (среднее максимумов по забегам), 1-й ${pct(x.first)}, 10+ ${pct(x.ten)}, после 5-го раунда без долгов ${pct(x.flop5)}, рекорд ${x.best} | ${f(x.minutes, 1)} мин (мед ${f(x.minutesMedian, 1)}, >10 ${pct(x.over10)}) | попыток раунда ${f(x.attempts, 1)} (мед ${x.attemptsMedian}), магазинов ${f(x.shops, 1)}, прокруток ${f(x.spins, 0)} (платных ${f(x.paidSpins, 0)}), макс. за раунд ${f(x.maxRoundSpins, 0)} (больше потолка в ${pct(x.overCap)} раундов) | кассет ${f(x.tapesBought)} (берут ${pct(x.bought)}), откатов ${f(x.rewinds)} | множитель 1-й прокрутки ${f(x.firstSpinMult)}, упёрлись в 400 раундов ${pct(x.guard)} | сид ${SEED ?? '—'} | нарушений ${f(sum(Object.values(x.violations)), 0)}, страховок ${f(sum(Object.values(x.safeguards)), 0)}`);
   console.log(`${''.padEnd(44)} последний шанс: шансов ${f(x.lastChances)} за забег (не было у ${pct(x.noChance)}), спасено ${pct(x.rescue)} (${f(x.survived)} из ${f(x.lastChances)}; среднее по забегам ${pct(x.rescuePerRun)}), мгновенных ${pct(x.instantShare)}, цель мед ×${f(x.goalMedian, 1)} (полная нехватка ×${f(x.goalFullMedian, 1)}, у потолка ×10 — ${pct(x.goalAtCap)}), цель побита после 1-го действия ${pct(x.firstActionWins / Math.max(x.lastChances, 1e-9))} (в т.ч. позже снесена ${pct(x.firstWinLost / Math.max(x.lastChances, 1e-9))}), второе дыхание ${f(x.secondWind)} (макс ${x.secondWindMax}), KABOOM ${f(x.dead)}, действий на шанс ${f(x.lcActions / Math.max(x.lastChances, 1e-9), 1)}, доля цели ${f(SHARE, 2)}`);
+  // Докупка действия (шаг 14): сколько куплено и почём, и спасаются ли такие шансы чаще обычных.
+  console.log(`${''.padEnd(44)} докупка действия: ${f(x.lcBuys)} за забег (заплачено ${chips(x.lcPaid)} фишек), шансов с докупкой ${x.buyChances} (${pct(x.buyChanceShare)}), спасено с докупкой ${pct(x.buyRescue)} / без ${pct(x.noBuyRescue)} | докупок ${BUY_RULES.max}, доли ${f(BUY_RULES.start, 2)}/${f(BUY_RULES.step, 2)}/${f(BUY_RULES.maxShare, 2)}${BUY_ON ? '' : ', выключена'}${BUY_GOAL_FROZEN ? ', цель заморожена' : ''}`);
   console.log(`${''.padEnd(44)} билеты: за долг ${f(x.ticketIncome.debt)}, ранняя оплата ${f(x.ticketIncome.early)}, 🎟×3 ${f(x.ticketIncome.scatter)}, джекпот ${f(x.ticketIncome.jackpot)}, барабан ${f(x.ticketIncome.drum)}, сделка ${f(x.ticketIncome.pact)} | сделок взято ${f(x.pactsTaken)}, отказов ${f(x.pactsRefused)}, магазинов закрыто сделкой ${f(x.shopsClosed)} | по видам (за забег): ${PACT_SHORT.map(([id, name]) => `${name} ${f(x.pactsById[id])}`).join(', ')} | вторых забираний ${f(x.doubleTakes)}, амулетов по сделке ${f(x.amuletsFree)} | автомат: смен ${f(x.machineSwaps, 0)} | куплено: амулетов ${f(x.amulets)}, гнёзд ${f(x.sockets)}, предметов ${f(x.items)}, мест ${f(x.slots)}, прокруток барабана ${f(x.drumSpins)}, ранних оплат ${f(x.paidEarly)} | отказов по местам ${f(x.itemSlotsDenied)} | билетов куплено ${f(x.ticketsBought)} за забег | активных куплено ${f(x.activesBought)}, нажатий ${f(x.amuletPresses)} (${A.AMULETS.filter(A.isActive).map((amulet) => `${amulet.id} ${f(x.pressesById[amulet.id])}`).join(', ')}) | фриспины до ${f(x.freeMax, 1)} за раунд, предохранитель ${B.FREE_SPINS_GUARD} срезал ${f(x.guardStops)} раз (у ${pct(x.guardRuns)} забегов) | заряд замаха ${f(CHARGE, 2)}`);
   // Строка цели: в SIM_CHASE_RECORD=1 к ней добавляется вторая ступень — 10 000 000 и кто до неё дошёл.
   const recordLine = CHASE_RECORD

@@ -517,7 +517,7 @@ export class GameScene extends CollectorScene {
   /**
    * Пробел: на паузе — продолжить, в окне перемешки — пропустить его, у монитора — назад к автомату,
    * в магазине — назад к автомату, в игре — дёрнуть рычаг, после проигрыша — «заново» (через 0,8 с).
-   * В последнем шансе пробел ничего не делает: там действуют клавиши 1–4 и мышь (onLastChanceKey).
+   * В последнем шансе пробел ничего не делает: там действуют клавиши 1–5 и мышь (onLastChanceKey).
    */
   private onSpace(): void {
     if (this.isPaused) this.resumeGame();
@@ -554,18 +554,18 @@ export class GameScene extends CollectorScene {
       this.cancelChargeNow();
       return;
     }
-    if (this.isLastChance) this.onLastChanceKey(index); // в последнем шансе клавиши 1–4 — кнопки полосы
+    if (this.isLastChance) this.onLastChanceKey(index); // в последнем шансе клавиши 1–5 — кнопки полосы
     else if (this.isShopping) this.onShopNumber(index);
     else if (index === TAPE_KEY) this.useTape();
     else if (index < MAX_SLOTS) this.useItem(index);
   }
 
   /**
-   * Клавиша 1–4 в последнем шансе: 1 — заморозка, 2 — перекрут, 3 — джокер, 4 — сдаться.
+   * Клавиша 1–5 в последнем шансе: 1 — заморозка, 2 — перекрут, 3 — джокер, 4 — сдаться, 5 — докупить действие.
    * Столбец и клетку выбирают мышью: на сетке кликают, это не клавиатура.
    */
   private onLastChanceKey(index: number): void {
-    const actions: LastChanceAction[] = ['freeze', 'reroll', 'joker', 'surrender'];
+    const actions: LastChanceAction[] = ['freeze', 'reroll', 'joker', 'surrender', 'buy'];
     const action = actions[index];
     if (action) this.onLastChanceButton(action);
   }
