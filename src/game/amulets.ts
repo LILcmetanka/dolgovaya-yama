@@ -19,10 +19,15 @@ export type AmuletId =
   | 'interest'
   | 'bones'
   | 'skullPocket'
-  | 'greed';
+  | 'greed'
+  | 'charm'
+  | 'sight';
 
 /** Редкость: от неё цена и цвет ободка. Проклятый — сильный плюс с минусом. */
 export type Rarity = 'common' | 'rare' | 'legendary' | 'cursed';
+
+/** Вид амулета: пассивный действует сам, пока стоит в гнезде; активный включает клик и тратит заряд. */
+export type AmuletKind = 'passive' | 'active';
 
 export interface Amulet {
   id: AmuletId;
@@ -32,6 +37,8 @@ export interface Amulet {
   rarity: Rarity;
   maxCopies: number; // сколько копий можно купить (потолок стакинга)
   price?: number; // цена в билетах; нет — по редкости (AMULET_PRICES)
+  kind?: AmuletKind; // нет поля — пассивный
+  usesPerRound?: number; // активный: сколько зарядов в раунде; нет — один
 }
 
 /**
@@ -147,6 +154,27 @@ export const AMULETS: Amulet[] = [
     rarity: 'cursed',
     maxCopies: 2,
   },
+  // Активные: стоят в отдельном гнезде справа от ряда пассивных, эффект включает клик по значку (шаг 12б).
+  {
+    id: 'charm', sign: '🧿',
+    name: { ru: 'Оберег', en: 'Charm' },
+    description: { ru: 'Раз в раунд: до конца раунда черепа реже на 3 п.п.', en: 'Once a round: skulls 3 pp rarer until the round ends' },
+    rarity: 'common',
+    maxCopies: 1,
+    price: 2,
+    kind: 'active',
+    usesPerRound: 1,
+  },
+  {
+    id: 'sight', sign: '🎯',
+    name: { ru: 'Прицел', en: 'Sight' },
+    description: { ru: 'Раз в раунд: +2 прокрутки в этом раунде', en: 'Once a round: +2 spins this round' },
+    rarity: 'rare',
+    maxCopies: 1,
+    price: 3,
+    kind: 'active',
+    usesPerRound: 1,
+  },
 ];
 
 /** Гнёзда для амулетов на корпусе. */
@@ -172,6 +200,21 @@ export function countOf(counts: AmuletCounts, id: AmuletId): number {
 /** Добавить одну копию амулета id (мутация счётчика). */
 export function addCopy(counts: AmuletCounts, id: AmuletId): void {
   counts[id] = countOf(counts, id) + 1;
+}
+
+/** Активный амулет: у него своё гнездо справа от ряда пассивных, а эффект включает клик по значку. */
+export function isActive(amulet: Amulet): boolean {
+  return amulet.kind === 'active';
+}
+
+/** Активный амулет игрока: гнездо одно, поэтому первый активный с копиями. Нет такого — null. */
+export function activeAmuletOf(counts: AmuletCounts): Amulet | null {
+  return AMULETS.find((amulet) => isActive(amulet) && countOf(counts, amulet.id) > 0) ?? null;
+}
+
+/** Сколько зарядов у активного амулета в раунде (usesPerRound; нет поля — один). */
+export function activeUses(amulet: Amulet): number {
+  return amulet.usesPerRound ?? 1;
 }
 
 /**
@@ -218,9 +261,16 @@ export function socketPrice(sockets: number, mul = 1): number | null {
   return ticketPrice(SOCKET_PRICES[sockets - START_SOCKETS], mul);
 }
 
-/** Что в витрине амулетов: AMULET_OFFER_SIZE разных случайных амулетов, которых ещё можно докупить (копий меньше потолка). */
-export function randomAmuletOffer(owned: AmuletId[]): Amulet[] {
-  const pool = AMULETS.filter((amulet) => copiesOf(owned, amulet.id) < amulet.maxCopies);
+/**
+ * Что в витрине амулетов: AMULET_OFFER_SIZE разных случайных амулетов, которых ещё можно докупить (копий меньше потолка).
+ * Активные не попадают в оффер, если у игрока уже есть активный: гнездо под него одно.
+ * isAllowed — какие амулеты вообще брать: сделка №13 берёт только пассивные (у активных своя покупка в витрине).
+ */
+export function randomAmuletOffer(owned: AmuletId[], isAllowed: (amulet: Amulet) => boolean = () => true): Amulet[] {
+  const hasActive = AMULETS.some((amulet) => isActive(amulet) && copiesOf(owned, amulet.id) > 0);
+  const pool = AMULETS.filter(
+    (amulet) => copiesOf(owned, amulet.id) < amulet.maxCopies && isAllowed(amulet) && !(hasActive && isActive(amulet)),
+  );
   const offer: Amulet[] = [];
   while (offer.length < AMULET_OFFER_SIZE && pool.length > 0) {
     const index = Math.floor(Math.random() * pool.length);

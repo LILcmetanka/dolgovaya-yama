@@ -1,8 +1,15 @@
 import Phaser from 'phaser';
-import { amuletTexture, createAmuletTextures, createSocketCapTexture, SOCKET_CAP_TEXTURE } from '../decor';
-import { AMULETS, countOf, MAX_SOCKETS, type Amulet, type AmuletCounts, type AmuletId } from '../amulets';
+import {
+  ACTIVE_SOCKET_CAP_TEXTURE,
+  amuletTexture,
+  createActiveSocketCapTexture,
+  createAmuletTextures,
+  createSocketCapTexture,
+  SOCKET_CAP_TEXTURE,
+} from '../decor';
+import { AMULETS, countOf, isActive, MAX_SOCKETS, type Amulet, type AmuletCounts, type AmuletId } from '../amulets';
 import { t } from '../lang';
-import { AMULET_SIZE, SOCKET_RADIUS, SOCKET_XS, SOCKET_Y } from '../layout';
+import { ACTIVE_SOCKET_X, ACTIVE_SOCKET_Y, AMULET_SIZE, SOCKET_RADIUS, SOCKET_XS, SOCKET_Y } from '../layout';
 import { addText, GOLD_TEXT, POPUP_DEPTH } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
@@ -14,10 +21,12 @@ const TRIGGER_TIME = 140; // амулет сработал: подпрыгива
 const TRIGGER_SCALE = 1.35;
 const COPY_LABEL_DX = SOCKET_RADIUS; // метка «×N» — настолько левее центра гнезда, чтобы не столкнуться с «+N%»
 const COPY_LABEL_UP = 10; // и настолько выше подписи коллекционера костей (bonesLabel)
+const SPENT_ALPHA = 0.35; // заряд активного амулета кончился: значок тускнеет, пока не начнётся новый раунд
 
 /**
  * Гнёзда для амулетов на верхушке корпуса, по три слева и справа от табло.
  * Закрытые — с заглушками. Амулет в гнезде подпрыгивает, когда срабатывает; при наведении — подсказка.
+ * Отдельно справа от ряда — одно гнездо активного амулета: янтарное, с меткой зарядов (шаг 12а).
  */
 export class AmuletRack {
   private readonly scene: Phaser.Scene;
@@ -27,12 +36,18 @@ export class AmuletRack {
   private counts: AmuletCounts = {}; // сколько копий каждого амулета (шаг 62б: дубли не занимают гнёзда)
   private readonly copyLabels: Phaser.GameObjects.Text[] = []; // «×N» под гнездом: сколько копий (видна от двух)
   private readonly bonesLabel: Phaser.GameObjects.Text; // коллекционер костей: «+45%» под его гнездом
+  private readonly activeCap: Phaser.GameObjects.Image; // заглушка пустого гнезда активного амулета
+  private readonly activeBadge: Phaser.GameObjects.Image; // активный амулет в своём гнезде
+  private readonly activeUsesLabel: Phaser.GameObjects.Text; // сколько зарядов осталось — мелким шрифтом у гнезда
+  private active: Amulet | null = null; // какой активный амулет стоит (гнездо одно)
+  private activeLeft = 0; // зарядов в этом раунде
 
   /** sockets — сколько гнёзд открыто в начале. */
   constructor(scene: Phaser.Scene, sockets: number, hint: Hint) {
     this.scene = scene;
     createAmuletTextures(scene, AMULETS, AMULET_SIZE);
     createSocketCapTexture(scene, SOCKET_RADIUS);
+    createActiveSocketCapTexture(scene, SOCKET_RADIUS);
     for (let index = 0; index < MAX_SOCKETS; index++) {
       const x = SOCKET_XS[index];
       const badge = scene.add.image(x, SOCKET_Y, amuletTexture(AMULETS[0])).setVisible(false);
@@ -55,6 +70,21 @@ export class AmuletRack {
         }).setOrigin(0.5).setVisible(false),
       );
     }
+    // Гнездо активного амулета: пустое — янтарная заглушка, занятое — значок амулета и метка зарядов.
+    this.activeBadge = scene.add.image(ACTIVE_SOCKET_X, ACTIVE_SOCKET_Y, amuletTexture(AMULETS[0])).setVisible(false);
+    this.activeBadge.setInteractive();
+    attachHint(this.activeBadge, hint, () => this.activeHint());
+    this.activeCap = scene.add.image(ACTIVE_SOCKET_X, ACTIVE_SOCKET_Y, ACTIVE_SOCKET_CAP_TEXTURE);
+    this.activeCap.setInteractive();
+    attachHint(this.activeCap, hint, () => [t('activeSocketEmpty'), t('activeAmuletHow')]);
+    // Метка зарядов — под гнездом, как «×N» у пассивных: копий у активного не бывает, поэтому по центру.
+    this.activeUsesLabel = addText(scene, ACTIVE_SOCKET_X, ACTIVE_SOCKET_Y + SOCKET_RADIUS + 3, '', {
+      fontSize: '12px',
+      fontStyle: 'bold',
+      color: GOLD_TEXT,
+      stroke: '#000000',
+      strokeThickness: 3,
+    }).setOrigin(0.5).setVisible(false);
     // «+N%» — под гнездом, над стеклом с паттернами (табло опустилось — стекло ближе к гнёздам).
     this.bonesLabel = addText(scene, 0, SOCKET_Y + SOCKET_RADIUS + 4, '', {
       fontSize: '12px',
@@ -72,6 +102,13 @@ export class AmuletRack {
     const copies = countOf(this.counts, amulet.id);
     const name = copies > 1 ? `${t(amulet.name)} ×${copies}` : t(amulet.name);
     return [name, t(amulet.description)];
+  }
+
+  /** Подсказка активного амулета: название, что делает и сколько зарядов осталось в раунде. */
+  private activeHint(): [string, string] | null {
+    const amulet = this.active;
+    if (!amulet) return null;
+    return [t(amulet.name), `${t(amulet.description)}\n${t('activeUsesLeft', this.activeLeft)}`];
   }
 
   /** Обновить метки «×N» под гнёздами: одна на гнездо, по счётчику, видна со второй копии. */
@@ -114,7 +151,7 @@ export class AmuletRack {
     this.flyToBadge(badge, amuletTexture(amulet), fromX, fromY, () => {
       badge.setTexture(amuletTexture(amulet)).setVisible(true);
       this.refreshCopies();
-      this.bounce(badge);
+      this.bounce(badge, SOCKET_Y);
     });
   }
 
@@ -125,8 +162,53 @@ export class AmuletRack {
     this.counts[amulet.id] = count;
     this.flyToBadge(badge, amuletTexture(amulet), fromX, fromY, () => {
       this.refreshCopies();
-      this.bounce(badge);
+      this.bounce(badge, SOCKET_Y);
     });
+  }
+
+  /**
+   * Купили активный амулет: он летит из (fromX, fromY) в своё гнездо и там встаёт; зарядов — uses.
+   * Без координат — встаёт сразу, без полёта.
+   */
+  putActive(amulet: Amulet, uses: number, fromX?: number, fromY?: number): void {
+    this.active = amulet;
+    this.activeLeft = uses;
+    this.activeCap.setVisible(false); // заглушки больше нет — в гнезде амулет
+    const landed = (): void => {
+      this.activeBadge.setTexture(amuletTexture(amulet)).setVisible(true);
+      this.showActiveUses();
+      this.bounce(this.activeBadge, ACTIVE_SOCKET_Y);
+    };
+    if (fromX === undefined || fromY === undefined) {
+      landed();
+      return;
+    }
+    this.flyToBadge(this.activeBadge, amuletTexture(amulet), fromX, fromY, landed);
+  }
+
+  /** Активный амулет заново, без анимации: так кассета возвращает забег к записи. null — гнездо снова пустое. */
+  setActive(amulet: Amulet | null, uses: number): void {
+    this.active = amulet;
+    this.activeLeft = uses;
+    this.activeCap.setVisible(amulet === null);
+    this.activeBadge.setVisible(amulet !== null);
+    if (amulet) this.activeBadge.setTexture(amuletTexture(amulet));
+    this.showActiveUses();
+  }
+
+  /** Осталось зарядов в раунде: метка у гнезда и затемнение значка, когда заряд кончился. */
+  setActiveUses(uses: number): void {
+    this.activeLeft = uses;
+    this.showActiveUses();
+  }
+
+  /** Метка зарядов у гнезда активного амулета; заряда нет — значок тусклый. */
+  private showActiveUses(): void {
+    const amulet = this.active;
+    this.activeUsesLabel.setVisible(amulet !== null);
+    if (!amulet) return;
+    this.activeUsesLabel.setText(String(this.activeLeft));
+    this.activeBadge.setAlpha(this.activeLeft > 0 ? 1 : SPENT_ALPHA);
   }
 
   /**
@@ -152,11 +234,15 @@ export class AmuletRack {
     });
   }
 
-  /** Амулеты по гнёздам заново, без анимации: так бывает, когда кассета вернула забег к записи. counts — счётчики копий. */
+  /**
+   * Амулеты по гнёздам заново, без анимации: так бывает, когда кассета вернула забег к записи. counts — счётчики копий.
+   * Активные сюда не попадают: у них своё гнездо — его ставит setActive.
+   */
   setAmulets(amulets: Amulet[], counts: AmuletCounts): void {
     this.counts = { ...counts };
+    const passive = amulets.filter((amulet) => !isActive(amulet));
     this.badges.forEach((badge, index) => {
-      const amulet = amulets[index] ?? null;
+      const amulet = passive[index] ?? null;
       this.amulets[index] = amulet;
       badge.setVisible(amulet !== null);
       if (amulet) badge.setTexture(amuletTexture(amulet));
@@ -168,7 +254,7 @@ export class AmuletRack {
   /** Амулет сработал: подпрыгивает его гнездо (у каждого амулета оно одно). */
   trigger(id: AmuletId): void {
     const index = this.amulets.findIndex((amulet) => amulet?.id === id);
-    if (index >= 0) this.bounce(this.badges[index]);
+    if (index >= 0) this.bounce(this.badges[index], SOCKET_Y);
   }
 
   /** Коллекционер костей: под его гнездом — сколько он уже прибавляет к выигрышам. */
@@ -178,10 +264,10 @@ export class AmuletRack {
     if (index >= 0) this.bonesLabel.setX(SOCKET_XS[index]).setText(`+${percent}%`);
   }
 
-  /** Подскок с увеличением. */
-  private bounce(badge: Phaser.GameObjects.Image): void {
+  /** Подскок с увеличением; baseY — собственный базовый Y значка (пассивное гнездо и активное стоят на разной высоте). */
+  private bounce(badge: Phaser.GameObjects.Image, baseY: number): void {
     this.scene.tweens.killTweensOf(badge);
-    badge.setScale(1).setY(SOCKET_Y);
-    this.scene.tweens.add({ targets: badge, scale: TRIGGER_SCALE, y: SOCKET_Y - 4, duration: TRIGGER_TIME, yoyo: true, ease: 'Quad.easeOut' });
+    badge.setScale(1).setY(baseY);
+    this.scene.tweens.add({ targets: badge, scale: TRIGGER_SCALE, y: baseY - 4, duration: TRIGGER_TIME, yoyo: true, ease: 'Quad.easeOut' });
   }
 }

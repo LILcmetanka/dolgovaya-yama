@@ -140,6 +140,12 @@ const TEXTS = {
   closedSocketHow: { ru: 'Открывается за билеты в витрине', en: 'Opens for tickets in the showcase' },
   socket: { ru: 'Гнездо', en: 'Socket' },
   socketWhat: { ru: 'Ещё одно место для амулета', en: 'One more place for an amulet' },
+  // Активные амулеты (шаг 12а): у них одно общее гнездо справа от ряда пассивных, а эффект включает клик по значку.
+  activeSocketEmpty: { ru: 'Гнездо активного амулета', en: 'Active amulet socket' },
+  activeAmulet: { ru: 'АКТИВНЫЙ', en: 'ACTIVE' },
+  activeUsesLeft: { ru: 'зарядов: {0}', en: 'charges: {0}' },
+  activeSlotBusy: { ru: 'В активном гнезде уже стоит амулет', en: 'The active slot is taken' },
+  activeAmuletHow: { ru: 'Эффект активного амулета включает клик по значку', en: 'An active amulet works when you click its icon' },
   ticket: { ru: 'Билет', en: 'Ticket' }, // без эмодзи 🎟: билет в игре — одна красная картинка (decor.ts)
   ticketWhat: { ru: 'На амулеты и гнёзда', en: 'Buys amulets and sockets' },
   drum: { ru: 'Барабан', en: 'Wheel' }, // колесо в магазине

@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import type { AchievementId } from './achievements';
-import { addCopy, AMULETS, countOf, MAX_SOCKETS, symbolPayout, type AmuletId } from './amulets';
+import { activeAmuletOf, activeUses, addCopy, AMULETS, countOf, isActive, MAX_SOCKETS, symbolPayout, type AmuletId } from './amulets';
 import { drawMachineBody, drawRoom } from './decor';
 import { DEV_CHIPS, DEV_TICKETS } from './devmode';
 import { lang, toggleLang, type Lang } from './lang';
@@ -319,6 +319,8 @@ export class GameScene extends CollectorScene {
   private seeOwned(): void {
     for (const item of this.shelf) if (item) see(itemKey(item.id));
     for (const amulet of this.amulets) see(amuletKey(amulet.id));
+    const active = activeAmuletOf(this.amuletCounts); // активный живёт в своём гнезде, не в этом списке
+    if (active) see(amuletKey(active.id));
   }
 
   /** Закрыть большой экран (клик мимо, ✕, Esc, Пробел, ← или →); снова можно крутить. */
@@ -415,6 +417,20 @@ export class GameScene extends CollectorScene {
   private devGiveAmulet(id: AmuletId): boolean {
     const amulet = AMULETS.find((candidate) => candidate.id === id);
     if (!amulet) return false;
+    // Активный — в своё гнездо: оно одно, второй такой не ставится (шаг 12а).
+    if (isActive(amulet)) {
+      if (activeAmuletOf(this.amuletCounts) !== null) {
+        this.sfx.play('deny');
+        return false;
+      }
+      addCopy(this.amuletCounts, amulet.id);
+      const uses = activeUses(amulet);
+      this.activeUses = uses;
+      this.amuletRack.putActive(amulet, uses, WALL_PANEL.x, WALL_PANEL.y);
+      see(amuletKey(amulet.id));
+      this.sfx.play('item');
+      return true;
+    }
     const socket = this.amulets.findIndex((owned) => owned.id === amulet.id);
     // Вместимость проверяем до addCopy: отказ не должен оставлять след в amuletCounts.
     if (socket < 0 && this.amulets.length >= MAX_SOCKETS) {

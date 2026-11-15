@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { achievementById, earnedAchievements, type AchievementId, type AchievementState } from '../achievements';
-import { amuletIdsFrom, multiplierStep, START_SOCKETS, type Amulet, type AmuletCounts, type AmuletId } from '../amulets';
+import { activeAmuletOf, amuletIdsFrom, activeUses as usesPerRound, multiplierStep, START_SOCKETS, type Amulet, type AmuletCounts, type AmuletId } from '../amulets';
 import { resetCodex } from '../codex';
 import { isDevMode } from '../devmode';
 import type { Pact } from '../dealerGame';
@@ -121,6 +121,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected sockets = 0; // сколько гнёзд для амулетов открыто
   protected amulets: Amulet[] = []; // амулеты в гнёздах, по порядку гнёзд (каждый — уникальный, дубли — счётчиком ниже)
   protected amuletCounts: AmuletCounts = {}; // сколько копий каждого амулета (шаг 62б: копии не занимают гнёзда)
+  protected activeUses = 0; // зарядов активного амулета в этом раунде (гнездо одно; 0 — амулета нет)
   protected amuletOffer: (Amulet | null)[] = []; // что лежит в витрине амулетов; купленное — null
   protected drumSpins = 0; // сколько раз крутил барабан в этом магазине — каждая следующая прокрутка дороже
   protected bones = 0; // сколько паттернов из черепов выпало за забег — для коллекционера костей
@@ -251,6 +252,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.sockets = START_SOCKETS; // гнёзда есть с первого раунда: открываются долгами, а не забегами
     this.amulets = [];
     this.amuletCounts = {};
+    this.activeUses = 0; // новый забег — активных амулетов нет
     this.amuletOffer = [];
     this.drumSpins = 0;
     this.bones = 0;
@@ -503,6 +505,12 @@ export abstract class BaseScene extends Phaser.Scene {
   /** Какие амулеты стоят в гнёздах (с учётом копий) — их правила действуют. */
   protected amuletIds(): AmuletId[] {
     return amuletIdsFrom(this.amuletCounts);
+  }
+
+  /** Заряды активного амулета в начале раунда: полный заряд, если он куплен, иначе 0 (эффекты — шаг 12б). */
+  protected activeCharges(): number {
+    const amulet = activeAmuletOf(this.amuletCounts);
+    return amulet ? usesPerRound(amulet) : 0;
   }
 
   /**

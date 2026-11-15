@@ -15,7 +15,7 @@ import {
   WALL_TV_GLOW,
   WALL_TV_TEXTURE,
 } from '../decor';
-import { AMULETS, type AmuletId } from '../amulets';
+import { AMULETS, isActive, type AmuletId } from '../amulets';
 import { amuletKey, isSeen, itemKey, machineKey, WHO_COLLECTOR, WHO_DEALER } from '../codex';
 import { disableDevMode, DEV_CHIPS, DEV_TICKETS, isDevMode, tryEnableDevMode } from '../devmode';
 import { MACHINES, type MachineId } from '../machines';
@@ -422,7 +422,8 @@ export class WallScreen {
         .map((item) => ({ texture: itemTexture(item), name: t(item.name), description: t(item.description) })),
       ...AMULETS.filter((amulet) => isSeen(amuletKey(amulet.id))).map((amulet) => ({
         texture: amuletTexture(amulet),
-        name: t(amulet.name),
+        // Активный помечен в названии: он работает не сам, а по клику, и стоит в отдельном гнезде (шаг 12а).
+        name: isActive(amulet) ? `${t(amulet.name)} · ${t('activeAmulet')}` : t(amulet.name),
         description: t(amulet.description),
       })),
     ];

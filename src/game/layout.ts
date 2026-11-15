@@ -1,4 +1,4 @@
-import { AMULET_OFFER_SIZE } from './amulets';
+import { AMULET_OFFER_SIZE, MAX_SOCKETS } from './amulets';
 import { GRID_COLUMNS, GRID_ROWS } from './rules';
 
 /**
@@ -78,6 +78,10 @@ export const SOCKET_Y = DISPLAY.y;
 export const SOCKET_RADIUS = 21;
 const SOCKET_OFFSETS = [-158, 158, -204, 204, -250, 250]; // от середины автомата: сначала ближние к табло, потом к краям
 export const SOCKET_XS = SOCKET_OFFSETS.map((offset) => CENTER_X + offset);
+// Отдельное гнездо активного амулета — правее ряда пассивных, встык к кромке корпуса: у него своя янтарная оправа.
+// Гнездо одно, поэтому покупается только один активный амулет.
+export const ACTIVE_SOCKET_X = SOCKET_XS[MAX_SOCKETS - 1] + 30;
+export const ACTIVE_SOCKET_Y = SOCKET_Y;
 export const SPIN_LAMPS_Y = 492; // лампочки прокруток под экраном
 // Значок автомата с характером — на корпусе слева от экрана, между бронзовой окантовкой и рамкой экрана.
 export const MACHINE_BADGE = { x: 305, y: GRID_Y }; // напротив включённых предметов справа (EFFECTS_X)

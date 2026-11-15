@@ -1,7 +1,8 @@
 import { readPacts, SECOND_WIND_MAX } from '../dealerGame';
+import { activeAmuletOf } from '../amulets';
 import { copyEffects } from '../items';
 import { isPatternId } from '../progress';
-import { debtNextMulOf, luckyCloversOf, secondWindLeftOf, tapePrice, type RunSave } from '../save';
+import { activeUsesOf, debtNextMulOf, luckyCloversOf, secondWindLeftOf, tapePrice, type RunSave } from '../save';
 import { ShopScene } from './ShopScene';
 
 /**
@@ -90,6 +91,7 @@ export abstract class SaveScene extends ShopScene {
       sockets: this.sockets,
       amulets: [...this.amulets],
       amuletCounts: { ...this.amuletCounts },
+      activeUses: this.activeUses, // заряд активного амулета — часть состояния раунда
       bones: this.bones,
       machineId: this.machineId,
       pacts: this.pacts.map((pact) => ({ ...pact })), // сделки Дилера: срок и выбранный символ — тоже часть снимка
@@ -131,6 +133,9 @@ export abstract class SaveScene extends ShopScene {
     const tape: RunSave = {
       ...record,
       secondWindLeft: Math.min(secondWindLeftOf(record), this.secondWindLeft),
+      // Откат не пополняет и заряд активного амулета — то же правило, что у «второго дыхания»: берём меньшее
+      // из текущего и плёнки; поля в записи нет — остаётся текущий заряд.
+      activeUses: Math.min(this.activeUses, activeUsesOf(record, this.activeUses)),
       breathTaken: this.breathTaken || !!record.breathTaken, // липкий, как devUsed: карту №9 второй раз не взять
       // Откат не пополняет страховку: сработки из этого раунда и с плёнки берём по большей.
       insuranceSaves: Math.max(record.round === this.round ? this.insuranceSaves : 0, record.insuranceSaves ?? 0),
@@ -166,6 +171,7 @@ export abstract class SaveScene extends ShopScene {
     this.sockets = record.sockets;
     this.amulets = [...record.amulets];
     this.amuletCounts = { ...record.amuletCounts };
+    this.activeUses = activeUsesOf(record, this.activeCharges()); // заряд с плёнки; в старой записи поля нет — полный
     this.bones = record.bones;
     // Запись без автомата (старая кассета) — остаётся тот, что стоит сейчас.
     if (record.machineId !== undefined) this.machineId = record.machineId;
@@ -200,6 +206,7 @@ export abstract class SaveScene extends ShopScene {
     this.setPatternsOnGlass(); // стекло с записи: набор пришёл в loadTape
     this.itemShelf.setItems(this.shelf);
     this.amuletRack.setAmulets(this.amulets, this.amuletCounts);
+    this.amuletRack.setActive(activeAmuletOf(this.amuletCounts), this.activeUses); // активный — в своё гнездо, с зарядом
     this.showItemEffects();
     this.showBones();
     this.collector.markNote(this.debt);

@@ -3,6 +3,8 @@ import type { Amulet, Rarity } from './amulets';
 import type { MachineSpec } from './machines';
 import type { Item } from './items';
 import {
+  ACTIVE_SOCKET_X,
+  ACTIVE_SOCKET_Y,
   BELLY,
   BODY,
   CENTER_X,
@@ -81,6 +83,7 @@ export const DOOR_CODE_WIDTH = 50; // окошко колёсиков кода �
 export const DOOR_CODE_HEIGHT = 24;
 export const TICKET_TEXTURE = 'ticket'; // красный билет — вторая валюта
 export const SOCKET_CAP_TEXTURE = 'socket-cap'; // заглушка закрытого гнезда для амулета
+export const ACTIVE_SOCKET_CAP_TEXTURE = 'active-socket-cap'; // заглушка пустого гнезда активного амулета
 export const CRACK_TEXTURE = 'screen-crack'; // дыра и трещины на экране автомата после взрыва
 export const CRACK_SIZE = 150; // сторона картинки с трещинами
 export const DEALER_FELT_TEXTURE = 'dealer-felt'; // сукно Дилера поверх экрана: на него ложатся карты-сделки
@@ -117,6 +120,7 @@ const SLAT_SHADE_ALPHA = 0.05; // …и в начале такой плотно�
 const TRIM_INSET = 8; // окантовка — на столько внутри края лицевой части, со всех сторон одинаково
 const CHROME = 0x94a3b8;
 const CHROME_LIGHT = 0xe2e8f0;
+const ACTIVE_SOCKET_RING = 0xf59e0b; // янтарная оправа гнезда активного амулета: его не путают с пассивными
 const SCREEN_GLASS = 0x020617; // почти чёрное стекло под сеткой
 /** Фишка казино: красная с белыми насечками по краю. */
 const CHIP_SIZE = 28; // фишка анфас, px
@@ -262,6 +266,13 @@ function drawSockets(g: Phaser.GameObjects.Graphics): void {
     g.fillStyle(0x0b0f19);
     g.fillCircle(x, SOCKET_Y, SOCKET_RADIUS - 4); // лунка
   }
+  // Гнездо активного амулета — отдельное: янтарная оправа, чтобы его не путали с рядом пассивных.
+  g.fillStyle(0x000000, 0.4);
+  g.fillCircle(ACTIVE_SOCKET_X + 2, ACTIVE_SOCKET_Y + 3, SOCKET_RADIUS); // тень
+  g.fillStyle(ACTIVE_SOCKET_RING);
+  g.fillCircle(ACTIVE_SOCKET_X, ACTIVE_SOCKET_Y, SOCKET_RADIUS);
+  g.fillStyle(0x0b0f19);
+  g.fillCircle(ACTIVE_SOCKET_X, ACTIVE_SOCKET_Y, SOCKET_RADIUS - 4); // лунка
 }
 
 /** Левый верхний угол прямоугольника. */
@@ -1572,6 +1583,20 @@ export function createSocketCapTexture(scene: Phaser.Scene, radius: number): voi
   g.fillStyle(0x1f2937);
   g.fillRect(radius - 8, radius - 2, 16, 4); // шлиц винта
   bake(g, SOCKET_CAP_TEXTURE, size, size);
+}
+
+/** Заглушка пустого гнезда активного амулета: янтарный диск с тёмной щелью — сразу видно, что гнездо другое. */
+export function createActiveSocketCapTexture(scene: Phaser.Scene, radius: number): void {
+  if (scene.textures.exists(ACTIVE_SOCKET_CAP_TEXTURE)) return;
+  const size = radius * 2;
+  const g = scene.add.graphics();
+  g.fillStyle(0x92400e);
+  g.fillCircle(radius, radius, radius - 3);
+  g.fillStyle(ACTIVE_SOCKET_RING);
+  g.fillCircle(radius, radius - 1, radius - 6);
+  g.fillStyle(0x451a03);
+  g.fillRect(radius - 8, radius - 2, 16, 4); // щель под значок
+  bake(g, ACTIVE_SOCKET_CAP_TEXTURE, size, size);
 }
 
 // Трещины от взрыва: лучи из дыры (угол, длина, излом) и обрывки колец между ними. Числа постоянные — картинка всегда одна.

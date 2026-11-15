@@ -1,4 +1,4 @@
-import { addCopy, amuletPrice, countOf, insuranceCopyPrice, randomAmuletOffer, socketPrice, type Amulet } from '../amulets';
+import { activeAmuletOf, activeUses, addCopy, amuletPrice, countOf, insuranceCopyPrice, isActive, randomAmuletOffer, socketPrice, type Amulet } from '../amulets';
 import { amuletKey, itemKey, see, WHO_COLLECTOR } from '../codex';
 import { pactDebt, pactEffects } from '../dealerGame';
 import { canWin, DRUM_SECTORS, drumChips, drumPrice, prizeItem, randomSector, type DrumPrize } from '../drum';
@@ -12,6 +12,7 @@ import { SLOT_ROW, SOCKET_ROW } from '../parts/miniShop';
 import { DealerScene } from './DealerScene';
 
 const PRIZE_POPUP_RISE = 20; // «+N» за фишки из барабана всплывает чуть выше сектора
+const AMULET_DENY_HINT_TIME = 1500; // сколько висит надпись «в активном гнезде уже амулет», мс
 
 /** Звук приза барабана: билет шелестит, фишки стучат, предмет и место на полке — как предмет. */
 function prizeSound(prize: DrumPrize): SoundName {
@@ -29,6 +30,8 @@ function prizeSound(prize: DrumPrize): SoundName {
 export abstract class ShopScene extends DealerScene {
   // Панель уезжает после leaveShop, и колбэк её хода ещё не сработал: раунд начнётся, только когда она уедет.
   private isLeavingShop = false;
+  // Подсказка «в активном гнезде уже амулет» висит AMULET_DENY_HINT_TIME; новый отказ снимает прошлый таймер.
+  private amuletDenyHint: Phaser.Time.TimerEvent | null = null;
 
   /**
    * Долг отдан (или пропущен): на записке следующий долг (записка переворачивается), сверху съезжает панель магазина.
@@ -211,7 +214,10 @@ export abstract class ShopScene extends DealerScene {
     this.buyAmulet(place);
   }
 
-  /** Купить амулет за билеты: он летит из витрины в гнездо. Новый амулет — в свободное гнездо, копия уже стоящего — в его гнездо. */
+  /**
+   * Купить амулет за билеты: он летит из витрины в гнездо. Новый пассивный — в свободное гнездо, копия уже стоящего —
+   * в его гнездо. Активный — в отдельное гнездо справа от ряда: оно одно, второй активный не покупается (шаг 12а).
+   */
   private buyAmulet(place: number): void {
     const amulet = this.amuletOffer[place];
     if (!amulet) return;
@@ -220,8 +226,20 @@ export abstract class ShopScene extends DealerScene {
       this.amuletCase.deny(place); // копий уже под потолок — ценник трясётся
       return;
     }
+    const active = isActive(amulet);
+    if (active && activeAmuletOf(this.amuletCounts) !== null) {
+      this.sfx.play('deny');
+      this.amuletCase.deny(place); // активное гнездо одно и уже занято — ценник трясётся
+      this.tooltip.show(t('activeSlotBusy'), '');
+      this.amuletDenyHint?.remove(); // прошлый таймер не должен погасить новую подсказку раньше срока
+      this.amuletDenyHint = this.time.delayedCall(AMULET_DENY_HINT_TIME, () => {
+        this.amuletDenyHint = null;
+        this.tooltip.hide();
+      });
+      return;
+    }
     const socket = this.amulets.findIndex((owned) => owned.id === amulet.id); // гнездо этого амулета; −1 — такого ещё нет
-    if (socket < 0 && this.amulets.length >= this.sockets) {
+    if (!active && socket < 0 && this.amulets.length >= this.sockets) {
       this.sfx.play('deny');
       this.amuletCase.deny(place); // амулет новый, а свободного гнезда нет — ценник трясётся
       return;
@@ -234,17 +252,20 @@ export abstract class ShopScene extends DealerScene {
     }
     this.tickets -= price;
     this.amuletOffer[place] = null;
-    const isNew = socket < 0;
+    const isNew = active || socket < 0; // активный всегда новый: копий у него не бывает
     let index = socket;
-    if (isNew) {
+    if (!active && isNew) {
       index = this.amulets.length;
       this.amulets.push(amulet); // гнездо занято сразу: второй быстрый клик его уже не получит
     }
     addCopy(this.amuletCounts, amulet.id);
     const count = countOf(this.amuletCounts, amulet.id); // сколько копий станет после этой покупки
+    const uses = activeUses(amulet);
+    if (active) this.activeUses = uses; // заряд активного — в этом раунде, метку обновит putActive
     this.amuletCase.sell(place, (x, y) => {
       // Гнездо за панелью: амулет гаснет, пройдя первые ~200 px к нему, — будто уходит за жалюзи, а не летит через витрину.
-      if (isNew) this.amuletRack.putAmulet(index, amulet, count, x, y); // анимация — только когда амулет долетел
+      if (active) this.amuletRack.putActive(amulet, uses, x, y);
+      else if (isNew) this.amuletRack.putAmulet(index, amulet, count, x, y); // анимация — только когда амулет долетел
       else this.amuletRack.putCopy(index, amulet, count, x, y);
       this.showBones();
     });
@@ -338,7 +359,12 @@ export abstract class ShopScene extends DealerScene {
   protected refreshShop(): void {
     this.shop.refresh(this.balance, this.shelf.includes(null));
     // Амулет в витрине готов, если есть свободное гнездо (для нового) или он уже стоит (копию докупаем в то же гнездо).
-    const amuletReady = this.amuletOffer.map((amulet) => amulet !== null && (this.amulets.length < this.sockets || countOf(this.amuletCounts, amulet.id) > 0));
+    // Активный готов, только пока его гнездо свободно: гнездо одно.
+    const amuletReady = this.amuletOffer.map((amulet) => {
+      if (amulet === null) return false;
+      if (isActive(amulet)) return activeAmuletOf(this.amuletCounts) === null;
+      return this.amulets.length < this.sockets || countOf(this.amuletCounts, amulet.id) > 0;
+    });
     this.amuletCase.refresh(this.tickets, amuletReady);
     this.miniShop.refresh(
       this.balance,

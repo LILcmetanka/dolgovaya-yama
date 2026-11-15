@@ -827,6 +827,8 @@ export abstract class RoundScene extends MachineScene {
     this.freeSpinsAwarded = 0;
     clearRoundEffects(this.itemEffects); // бусты и флаги прошлого раунда не переходят в новый
     this.insuranceSaves = 0; // страховка снова готова: сработок на новый раунд — по числу копий
+    this.activeUses = this.activeCharges(); // активный амулет снова полон: заряд прошлого раунда не переходит
+    this.amuletRack.setActiveUses(this.activeUses);
     this.bankKeptThisRound = false; // сделка №10: «первый череп не жжёт кон» — снова первый
     this.tookThisSpin = false; // сделка №15: в новом раунде «забрать» ещё не было
     this.tookExtraThisSpin = false;
