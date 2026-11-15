@@ -185,20 +185,23 @@ export function clearRoundEffects(effects: ItemEffects): void {
   effects.candle = false;
 }
 
-/** Цена: доля долга, округлённая до PRICE_ROUND_TO, но не меньше PRICE_ROUND_TO. Ею же круглится цена барабана (drum.ts). */
-export function roundPrice(exact: number): number {
-  return Math.max(PRICE_ROUND_TO, Math.round(exact / PRICE_ROUND_TO) * PRICE_ROUND_TO);
+/**
+ * Цена: доля долга, округлённая до PRICE_ROUND_TO, но не меньше PRICE_ROUND_TO. Ею же круглится цена барабана (drum.ts).
+ * mul — скидка сделки Дилера (№2): доля долга умножается на неё до округления.
+ */
+export function roundPrice(exact: number, mul = 1): number {
+  return Math.max(PRICE_ROUND_TO, Math.round((exact * mul) / PRICE_ROUND_TO) * PRICE_ROUND_TO);
 }
 
-/** Цена предмета, когда долг следующего раунда — debt. */
-export function itemPrice(item: ShopItem, debt: number): number {
-  return roundPrice(item.priceShare * debt);
+/** Цена предмета, когда долг следующего раунда — debt, а скидка сделки — mul. */
+export function itemPrice(item: ShopItem, debt: number, mul = 1): number {
+  return roundPrice(item.priceShare * debt, mul);
 }
 
 /** Цена следующего места на полке (сейчас мест slots). Мест уже MAX_SLOTS — null: больше не продаётся. */
-export function slotPrice(slots: number, debt: number): number | null {
+export function slotPrice(slots: number, debt: number, mul = 1): number | null {
   if (slots >= MAX_SLOTS) return null;
-  return roundPrice(SLOT_PRICE_SHARES[slots - START_SLOTS] * debt);
+  return roundPrice(SLOT_PRICE_SHARES[slots - START_SLOTS] * debt, mul);
 }
 
 /** Что лежит в торговом автомате: OFFER_SIZE разных предметов в случайном порядке. Предметы с unlockRound раньше раунда не продаются. */

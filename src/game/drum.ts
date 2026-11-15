@@ -21,9 +21,9 @@ export const DRUM_PRICE_SHARE = 0.25; // первая прокрутка в ма
 export const DRUM_PRICE_GROWTH = 2; // каждая следующая прокрутка — во столько раз дороже
 export const DRUM_CHIPS_MULTIPLIER = 2; // сектор «фишки» даёт цену этой прокрутки во столько раз больше — всегда больше, чем заплатил
 
-/** Цена прокрутки: spins — сколько раз уже крутили в этом магазине, debt — долг следующего раунда. */
-export function drumPrice(spins: number, debt: number): number {
-  return roundPrice(DRUM_PRICE_SHARE * DRUM_PRICE_GROWTH ** spins * debt);
+/** Цена прокрутки: spins — сколько раз уже крутили в этом магазине, debt — долг следующего раунда, mul — скидка сделки. */
+export function drumPrice(spins: number, debt: number, mul = 1): number {
+  return roundPrice(DRUM_PRICE_SHARE * DRUM_PRICE_GROWTH ** spins * debt, mul);
 }
 
 /** Сколько фишек даёт сектор «фишки»: paid — сколько заплатили за эту прокрутку. Цена кратна 5, значит, и выплата. */

@@ -51,6 +51,9 @@ export function countClovers(grid: Grid): number {
 // иначе джекпот (×100) съедал бы всю удачу уже при двух клеверах
 const CLOVER_MULTIPLIER_CAP = 4;
 
+/** Поправка к весу паттерна в удаче: на входе обычный вес, на выходе вес с поправкой (сделка №7). */
+export type PatternWeight = (pattern: Pattern, weight: number) => number;
+
 /**
  * Вес паттерна в удаче при clovers клеверах. Чем больше клеверов, тем чаще сильные паттерны:
  * один клевер — у всех паттернов вес 1 (равные шансы, как было), дальше вес растёт как множитель паттерна в степени.
@@ -71,9 +74,10 @@ export function freeSpinWeight(symbol: SlotSymbol, weight: number): number {
  * Прокрутка после клевера: паттерн со стекла на случайном месте, из случайного платящего символа (по весам этой прокрутки);
  * остальные клетки выпадают как обычно. Паттерн выбирается по весам клеверов: с одним — равный шанс, с двумя и больше —
  * сильные чаще (cloverPatternWeight); джекпот входит в те же веса, отдельного шанса у него нет.
+ * patternWeight — поправка сделки Дилера к весу паттерна (№7: джекпот тяжелее, «чёрные» +1).
  * Если паттерн не засчитался (его столбец заблокировал замок или рядом сложились черепа) — крутим заново.
  */
-export function luckyGrid(weightOf: WeightOf, clovers = 1): Grid {
+export function luckyGrid(weightOf: WeightOf, clovers = 1, patternWeight?: PatternWeight): Grid {
   // Контракт: клеверов меньше одного — удачи нет, сетка обычная. Иначе ноль клеверов тихо давал бы
   // полноценный паттерн, а это уже не «обычная прокрутка», и ошибку в вызове никто бы не заметил.
   // NaN проверяем отдельно: `NaN < 1` — false, и он прошёл бы дальше, а pickPattern на пустых весах выдал бы джекпот.
@@ -81,7 +85,7 @@ export function luckyGrid(weightOf: WeightOf, clovers = 1): Grid {
   const payingWeight: WeightOf = (symbol) => (isPaying(symbol) ? weightOf(symbol) : 0);
   for (let tries = 1; ; tries++) {
     const grid = spinGrid(weightOf);
-    const pattern = pickPattern(clovers);
+    const pattern = pickPattern(clovers, patternWeight);
     const places = placements(pattern);
     const cells = places[Math.floor(Math.random() * places.length)];
     const symbol = randomSymbol(payingWeight);
@@ -90,9 +94,12 @@ export function luckyGrid(weightOf: WeightOf, clovers = 1): Grid {
   }
 }
 
-/** Паттерн по весам клеверов: сумма весов, случайное число, накопительный проход. */
-function pickPattern(clovers: number): Pattern {
-  const weights = PATTERNS.map((pattern) => cloverPatternWeight(pattern, clovers));
+/** Паттерн по весам клеверов: сумма весов, случайное число, накопительный проход. Поправка сделки — к каждому весу. */
+function pickPattern(clovers: number, patternWeight?: PatternWeight): Pattern {
+  const weights = PATTERNS.map((pattern) => {
+    const weight = cloverPatternWeight(pattern, clovers);
+    return patternWeight ? patternWeight(pattern, weight) : weight;
+  });
   let roll = Math.random() * weights.reduce((sum, weight) => sum + weight, 0);
   for (let i = 0; i < PATTERNS.length; i++) {
     if (roll < weights[i]) return PATTERNS[i];

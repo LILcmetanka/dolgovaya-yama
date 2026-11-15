@@ -14,7 +14,7 @@ import {
 import { CIGARETTES_FOR_ACHIEVEMENT, isBloodSpill, ITEM_ACHIEVEMENTS } from '../achievements';
 import { FREE_SPINS_GUARD } from '../bonus';
 import { bloodBurn, BLOOD_WIN, cellsOf, diceWeight, spiderBite } from '../evil';
-import { pactEffects, skullShareWeightMul, skullStreakAfter, type Pact } from '../dealerGame';
+import { pactEffects, skullShareWeightMul, skullStreakAfter } from '../dealerGame';
 import {
   activeSlotEffects,
   CIGARETTE_SPINS,
@@ -110,8 +110,6 @@ export abstract class RoundScene extends MachineScene {
   private spinCharge = 0;
   /** Раунд закрыт ранней оплатой: Коллектор забирает долг сам (и после «ДАЛЬШЕ» с экрана победы — тоже). */
   protected isPaidEarly = false;
-  /** Сделки Дилера (dealerGame.Pact): что из них действует в раунде, решает dealerGame.pactEffects. Кассета их возвращает. */
-  protected pacts: Pact[] = [];
 
   /** Новый забег: прокруток ещё не было, окно перемешки не висит, сделок Дилера нет. */
   protected resetState(): void {
@@ -121,7 +119,6 @@ export abstract class RoundScene extends MachineScene {
     this.rerollTimer = undefined;
     this.spinCharge = 0;
     this.isPaidEarly = false;
-    this.pacts = [];
   }
 
   // ---------- Прокрутка ----------
@@ -180,15 +177,18 @@ export abstract class RoundScene extends MachineScene {
   }
 
   /**
-   * Всё, от чего зависит вес символа, плюс поправка сделки к доле черепов (±): множитель веса черепа выводим из доли,
-   * которую видит игрок (dealerGame.skullShareWeightMul), поэтому прокрутка и плашка «💀 N%» показывают одно число.
+   * Всё, от чего зависит вес символа, плюс поправки сделок: №11 — выбранный символ (+2 / −0,5), доля черепов (±):
+   * множитель веса черепа выводим из доли, которую видит игрок (dealerGame.skullShareWeightMul), поэтому прокрутка
+   * и плашка «💀 N%» показывают одно число.
    */
   protected override weightContext(charge = lastCharge()): WeightContext {
     const base = super.weightContext(charge);
-    const delta = pactEffects(this.pacts, this.round).skullShareDelta; // может быть и отрицательной: «тише черепа»
-    if (delta === 0 || !Number.isFinite(delta)) return base;
-    const mul = skullShareWeightMul(skullShareOf(this.round, this.diceDrought, base), delta);
-    return mul === 1 ? base : { ...base, skullMul: mul };
+    const effects = pactEffects(this.pacts, this.round);
+    const withLuck: WeightContext = effects.symbolLuck ? { ...base, symbolLuck: effects.symbolLuck } : base;
+    const delta = effects.skullShareDelta; // может быть и отрицательной: «тише черепа»
+    if (delta === 0 || !Number.isFinite(delta)) return withLuck;
+    const mul = skullShareWeightMul(skullShareOf(this.round, this.diceDrought, withLuck), delta);
+    return mul === 1 ? withLuck : { ...withLuck, skullMul: mul };
   }
 
   /** Шаг множителя серии: сделка «шаг вдвое» его удваивает (dealerGame.pactEffects). */
@@ -452,10 +452,11 @@ export abstract class RoundScene extends MachineScene {
   /**
    * Черепа сжигают кон вместе с выигрышем этой прокрутки, серия падает до трети. Страховка возвращает на табло
    * `INSURANCE_SHARE` сгоревшего — по разу за копию: каждая копия даёт в раунде ещё одно спасение (`insuranceSaves`).
+   * Сделка №5 «страховка возвращает 100%» поднимает долю возврата до всего кона (pactEffects.insuranceShare).
    */
   private burnPot(result: SpinResult): void {
     const lost = this.pot;
-    const refund = insuranceRefund(lost, this.amuletIds(), this.insuranceSaves);
+    const refund = insuranceRefund(lost, this.amuletIds(), this.insuranceSaves, pactEffects(this.pacts, this.round).insuranceShare);
     this.pot = 0;
     // Сделки с черепом: «череп в ×1» обнуляет серию, «мягкий череп» снимает одну ступень (одно очко серии),
     // иначе остаётся треть (SKULL_KEEPS_STREAK).

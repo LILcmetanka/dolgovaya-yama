@@ -1,5 +1,7 @@
+import { INSURANCE_SHARE } from './amulets';
 import type { Words } from './lang';
-import { streakAfterSkull } from './rules';
+import { LOW_PATTERN_MULTIPLIER, TOP_MULTIPLIER, type Pattern } from './patterns';
+import { DEBT_ROUND_TO, isPaying, isUnlocked, streakAfterSkull, SYMBOLS, type SlotSymbol } from './rules';
 
 /**
  * Сделка Дилера (решение автора 15.11.2026, QUESTIONS.md): на экране выпал кубик 🎲 — Дилер кладёт на сукно
@@ -7,14 +9,17 @@ import { streakAfterSkull } from './rules';
  * Сделки — связки из DONTLIKE.md «20 связок» (ответ автора: 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 19, 20).
  * Шаг 9 — каркас и три связки: №6 «билеты / магазин закрыт», №19 «раунд без черепов», №20 «шаг ×2 / череп в ×1».
  * Шаг 10 — ещё три: №4 «тише черепа / потолок серии», №14 «мягкий череп / −1 прокрутка», №17 «выигрыш +25% / черепа навсегда».
+ * Шаг 11 — пять: №2 «−20% цен / долг +8%», №5 «страховка 100% / каждая копия вдвое дороже»,
+ * №7 «вес джекпота +50% / вес чёрных паттернов +1», №11 «выбранный символ +2 веса / остальным −0,5», №12 «долг −10% / +20%».
  * Остальные связки автора добавляются так же: поле в PactEffects и ветка в pactEffects + карта в PACTS.
- * Сделка живёт на кассете как запись { id, untilRound } — сколько раундов действует, столько и лежит.
+ * Сделка живёт на кассете как запись { id, untilRound, symbol? } — сколько раундов действует, столько и лежит.
  * Без Phaser — только числа и маленькие функции.
  */
 
 export type PactId =
   | 'tickets-shop' | 'quiet-round' | 'double-step'
-  | 'skull-calm' | 'soft-skull' | 'price-up';
+  | 'skull-calm' | 'soft-skull' | 'price-up'
+  | 'cheap-shop' | 'full-insurance' | 'jackpot-weight' | 'symbol-weight' | 'debt-cut';
 
 /** Карта-сделка: id, сколько раундов живёт и две строки на карте — баф зелёным, дебаф красным. */
 export interface PactSpec {
@@ -22,12 +27,24 @@ export interface PactSpec {
   rounds: number; // сколько раундов действует, считая раунд, в котором взяли (PACT_LAST_ROUNDS — до конца забега)
   bonus: Words; // «получаешь» — зелёная строка на карте
   cost: Words; // «платишь» — красная строка на карте
+  needsSymbol?: boolean; // №11: прежде чем взять, игрок выбирает символ (ряд кнопок на сукне)
 }
 
 /** Запись на кассете: сделка и последний раунд, в котором она ещё действует. */
 export interface Pact {
   id: PactId;
   untilRound: number;
+  symbol?: SlotSymbol; // №11: выбранный игроком символ (в старых записях поля нет — сделка без символа ничего не делает)
+}
+
+/**
+ * Поправка сделки №11 к весам: выбранному символу +plus, каждому другому −minus (вес не ниже нуля).
+ * Числа берутся из констант рядом и лежат в PactEffects — вес символа сам их не выдумывает.
+ */
+export interface SymbolLuck {
+  id: string; // id выбранного символа
+  plus: number;
+  minus: number;
 }
 
 /**
@@ -44,6 +61,12 @@ export interface PactEffects {
   skullSoft: boolean; // череп снимает с серии одну ступень вместо трети
   spinsDelta: number; // столько прокруток прибавится (+) или убавится (−) в начале раунда
   winMul: number; // во сколько раз больше выигрыш паттернов (1 — без поправки)
+  shopDiscount: number; // множитель цен магазина (1 — без скидки, CHEAP_SHOP_DISCOUNT — «−20% цен»)
+  insuranceShare: number; // доля возврата страховки (INSURANCE_SHARE — обычная, INSURANCE_FULL_SHARE — «весь кон»)
+  insuranceDoubles: boolean; // каждая следующая копия страховки вдвое дороже предыдущей
+  jackpotWeightMul: number; // во сколько раз тяжелее джекпот в удаче клевера (1 — обычный)
+  blackWeightAdd: number; // сколько веса прибавляется «чёрным» паттернам в удаче клевера (0 — ничего)
+  symbolLuck: SymbolLuck | null; // №11: выбранный символ и его поправки к весам (null — сделки нет)
 }
 
 /** Сколько карт Дилер кладёт на сукно. */
@@ -84,6 +107,31 @@ export const SOFT_SKULL_SPINS = -1;
 export const PRICE_UP_WIN = 1.25;
 /** …и доля черепов +0,5 п.п. до конца забега. */
 export const PRICE_UP_SKULL_DELTA = 0.005;
+// ---------- Связки шага 11 ----------
+/**
+ * №2 «−20% цен / долг +8%»: скидка живёт столько же раундов, сколько магазин закрывает сделка №6, — четыре.
+ * Долг +8% — разово в момент взятия: бессрочная скидка за один разовый штраф была бы чистой прибылью без риска.
+ */
+export const CHEAP_SHOP_ROUNDS = 4;
+/** №2: во столько раз дешевле всё в магазине (предметы, места, амулеты, гнёзда, барабан, кассета). */
+export const CHEAP_SHOP_DISCOUNT = 0.8;
+/** №2: во столько раз дороже долг раунда, в котором взяли карту (разово). */
+export const CHEAP_SHOP_DEBT_MUL = 1.08;
+/** №5 «страховка возвращает 100% кона»: доля возврата вместо обычной INSURANCE_SHARE. */
+export const INSURANCE_FULL_SHARE = 1;
+/** №7 «вес джекпота +50%»: во столько раз тяжелее джекпот в удаче клевера. */
+export const JACKPOT_WEIGHT_MUL = 1.5;
+/** №7 «вес чёрных паттернов +1»: столько веса прибавляется каждому «чёрному» (LOW_PATTERN_MULTIPLIER). */
+export const BLACK_PATTERN_WEIGHT_ADD = 1;
+/** №11: +2 веса выбранному символу, −0,5 каждому другому (вес не ниже нуля, черепа не трогаем). */
+export const SYMBOL_LUCK_PLUS = 2;
+export const SYMBOL_LUCK_MINUS = 0.5;
+/** №11: столько раундов живёт выбранный символ. */
+export const SYMBOL_LUCK_ROUNDS = 2;
+/** №12: текущий долг −10%, следующий +20%. Оба сдвига разовые, поэтому сделка живёт один раунд. */
+export const DEBT_CUT_MUL = 0.9;
+export const DEBT_NEXT_MUL = 1.2;
+export const DEBT_CUT_ROUNDS = 1;
 
 /**
  * Число в тексте карты: целые без дробной части, дробные — с одним знаком (0,5 / 0.5).
@@ -155,6 +203,67 @@ export const PACTS: readonly PactSpec[] = [
       en: `skulls +${cardNum(PRICE_UP_SKULL_DELTA * 100, true)} pp forever`,
     },
   },
+  {
+    id: 'cheap-shop',
+    rounds: CHEAP_SHOP_ROUNDS,
+    bonus: {
+      ru: `цены в магазине −${cardNum((1 - CHEAP_SHOP_DISCOUNT) * 100, false)}% на ${CHEAP_SHOP_ROUNDS} раунда`,
+      en: `shop prices −${cardNum((1 - CHEAP_SHOP_DISCOUNT) * 100, true)}% for ${CHEAP_SHOP_ROUNDS} rounds`,
+    },
+    cost: {
+      ru: `долг +${cardNum((CHEAP_SHOP_DEBT_MUL - 1) * 100, false)}% разово`,
+      en: `debt +${cardNum((CHEAP_SHOP_DEBT_MUL - 1) * 100, true)}% one time`,
+    },
+  },
+  {
+    id: 'full-insurance',
+    rounds: PACT_LAST_ROUNDS,
+    bonus: {
+      ru: `страховка отдаёт ${cardNum(INSURANCE_FULL_SHARE * 100, false)}% кона`,
+      en: `insurance pays ${cardNum(INSURANCE_FULL_SHARE * 100, true)}% of the pot`,
+    },
+    cost: {
+      ru: 'копия вдвое дороже до конца забега',
+      en: 'each copy ×2 until the run ends',
+    },
+  },
+  {
+    id: 'jackpot-weight',
+    rounds: PACT_LAST_ROUNDS,
+    bonus: {
+      ru: `вес джекпота +${cardNum((JACKPOT_WEIGHT_MUL - 1) * 100, false)}%`,
+      en: `jackpot weight +${cardNum((JACKPOT_WEIGHT_MUL - 1) * 100, true)}%`,
+    },
+    cost: {
+      ru: `вес «чёрных» +${cardNum(BLACK_PATTERN_WEIGHT_ADD, false)} до конца забега`,
+      en: `black patterns +${cardNum(BLACK_PATTERN_WEIGHT_ADD, true)} until the run ends`,
+    },
+  },
+  {
+    id: 'symbol-weight',
+    rounds: SYMBOL_LUCK_ROUNDS,
+    needsSymbol: true,
+    bonus: {
+      ru: `выбранный символ +${cardNum(SYMBOL_LUCK_PLUS, false)} веса на ${SYMBOL_LUCK_ROUNDS} раунда`,
+      en: `chosen symbol +${cardNum(SYMBOL_LUCK_PLUS, true)} weight for ${SYMBOL_LUCK_ROUNDS} rounds`,
+    },
+    cost: {
+      ru: `остальным −${cardNum(SYMBOL_LUCK_MINUS, false)} веса`,
+      en: `others −${cardNum(SYMBOL_LUCK_MINUS, true)} weight`,
+    },
+  },
+  {
+    id: 'debt-cut',
+    rounds: DEBT_CUT_ROUNDS,
+    bonus: {
+      ru: `текущий долг −${cardNum((1 - DEBT_CUT_MUL) * 100, false)}%`,
+      en: `current debt −${cardNum((1 - DEBT_CUT_MUL) * 100, true)}%`,
+    },
+    cost: {
+      ru: `следующий долг +${cardNum((DEBT_NEXT_MUL - 1) * 100, false)}%`,
+      en: `next debt +${cardNum((DEBT_NEXT_MUL - 1) * 100, true)}%`,
+    },
+  },
 ];
 
 /** Сделка по id: id типизирован, поэтому сделка есть всегда (цикл-проверка — для чужих данных кассеты). */
@@ -165,8 +274,10 @@ export function pactSpec(id: PactId): PactSpec {
 }
 
 /** Запись сделки для кассеты: взяли в раунде round — действует spec.rounds раундов, untilRound — последний из них. */
-export function pactOf(id: PactId, round: number): Pact {
-  return { id, untilRound: round + pactSpec(id).rounds - 1 };
+export function pactOf(id: PactId, round: number, symbol?: SlotSymbol): Pact {
+  const pact: Pact = { id, untilRound: round + pactSpec(id).rounds - 1 };
+  if (symbol) pact.symbol = symbol; // №11: выбранный символ — часть сделки, кассета его возвращает
+  return pact;
 }
 
 /** Знакомый ли это id сделки (кассета могла прийти из другой версии игры). */
@@ -181,17 +292,35 @@ function pactRoundOf(value: unknown): number {
 }
 
 /**
+ * Символ сделки №11 с кассеты: только платящий символ из SYMBOLS — череп, злые, билет и кубик выбрать нельзя.
+ * Проверить «символ уже открыт в этом раунде» при чтении невозможно: кассета хранит сделку и её срок, но не раунд
+ * записи, а откат может вернуть забег на раунд назад — счёт раунда на плёнке не про этот раунд. Поэтому берём любой
+ * платящий символ: закрытый сейчас даёт вес 0 и ни на что не влияет (symbolLuckWeight не трогает нулевой вес).
+ * Мусор и незнакомый id — undefined: сделка без символа ничего не меняет, и это лучше, чем чужой объект.
+ */
+function pactSymbolOf(value: unknown): SlotSymbol | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const id = (value as { id?: unknown }).id;
+  if (typeof id !== 'string') return undefined;
+  return SYMBOLS.find((symbol) => symbol.id === id && isPaying(symbol));
+}
+
+/**
  * Сделки с кассеты: неизвестные id отбрасываем, битый untilRound — 0, то есть сделка уже кончилась.
- * В старых записях поля нет — считаем, что сделок нет.
+ * Символ читается только у сделки №11 — у остальных id его быть не должно (мусор со старой плёнки не храним).
+ * В старых записях полей нет — сделок и символа нет.
  */
 export function readPacts(list: unknown): Pact[] {
   if (!Array.isArray(list)) return [];
   const pacts: Pact[] = [];
   for (const value of list) {
     if (typeof value !== 'object' || value === null) continue;
-    const record = value as { id?: unknown; untilRound?: unknown };
+    const record = value as { id?: unknown; untilRound?: unknown; symbol?: unknown };
     if (!isPactId(record.id)) continue;
-    pacts.push({ id: record.id, untilRound: pactRoundOf(record.untilRound) });
+    const pact: Pact = { id: record.id, untilRound: pactRoundOf(record.untilRound) };
+    const symbol = record.id === 'symbol-weight' ? pactSymbolOf(record.symbol) : undefined;
+    if (symbol) pact.symbol = symbol;
+    pacts.push(pact);
   }
   return pacts;
 }
@@ -226,7 +355,7 @@ export function shiftPacts(pacts: readonly Pact[], delta: number): Pact[] {
   const shifted: Pact[] = [];
   for (const pact of pacts) {
     const untilRound = pact.untilRound + step;
-    if (untilRound > 0) shifted.push({ id: pact.id, untilRound });
+    if (untilRound > 0) shifted.push(pact.symbol ? { id: pact.id, untilRound, symbol: pact.symbol } : { id: pact.id, untilRound });
   }
   return shifted;
 }
@@ -246,6 +375,12 @@ export function pactEffects(pacts: readonly Pact[], round: number): PactEffects 
     skullSoft: false,
     spinsDelta: 0,
     winMul: 1,
+    shopDiscount: 1, // цены обычные, пока сделка не даст скидку
+    insuranceShare: INSURANCE_SHARE, // обычная доля возврата страховки
+    insuranceDoubles: false,
+    jackpotWeightMul: 1, // джекпот в удаче весит как обычно
+    blackWeightAdd: 0,
+    symbolLuck: null,
   };
   for (const pact of pacts) {
     if (!isPactActive(pact, round)) continue;
@@ -279,9 +414,69 @@ export function pactEffects(pacts: readonly Pact[], round: number): PactEffects 
         effects.winMul *= PRICE_UP_WIN;
         effects.skullShareDelta += PRICE_UP_SKULL_DELTA;
         break;
+      case 'cheap-shop':
+        // Скидка на все цены магазина. Долг +8% разовый — он в PactEffects не живёт (DealerScene.acceptPact).
+        effects.shopDiscount *= CHEAP_SHOP_DISCOUNT;
+        break;
+      case 'full-insurance':
+        // Страховка отдаёт весь кон, но каждая следующая копия вдвое дороже (цена — в магазине).
+        effects.insuranceShare = INSURANCE_FULL_SHARE;
+        effects.insuranceDoubles = true;
+        break;
+      case 'jackpot-weight':
+        // Удача клевера: джекпот тяжелее, «чёрные» паттерны чаще.
+        effects.jackpotWeightMul *= JACKPOT_WEIGHT_MUL;
+        effects.blackWeightAdd += BLACK_PATTERN_WEIGHT_ADD;
+        break;
+      case 'symbol-weight':
+        // Поправки к весам действуют, только если символ с кассеты уцелел: сделка без него ничего не меняет.
+        if (pact.symbol) effects.symbolLuck = { id: pact.symbol.id, plus: SYMBOL_LUCK_PLUS, minus: SYMBOL_LUCK_MINUS };
+        break;
+      case 'debt-cut':
+        // Долг −10% и +20% — разовые: они срабатывают в момент взятия и при назначении следующего долга
+        // (DealerScene.acceptPact, ShopScene.takeDebtForRound), а не каждый раунд сделки.
+        break;
     }
   }
   return effects;
+}
+
+/**
+ * Долг со сдвигом сделки — −10% (№12 «текущий долг»), +8% (№2 «плата») или +20% (№12 «следующий долг»),
+ * с округлением до DEBT_ROUND_TO тем же, что в rules.debtForRound. Мусор в множителе — долг как есть.
+ */
+export function pactDebt(debt: number, mul: number): number {
+  if (!Number.isFinite(debt) || !Number.isFinite(mul)) return debt;
+  return Math.round((debt * mul) / DEBT_ROUND_TO) * DEBT_ROUND_TO;
+}
+
+/**
+ * Символы, из которых игрок выбирает для сделки №11: платящие и уже вошедшие в автомат — череп, злые,
+ * билет, клевер, корона и кубик не выбираются, а закрытый символ ничего бы не дал.
+ */
+export function pactSymbols(round: number): SlotSymbol[] {
+  return SYMBOLS.filter((symbol) => isPaying(symbol) && isUnlocked(symbol, round));
+}
+
+/**
+ * Можно ли предложить выбор символа для сделки №11: список пуст — выбирать не из чего, и карта ведёт себя
+ * как отказ (DealerTable зовёт отказ Дилера), а не молча не нажимается.
+ */
+export function pactSymbolsAvailable(symbols: readonly SlotSymbol[]): boolean {
+  return symbols.length > 0;
+}
+
+/**
+ * Поправка сделки №7 к весам паттернов в удаче клевера: джекпот тяжелее в jackpotWeightMul раз,
+ * «чёрным» (LOW_PATTERN_MULTIPLIER) прибавляется blackWeightAdd. null — поправки нет, luckyGrid зовут как раньше.
+ */
+export function pactPatternWeight(effects: PactEffects): ((pattern: Pattern, weight: number) => number) | null {
+  if (effects.jackpotWeightMul === 1 && effects.blackWeightAdd === 0) return null;
+  return (pattern, weight) => {
+    const jackpot = pattern.multiplier === TOP_MULTIPLIER ? effects.jackpotWeightMul : 1;
+    const black = pattern.multiplier === LOW_PATTERN_MULTIPLIER ? effects.blackWeightAdd : 0;
+    return weight * jackpot + black;
+  };
 }
 
 /**

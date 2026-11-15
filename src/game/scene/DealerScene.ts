@@ -1,7 +1,20 @@
 import { see, WHO_DEALER } from '../codex';
-import { offerPacts, PACT_TICKETS, pactLive, pactOf, type PactId, type PactSpec } from '../dealerGame';
+import {
+  CHEAP_SHOP_DEBT_MUL,
+  DEBT_CUT_MUL,
+  DEBT_NEXT_MUL,
+  offerPacts,
+  PACT_TICKETS,
+  pactDebt,
+  pactLive,
+  pactOf,
+  pactSymbols,
+  type PactSpec,
+  type PactId,
+} from '../dealerGame';
 import { CENTER_X, GRID_Y } from '../layout';
 import { t } from '../lang';
+import type { SlotSymbol } from '../rules';
 import { LAMP_PURPLE } from '../theme';
 import { RoundScene } from './RoundScene';
 
@@ -12,6 +25,7 @@ const DEALER_LAMPS_TIME = 1500; // пока Дилер за столом, огн
  * В каждой карте «получаешь» и «платишь»: игрок берёт одну или отказывается, и раунд идёт дальше.
  * Сделка ложится в pacts (кассета её возвращает) и живёт столько раундов, сколько сказано в карте;
  * что из неё действует в раунде, решает dealerGame.pactEffects — здесь только запись и одноразовые выдачи.
+ * Сделка №11 «выбранный символ» сначала просит выбрать символ: ряд кнопок на сукне (dealerTable).
  * Ставки на кон у Дилера больше нет (решение автора 15.11.2026): кон, угадывание «>»/«=»/«<» и «×1,5» ушли.
  */
 export abstract class DealerScene extends RoundScene {
@@ -34,17 +48,19 @@ export abstract class DealerScene extends RoundScene {
     this.dealerDone = done;
     this.pactOffer = offerPacts(); // три карты: сколько именно — dealerGame.PACT_OFFER_COUNT
     this.screen.flashLamps(LAMP_PURPLE, DEALER_LAMPS_TIME);
-    this.dealerTable.open(this.pactOffer);
+    // №11: символы для выбора — платящие и уже вошедшие в автомат (dealerGame.pactSymbols)
+    this.dealerTable.open(this.pactOffer, pactSymbols(this.round));
     this.refreshHud();
   }
 
   /**
    * Взяли сделку: она ложится в pacts до своего последнего раунда (dealerGame.pactOf) и сразу выдаёт то,
-   * что выдаётся один раз — билеты. Строки карты — новостью на стекле, чтобы игрок помнил, на что согласился.
+   * что выдаётся один раз — билеты, сдвиг долга или выбранный символ. Строки карты — новостью на стекле,
+   * чтобы игрок помнил, на что согласился.
    * Такую сделку, которая ещё действует, взять нельзя (dealerGame.pactLive, как отказ бота в симуляторе):
    * дубликат не выдал бы ни бафа второй раз, ни билетов, но продлил бы срок — это был бы обман карты.
    */
-  protected acceptPact(id: PactId): void {
+  protected acceptPact(id: PactId, symbol?: SlotSymbol): void {
     if (!this.isDealing || this.isDealerClosing) return;
     const spec = this.pactOffer.find((pact) => pact.id === id);
     if (!spec) return;
@@ -52,12 +68,39 @@ export abstract class DealerScene extends RoundScene {
       this.sfx.play('deny'); // стол не закрываем: игрок видит, что карта не берётся, и выбирает другую
       return;
     }
+    // №11: без платящего символа из списка сделку не берут — строка «выбранный символ» была бы обманом.
+    const lucky = spec.needsSymbol && symbol && pactSymbols(this.round).includes(symbol) ? symbol : undefined;
+    if (spec.needsSymbol && !lucky) {
+      this.sfx.play('deny');
+      return;
+    }
     this.isDealerClosing = true;
     this.dealerTable.close(() => this.endDealerGame());
-    this.pacts.push(pactOf(spec.id, this.round));
-    if (spec.id === 'tickets-shop') this.gainPactTickets();
+    this.pacts.push(pactOf(spec.id, this.round, lucky));
+    this.applyPactOnce(spec.id);
     this.sfx.play('item');
     this.screen.announceNews(t('pactNews', t(spec.bonus), t(spec.cost)));
+  }
+
+  /**
+   * Что сделка делает один раз, в момент взятия (в PactEffects этого нет — там только то, что живёт раундами):
+   * №6 — билет, №2 — долг +8%, №12 — текущий долг −10% и следующий +20%.
+   */
+  private applyPactOnce(id: PactId): void {
+    switch (id) {
+      case 'tickets-shop':
+        this.gainPactTickets();
+        break;
+      case 'cheap-shop':
+        this.debt = pactDebt(this.debt, CHEAP_SHOP_DEBT_MUL);
+        break;
+      case 'debt-cut':
+        this.debt = pactDebt(this.debt, DEBT_CUT_MUL);
+        this.debtNextMul = DEBT_NEXT_MUL; // следующий долг дороже: применит и сбросит ShopScene.takeDebtForRound
+        break;
+    }
+    this.collector.markNote(this.debt); // долг на записке — уже с поправкой сделки
+    this.refreshHud();
   }
 
   /** Отказались: стол закрывается, раунд идёт дальше как без Дилера. */

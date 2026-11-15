@@ -36,8 +36,8 @@
 // в начале раунда он с шансом swapChance меняется сам (machineAtRoundStart). AMULET_POWER, ITEM_ORDER
 // и модель времени SECONDS (сколько секунд занимает действие на экране) — оценки игрока, не числа из src/game.
 //
-// Проверки и страховки — разные вещи, и в отчёте они считаются отдельно. 5 ПРОВЕРОК ловят настоящую ошибку: долг =
-// debtForRound(раунд), все числа конечны, табло билетов = учёт и не в минусе, откат по правилу игры
+// Проверки и страховки — разные вещи, и в отчёте они считаются отдельно. 5 ПРОВЕРОК ловят настоящую ошибку: долг —
+// debtForRound(раунд) плюс законные сдвиги сделок («долг −10%» и «+20%» из №12, «+8%» из №2), все числа конечны, табло билетов = учёт и не в минусе, откат по правилу игры
 // (запись есть, не из будущего), исходы последнего шанса = число шансов.
 // 9 СТРАХОВОК повторяют то, что уже держит сам код (потолок прокруток и технический предохранитель фриспинов,
 // места в столбике, пять источников билетов, расход ≤ остатка, кассета не раньше 3-го долга, серия на closeRound,
@@ -100,6 +100,7 @@ const B = await import(SRC + 'bonus.ts');
 const PH = await import(SRC + 'phases.ts');
 const M = await import(SRC + 'machines.ts');
 const D = await import(SRC + 'dealerGame.ts');
+const SK = await import(SRC + 'skullShare.ts'); // вес символа со сделкой №11 — тот же код, что в сцене
 const DR = await import(SRC + 'drum.ts');
 const L = await import(SRC + 'levers.ts');
 const S = await import(SRC + 'save.ts');
@@ -221,6 +222,7 @@ function newRun() {
     secondWindUsed: false, // «второе дыхание» тратится один раз за забег (failLastChance); кассета его не возвращает
     insuranceSaves: 0, // сколько раз страховка сработала в раунде (копий до двух — столько и спасений)
     pacts: [], // сделки Дилера (dealerGame.Pact): что действует в раунде, решает D.pactEffects
+    debtNextMul: 1, // сделка №12: следующий долг дороже во столько раз (сбрасывается на назначении)
   };
 }
 
@@ -250,6 +252,7 @@ function rawWeightOf(s, isFree) {
   const base = R.weightsForRound(s.round, E.diceWeight(s.diceDrought));
   const owned = ids(s);
   const noSkulls = D.pactEffects(s.pacts, s.round).noSkulls; // сделка «до конца раунда нет черепов»
+  const luck = D.pactEffects(s.pacts, s.round).symbolLuck; // сделка №11: выбранный символ
   let others = 0;
   for (const symbol of R.SYMBOLS) if (!R.isSkull(symbol) && !R.isDice(symbol)) others += base(symbol);
   const legacySkull = others * LEGACY_SKULL_RATIO;
@@ -260,6 +263,7 @@ function rawWeightOf(s, isFree) {
     const skullFactor = R.isSkull(symbol) ? M.machineSkullFactor(id) : 1; // «Жадный»: черепа тяжелее
     const machined = A.amuletWeight(symbol, baseWeight, owned) * skullFactor; // огранка, череп в кармане
     let weight = I.boostWeight(symbol, machined, s.effects); // чеснок, вишни, колокола, алмазы, удача
+    if (luck !== null) weight = SK.symbolLuckWeight(symbol, weight, luck); // сделка №11: выбранный символ ± веса
     if (s.effects.risk && R.isSkull(symbol)) weight *= I.RISK_SKULL_FACTOR; // риск: черепа втрое чаще
     if (s.effects.luckSpin && R.isSkull(symbol)) weight = 0; // фарт: на этой прокрутке черепов нет
     // Замах рычага: сильный — черепа и крупные символы чаще, слабый — тише. Выплаты не меняет (DONTLIKE п. 8).
@@ -271,6 +275,24 @@ function rawWeightOf(s, isFree) {
     if (R.isSkull(symbol) && s.phase.number >= 2) weight *= LEGACY_PHASE_SKULL;
     return isFree ? B.freeSpinWeight(symbol, weight) : weight;
   };
+}
+
+/**
+ * Законный долг раунда: debtForRound(раунд), сдвинутый сделками Дилера. «Следующий долг +20%» (№12) меняет долг
+ * при назначении в магазине, «текущий долг −10%» (№12) и «долг +8%» (№2) — разово уже в раунде. Поэтому сравниваем
+ * с набором этих чисел, а не с одним: застрявший с прошлого раунда долг (настоящая ошибка) в набор не попадёт.
+ */
+function debtOk(s) {
+  const base = R.debtForRound(s.round);
+  for (const assign of [1, D.DEBT_NEXT_MUL]) {
+    const debt = D.pactDebt(base, assign);
+    const cut = D.pactDebt(debt, D.DEBT_CUT_MUL);
+    const cheap = D.pactDebt(debt, D.CHEAP_SHOP_DEBT_MUL);
+    // Обе карты могли лечь в один раунд: порядок применения даёт два разных округления.
+    const values = [debt, cut, cheap, D.pactDebt(cut, D.CHEAP_SHOP_DEBT_MUL), D.pactDebt(cheap, D.DEBT_CUT_MUL)];
+    if (values.includes(s.debt)) return true;
+  }
+  return false;
 }
 
 function violate(g, name) {
@@ -309,7 +331,7 @@ const FINITE = ['round', 'debt', 'balance', 'earned', 'peakBalance', 'tickets', 
  * места и прочее, что уже обеспечено кодом, живут в guard-ах на своих местах.
  */
 function check(s, g) {
-  if (s.debt !== R.debtForRound(s.round)) violate(g, 'долг ≠ debtForRound(раунд)');
+  if (!debtOk(s)) violate(g, 'долг вне набора debtForRound + сдвиги сделок');
   if (!FINITE.every((key) => Number.isFinite(s[key]))) violate(g, 'в состоянии NaN или ∞');
   if (s.tickets !== g.ticketsLedger) violate(g, 'билеты: табло не сходится с учётом');
   if (s.tickets < 0) violate(g, 'билеты ушли в минус');
@@ -407,7 +429,10 @@ function closeRound(s, st, g) {
 }
 
 /** Приоритет бота у Дилера: «шаг ×2» усиливает всё, «раунд без черепов» бережёт кон, «+3 билета» дешевле всех. */
-const PACT_PRIORITY = ['double-step', 'quiet-round', 'tickets-shop', 'price-up', 'skull-calm', 'soft-skull'];
+const PACT_PRIORITY = [
+  'double-step', 'quiet-round', 'tickets-shop', 'price-up', 'skull-calm', 'soft-skull',
+  'cheap-shop', 'debt-cut', 'full-insurance', 'jackpot-weight', 'symbol-weight',
+];
 const MIN_ROUND_SPINS = 1; // та же нижняя граница, что RoundScene.MIN_ROUND_SPINS: раунд без прокруток невозможен
 
 /**
@@ -423,8 +448,23 @@ function dealer(s, st, g) {
   g.pactsOffered += offers.length;
   const pick = PACT_PRIORITY.map((id) => offers.find((pact) => pact.id === id && !D.pactLive(s.pacts, id, s.round))).find(Boolean);
   if (!pick) { g.pactsRefused += 1; return; }
-  s.pacts.push(D.pactOf(pick.id, s.round));
-  if (pick.id === 'tickets-shop') gainTickets(s, g, 'pact', D.PACT_TICKETS); // единственный разовый эффект сделки
+  // №11: символ выбирает игрок — бот берёт самый дорогой из тех, что уже в автомате (pactSymbols).
+  // Выбирать не из чего — сделку не берём: без символа она ничего не делает (как отказ карты в DealerTable).
+  const symbols = pick.id === 'symbol-weight' ? D.pactSymbols(s.round) : [];
+  const lucky = D.pactSymbolsAvailable(symbols)
+    ? symbols.reduce((best, symbol) => (symbol.price > best.price ? symbol : best), symbols[0])
+    : undefined;
+  if (pick.id === 'symbol-weight' && !lucky) { g.pactsRefused += 1; return; }
+  s.pacts.push(D.pactOf(pick.id, s.round, lucky));
+  // Разовые эффекты сделки — те же, что DealerScene.applyPactOnce: билет, долг +8% (№2), долг −10% и +20% (№12).
+  switch (pick.id) {
+    case 'tickets-shop': gainTickets(s, g, 'pact', D.PACT_TICKETS); break;
+    case 'cheap-shop': s.debt = D.pactDebt(s.debt, D.CHEAP_SHOP_DEBT_MUL); break;
+    case 'debt-cut':
+      s.debt = D.pactDebt(s.debt, D.DEBT_CUT_MUL);
+      s.debtNextMul = D.DEBT_NEXT_MUL;
+      break;
+  }
   g.pactsTaken += 1;
   g.pactsById[pick.id] = (g.pactsById[pick.id] ?? 0) + 1; // какие карты бот берёт (для отчёта)
 }
@@ -505,7 +545,7 @@ function collectBonuses(s, g, grid, result) {
  */
 function burnPot(s, g) {
   const lost = s.pot;
-  const refund = A.insuranceRefund(lost, ids(s), s.insuranceSaves);
+  const refund = A.insuranceRefund(lost, ids(s), s.insuranceSaves, D.pactEffects(s.pacts, s.round).insuranceShare);
   s.pot = 0;
   // Сделки с черепом: «череп в ×1» обнуляет, «мягкий череп» снимает одну ступень (одно очко серии), иначе треть.
   s.streak = D.skullStreakAfter(s.streak, D.pactEffects(s.pacts, s.round));
@@ -527,7 +567,11 @@ function roll(s, st, g, isFree) {
   const w = weightOf(s, isFree);
   // В спокойной прокрутке клевер не тратится (выплат нет) и заевший столбец не переносится: в нём могли быть черепа и кубик.
   let grid;
-  if (!calm && s.luckyClovers > 0) { const clovers = s.luckyClovers; s.luckyClovers = 0; grid = B.luckyGrid(w, clovers); }
+  if (!calm && s.luckyClovers > 0) {
+    const clovers = s.luckyClovers;
+    s.luckyClovers = 0;
+    grid = B.luckyGrid(w, clovers, D.pactPatternWeight(D.pactEffects(s.pacts, s.round)) ?? undefined); // сделка №7
+  }
   else grid = R.spinGrid(w);
   if (calm) s.rustyColumn = null;
   else if (s.rustyColumn !== null && s.lastGrid) { grid = jamGrid(grid, s.lastGrid, s.rustyColumn); s.rustyColumn = null; }
@@ -635,7 +679,7 @@ function runSave(s) {
     luckyClovers: s.luckyClovers, roundShields: s.roundShields, debt: s.debt, balance: s.balance, tickets: s.tickets,
     slots: s.slots, shelf: s.shelf, effects: s.effects, sockets: s.sockets, amulets: s.amulets,
     amuletCounts: s.amuletCounts, bones: s.bones, machineId: s.machineId,
-    pacts: s.pacts, diceDrought: s.diceDrought, secondWindUsed: s.secondWindUsed, insuranceSaves: s.insuranceSaves,
+    pacts: s.pacts, debtNextMul: s.debtNextMul, diceDrought: s.diceDrought, secondWindUsed: s.secondWindUsed, insuranceSaves: s.insuranceSaves,
     // Цель забега тоже на плёнке (RunSave.earned): откат возвращает и набранное, и пик табло, и момент победы.
     earned: s.earned, peakBalance: s.peakBalance, millionRound: s.millionRound, millionSeconds: s.millionSeconds,
     recordRound: s.recordRound, recordSeconds: s.recordSeconds,
@@ -747,6 +791,13 @@ function playRound(s, st, g) {
 
 function freeSlot(s) { return s.shelf.indexOf(null); }
 
+/** Долг нового раунда: debtForRound + разовый «следующий долг +20%» (№12) — как ShopScene.takeDebtForRound. */
+function takeDebtForRound(s) {
+  const debt = D.pactDebt(R.debtForRound(s.round), s.debtNextMul);
+  s.debtNextMul = 1; // множитель действует ровно на один долг
+  return debt;
+}
+
 /** Магазин после отданного долга: раунд +1, новый долг, витрины по закрытым долгам, покупки. */
 function openShop(s, st, g, econ) {
   // Магазин закрыт сделкой Дилера (ShopScene.skipClosedShop): панель не выезжает — новый долг и сразу новый раунд.
@@ -756,16 +807,21 @@ function openShop(s, st, g, econ) {
     g.shopsClosed += 1;
     g.time += SECONDS.shop;
     s.round += 1;
-    s.debt = R.debtForRound(s.round);
+    s.debt = takeDebtForRound(s); // «следующий долг +20%» из сделки №12, как ShopScene.takeDebtForRound
     check(s, g);
     return;
   }
   g.time += SECONDS.shop;
   g.shops += 1;
   s.round += 1;
-  s.debt = R.debtForRound(s.round); // долг не зависит от автомата (characterDebt больше нет)
+  s.debt = takeDebtForRound(s); // долг не зависит от автомата (characterDebt больше нет)
   const closed = s.round - 1; // closedDebts(): раунд уже увеличен
   check(s, g);
+  // Скидка №2 (ShopScene.shopDiscount) и «страховка вдвое дороже за копию» (№5): магазин открывается после раунда,
+  // поэтому срок сделки смотрим на прошлом раунде — счёт уже увеличен.
+  const shopEffects = D.pactEffects(s.pacts, closed);
+  const shopMul = shopEffects.shopDiscount;
+  const fullInsurance = shopEffects.insuranceDoubles;
   // Витрина — под автомат, который стоит: «Удача» у «Тихого» бесполезна (клевера там нет).
   const offer = I.randomOffer(s.round, (item) => M.machineItemAllowed(s.machineId, item));
   // Что открыто в магазине — по закрытым долгам (BaseScene.amuletsUnlocked / drumUnlocked / cassetteUnlocked:
@@ -780,7 +836,7 @@ function openShop(s, st, g, econ) {
     // econ.tapeOnce === false — «сколько угодно кассет» (старая ручка tape45-sim); иначе по политике st.tapes.
     const manyTapes = st.tapes === 'always' || econ.tapeOnce === false;
     if (!manyTapes && g.tapesBought > 0) return;
-    const price = econ.tapePrice(g.tapesBought, closed);
+    const price = S.tapePrice(g.tapesBought, shopMul); // цена и скидка №2 — как в SaveScene.showTapePrice
     if (price > s.tickets) return;
     spendTickets(s, g, price);
     g.tapesBought += 1;
@@ -793,10 +849,12 @@ function openShop(s, st, g, econ) {
     for (const amulet of [...amuletOffer].sort((a, b) => AMULET_POWER[b.id] - AMULET_POWER[a.id])) {
       if (A.countOf(s.amuletCounts, amulet.id) >= amulet.maxCopies) continue;
       const socket = s.amulets.findIndex((a) => a.id === amulet.id); // гнездо этого амулета; −1 — такого ещё нет
-      const price = A.amuletPrice(amulet);
+      const base = A.amuletPrice(amulet, shopMul);
+      // №5: каждая следующая копия страховки вдвое дороже, пока сделка жива.
+      const price = fullInsurance && amulet.id === 'insurance' ? A.insuranceCopyPrice(base, A.countOf(s.amuletCounts, 'insurance')) : base;
       if (price > s.tickets) continue;
       if (socket < 0 && s.amulets.length >= s.sockets) {
-        const sp = A.socketPrice(s.sockets);
+        const sp = A.socketPrice(s.sockets, shopMul);
         if (sp === null || sp + price > s.tickets) continue; // гнездо с амулетом не по карману — этот не взять
         spendTickets(s, g, sp);
         s.sockets += 1;
@@ -815,9 +873,9 @@ function openShop(s, st, g, econ) {
   const isAllowed = (item) => M.machineItemAllowed(s.machineId, item);
   const buyItem = (row) => {
     const item = offer[row];
-    const price = I.itemPrice(item, s.debt);
+    const price = I.itemPrice(item, s.debt, shopMul);
     if (freeSlot(s) < 0) {
-      const slot = I.slotPrice(s.slots, s.debt);
+      const slot = I.slotPrice(s.slots, s.debt, shopMul);
       if (slot === null || reserve() - slot - price < 0) return false;
       s.balance -= slot; s.slots += 1; s.shelf.push(null);
       g.slotsBought += 1;
@@ -842,7 +900,7 @@ function openShop(s, st, g, econ) {
   // Барабан — со второго закрытого долга.
   if (closed >= 2) {
     for (let spins = 0; ; spins++) {
-      const price = DR.drumPrice(spins, s.debt);
+      const price = DR.drumPrice(spins, s.debt, shopMul);
       if (price > st.drumShare * s.debt || reserve() - price < 0) break;
       s.balance -= price;
       const available = DR.DRUM_SECTORS.map((prize) => DR.canWin(prize, freeSlot(s) >= 0, s.slots < I.MAX_SLOTS));
@@ -1096,7 +1154,11 @@ export function study(games = 2000) {
 const sum = (list) => list.reduce((a, b) => a + b, 0);
 
 /** Короткие названия сделок для строки отчёта: полные — в dealerGame.PACTS, здесь только для печати. */
-const PACT_SHORT = [['double-step', 'шаг'], ['quiet-round', 'тихий'], ['tickets-shop', 'билеты'], ['skull-calm', 'тише'], ['soft-skull', 'мягкий'], ['price-up', 'цена']];
+const PACT_SHORT = [
+  ['double-step', 'шаг'], ['quiet-round', 'тихий'], ['tickets-shop', 'билеты'], ['skull-calm', 'тише'],
+  ['soft-skull', 'мягкий'], ['price-up', 'цена'], ['cheap-shop', 'скидка'], ['full-insurance', 'страховка'],
+  ['jackpot-weight', 'джекпот'], ['symbol-weight', 'символ'], ['debt-cut', 'долг'],
+];
 
 export function report(name, x) {
   const f = (n, d = 2) => n.toFixed(d).replace('.', ',');
@@ -1127,7 +1189,7 @@ export function invariantReport(summaries) {
   const names = Object.keys(total);
   const guardsFired = Object.keys(guarded);
   if (names.length === 0) {
-    console.log('проверки: 0 нарушений (5): долг = debtForRound(раунд); все числа конечны; табло билетов = учёт и не в минусе; откат по правилу игры (запись есть, не из будущего); исходы последнего шанса = число шансов');
+    console.log('проверки: 0 нарушений (5): долг из набора debtForRound + сдвиги сделок (№2, №12); все числа конечны; табло билетов = учёт и не в минусе; откат по правилу игры (запись есть, не из будущего); исходы последнего шанса = число шансов');
   } else {
     console.log('проверки: НАРУШЕНИЯ');
     for (const [name, count] of Object.entries(total).sort((a, b) => b[1] - a[1])) console.log(`  ${name}: ${count}`);

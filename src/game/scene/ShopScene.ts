@@ -1,6 +1,6 @@
-import { addCopy, amuletPrice, countOf, randomAmuletOffer, socketPrice } from '../amulets';
+import { addCopy, amuletPrice, countOf, insuranceCopyPrice, randomAmuletOffer, socketPrice, type Amulet } from '../amulets';
 import { amuletKey, itemKey, see, WHO_COLLECTOR } from '../codex';
-import { pactEffects } from '../dealerGame';
+import { pactDebt, pactEffects } from '../dealerGame';
 import { canWin, DRUM_SECTORS, drumChips, drumPrice, prizeItem, randomSector, type DrumPrize } from '../drum';
 import { itemPrice, MAX_SLOTS, offerReplacement, randomOffer, slotPrice, type ShopItem } from '../items';
 import { t } from '../lang';
@@ -41,7 +41,7 @@ export abstract class ShopScene extends DealerScene {
       return;
     }
     this.round += 1;
-    this.debt = debtForRound(this.round);
+    this.debt = this.takeDebtForRound();
     this.isShopOpen = true; // панель на экране — и пока едет, и когда уже стоит
     this.isLeavingShop = false; // забег мог перезапуститься посреди выхода: панель снова на месте
     this.updateRecord();
@@ -55,7 +55,7 @@ export abstract class ShopScene extends DealerScene {
     this.amuletOffer = amuletOffer;
     this.seeInShop(offer.map((item) => itemKey(item.id)), amuletOffer.map((amulet) => amuletKey(amulet.id)));
     this.drumSpins = 0; // в новом магазине барабан снова дешёвый
-    const prices = offer.map((item) => itemPrice(item, this.debt)); // цены — доля нового долга
+    const prices = offer.map((item) => itemPrice(item, this.debt, this.shopDiscount())); // цены — доля нового долга
     // Что открыто — по закрытым долгам: раунд уже увеличен, поэтому предикаты дают счёт этого магазина.
     this.amuletCase.setAvailable(isAmulets);
     this.drum.setAvailable(this.drumUnlocked());
@@ -70,7 +70,7 @@ export abstract class ShopScene extends DealerScene {
       if (this.isGameOver) return; // победа пришла, пока панель ехала: покупки закрыты, панель уже уезжает
       this.isShopping = true;
       this.miniShop.open();
-      if (isAmulets) this.amuletCase.fill({ amulets: amuletOffer, amuletPrices: amuletOffer.map(amuletPrice) });
+      if (isAmulets) this.amuletCase.fill({ amulets: amuletOffer, amuletPrices: amuletOffer.map((amulet) => this.amuletPriceNow(amulet)) });
       this.refreshShop();
     });
     this.refreshShop(); // пока панель едет: цены барабана и рядов — новые, прошлый заход не мелькает
@@ -82,7 +82,7 @@ export abstract class ShopScene extends DealerScene {
    */
   private skipClosedShop(): void {
     this.round += 1;
-    this.debt = debtForRound(this.round);
+    this.debt = this.takeDebtForRound();
     this.isShopOpen = false;
     this.isShopping = false;
     this.isLeavingShop = false;
@@ -92,6 +92,30 @@ export abstract class ShopScene extends DealerScene {
     this.sfx.play('deny');
     if (this.isGameOver) return; // победа пришла, пока банкомат уезжал: раунд начнёт «ДАЛЬШЕ»
     this.startRound();
+  }
+
+  /** Долг нового раунда: rules.debtForRound плюс разовый «следующий долг +20%» (сделка №12, debtNextMul). */
+  private takeDebtForRound(): number {
+    const debt = pactDebt(debtForRound(this.round), this.debtNextMul);
+    this.debtNextMul = 1; // множитель действует ровно на один долг
+    return debt;
+  }
+
+  /**
+   * Скидка сделки №2 «−20% цен» на этот магазин. Магазин открывается ПОСЛЕ раунда, а счёт уже увеличен (openShop),
+   * поэтому смотрим срок сделки на прошлом раунде: так скидка покрывает ровно CHEAP_SHOP_ROUNDS магазинов.
+   * Через эту одну дверь считаются все цены магазина — предметы, места, амулеты, гнёзда, барабан и кассета.
+   */
+  protected shopDiscount(): number {
+    return pactEffects(this.pacts, this.round - 1).shopDiscount;
+  }
+
+  /** Цена амулета в витрине: скидка магазина (№2) и «вдвое дороже» за каждую купленную копию страховки (№5). */
+  private amuletPriceNow(amulet: Amulet): number {
+    const price = amuletPrice(amulet, this.shopDiscount());
+    const effects = pactEffects(this.pacts, this.round - 1);
+    if (!effects.insuranceDoubles || amulet.id !== 'insurance') return price;
+    return insuranceCopyPrice(price, countOf(this.amuletCounts, 'insurance'));
   }
 
   /** В магазине показали предметы и амулеты (и Коллектор уже приходил): всё это теперь на экране на стене; впервые — там мигает «NEW». */
@@ -119,7 +143,7 @@ export abstract class ShopScene extends DealerScene {
     if (!this.isShopping) return;
     const item = this.offer[row];
     if (!item) return;
-    const price = itemPrice(item, this.debt);
+    const price = itemPrice(item, this.debt, this.shopDiscount());
     const slot = this.shelf.indexOf(null);
     if (price > this.balance) {
       this.sfx.play('deny');
@@ -153,14 +177,14 @@ export abstract class ShopScene extends DealerScene {
    */
   private refillRow(row: number, item: ShopItem | null): void {
     if (!item) return; // в пуле больше нет предметов — ряд остаётся пустым
-    this.shop.refill(row, item, itemPrice(item, this.debt));
+    this.shop.refill(row, item, itemPrice(item, this.debt, this.shopDiscount()));
     see(itemKey(item.id)); // новый предмет уже встречен — во вкладке «Предметы» он не «???»
     this.refreshShop();
   }
 
   /** Купить место на полке: с новой клетки слетают доски. */
   private buySlot(): void {
-    const price = slotPrice(this.slots, this.debt);
+    const price = slotPrice(this.slots, this.debt, this.shopDiscount());
     if (price === null) return; // мест больше не продают
     if (price > this.balance) {
       this.sfx.play('deny');
@@ -202,7 +226,7 @@ export abstract class ShopScene extends DealerScene {
       this.amuletCase.deny(place); // амулет новый, а свободного гнезда нет — ценник трясётся
       return;
     }
-    const price = amuletPrice(amulet);
+    const price = this.amuletPriceNow(amulet);
     if (price > this.tickets) {
       this.sfx.play('deny');
       this.amuletCase.deny(place); // не хватает билетов — ценник трясётся
@@ -229,7 +253,7 @@ export abstract class ShopScene extends DealerScene {
 
   /** Купить гнездо за билеты: с гнезда на корпусе слетает заглушка. */
   private buySocket(): void {
-    const price = socketPrice(this.sockets);
+    const price = socketPrice(this.sockets, this.shopDiscount());
     if (price === null) return; // гнёзд больше не продают
     if (price > this.tickets) {
       this.sfx.play('deny');
@@ -253,7 +277,7 @@ export abstract class ShopScene extends DealerScene {
     if (!this.drumUnlocked()) return;
     // Забег кончен или победа ждёт конца действия: колесо за экраном не крутим (winDrum включил бы покупки).
     if (!this.isShopping || this.isGameOver || this.isVictoryPending) return;
-    const price = drumPrice(this.drumSpins, this.debt);
+    const price = drumPrice(this.drumSpins, this.debt, this.shopDiscount());
     if (price > this.balance) {
       this.sfx.play('deny');
       this.drum.deny(); // не хватает фишек — ценник трясётся
@@ -316,8 +340,13 @@ export abstract class ShopScene extends DealerScene {
     // Амулет в витрине готов, если есть свободное гнездо (для нового) или он уже стоит (копию докупаем в то же гнездо).
     const amuletReady = this.amuletOffer.map((amulet) => amulet !== null && (this.amulets.length < this.sockets || countOf(this.amuletCounts, amulet.id) > 0));
     this.amuletCase.refresh(this.tickets, amuletReady);
-    this.miniShop.refresh(this.balance, this.tickets, slotPrice(this.slots, this.debt), socketPrice(this.sockets));
-    const drumCost = drumPrice(this.drumSpins, this.debt);
+    this.miniShop.refresh(
+      this.balance,
+      this.tickets,
+      slotPrice(this.slots, this.debt, this.shopDiscount()),
+      socketPrice(this.sockets, this.shopDiscount()),
+    );
+    const drumCost = drumPrice(this.drumSpins, this.debt, this.shopDiscount());
     this.drum.showPrice(drumCost, drumCost <= this.balance);
     this.drum.showAvailable(this.drumSectors());
   }

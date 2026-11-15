@@ -1,4 +1,5 @@
 import { freeSpinsFor, isJackpot, JACKPOT_SPINS, JACKPOT_TICKETS, luckyGrid } from '../bonus';
+import { pactEffects, pactPatternWeight } from '../dealerGame';
 import { cellsOf } from '../evil';
 import { t } from '../lang';
 import { CENTER_X, cellX, cellY, GRID_Y, SPIN_LAMPS_Y } from '../layout';
@@ -22,12 +23,13 @@ export abstract class BonusScene extends PhaseScene {
    * Сетка прокрутки: после клевера — с паттерном наверняка (удача тратится), иначе обычная.
    * canUseLuck = false — спокойная прокрутка: выплат в ней нет, поэтому клевер ждёт обычной и не тратится.
    * Клеверов на сетке могло быть несколько: их число уходит в luckyGrid, и паттерн выбирается по весам.
+   * Сделка №7 двигает те веса: джекпот тяжелее, «чёрные» паттерны чаще (dealerGame.pactPatternWeight).
    */
   protected rollGrid(weightOf: WeightOf, canUseLuck = true): Grid {
     if (!canUseLuck || this.luckyClovers <= 0) return spinGrid(weightOf);
     const clovers = this.luckyClovers; // запоминаем до сброса: он же гасит огни удачи
     this.luckyClovers = 0;
-    return luckyGrid(weightOf, clovers);
+    return luckyGrid(weightOf, clovers, pactPatternWeight(pactEffects(this.pacts, this.round)) ?? undefined);
   }
 
   /** Итог прокрутки для удачи: короны — бесплатные прокрутки, клевер — удача в следующей, джекпот — билеты и прокрутки. */

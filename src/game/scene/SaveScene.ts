@@ -1,7 +1,7 @@
 import { readPacts } from '../dealerGame';
 import { copyEffects } from '../items';
 import { isPatternId } from '../progress';
-import { luckyCloversOf, tapePrice, type RunSave } from '../save';
+import { debtNextMulOf, luckyCloversOf, tapePrice, type RunSave } from '../save';
 import { ShopScene } from './ShopScene';
 
 /**
@@ -25,10 +25,10 @@ export abstract class SaveScene extends ShopScene {
     this.showTapePrice();
   }
 
-  /** Цена кассеты (если её сейчас продают); не хватает билетов — красная. */
+  /** Цена кассеты (если её сейчас продают); не хватает билетов — красная. Скидка магазина — сделка №2. */
   private showTapePrice(): void {
     if (this.tapeState !== 'forSale') return;
-    const price = tapePrice(this.tapesBought);
+    const price = tapePrice(this.tapesBought, this.shopDiscount());
     this.cassette.showPrice(price, price <= this.tickets);
   }
 
@@ -36,7 +36,7 @@ export abstract class SaveScene extends ShopScene {
   protected buyTape(): void {
     if (!this.cassetteUnlocked()) return;
     if (!this.isShopping || this.tapeState !== 'forSale') return;
-    const price = tapePrice(this.tapesBought);
+    const price = tapePrice(this.tapesBought, this.shopDiscount());
     if (price > this.tickets) {
       this.sfx.play('deny');
       this.cassette.deny();
@@ -92,7 +92,8 @@ export abstract class SaveScene extends ShopScene {
       amuletCounts: { ...this.amuletCounts },
       bones: this.bones,
       machineId: this.machineId,
-      pacts: this.pacts.map((pact) => ({ ...pact })), // сделки Дилера: их срок тоже часть снимка
+      pacts: this.pacts.map((pact) => ({ ...pact })), // сделки Дилера: срок и выбранный символ — тоже часть снимка
+      debtNextMul: this.debtNextMul, // «следующий долг +20%» ещё не применён — откат его не теряет
       diceDrought: this.diceDrought,
       patterns: [...this.patternSet], // стекло на плёнке: откат вернёт ровно этот набор
       secondWindUsed: this.secondWindUsed, // на записи флаг такой, какой был: запись до провала — дыхание ещё есть
@@ -151,6 +152,7 @@ export abstract class SaveScene extends ShopScene {
     this.roundShields = record.roundShields;
     this.isDebtNewsShown = record.isDebtNewsShown;
     this.debt = record.debt; // долг этого раунда: на Счастливом автомате он больше
+    this.debtNextMul = debtNextMulOf(record); // «следующий долг +20%» с плёнки; в старой записи поля нет — 1
     this.balance = record.balance;
     this.earned = record.earned ?? this.earned; // набранное за забег — как на плёнке (в старой записи поля нет)
     // Ступень цели — тоже с плёнки: запись после «ДАЛЬШЕ» не возвращает миллион (нет поля — цель остаётся текущей).

@@ -119,7 +119,7 @@ export class GameScene extends CollectorScene {
     // видно её на панели только вместе с открытой механикой (первый аргумент).
     this.cassette = new Cassette(this, this.cassetteUnlocked(), this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip, this.shop.layer);
     this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx, this.drumUnlocked(), this.shop.layer);
-    this.dealerTable = new DealerTable(this, (id) => this.acceptPact(id), () => this.refusePacts());
+    this.dealerTable = new DealerTable(this, (id, symbol) => this.acceptPact(id, symbol), () => this.refusePacts());
     this.effects = new Effects(this);
     this.achievements = new AchievementWindow(this); // окно ачивки — после эффектов: оно ложится поверх сетки
     this.pumpAchievements(); // то, что выдано до постройки окна (или до рестарта), показываем теперь

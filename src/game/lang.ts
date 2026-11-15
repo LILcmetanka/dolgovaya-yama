@@ -117,6 +117,7 @@ const TEXTS = {
   pactBonus: { ru: 'ПОЛУЧАЕШЬ', en: 'YOU GET' },
   pactCost: { ru: 'ПЛАТИШЬ', en: 'YOU PAY' },
   pactRefuse: { ru: 'ОТКАЗАТЬСЯ', en: 'REFUSE' }, // кнопка внизу сукна, перед ней ✕
+  pactPickSymbol: { ru: 'ВЫБЕРИ СИМВОЛ', en: 'PICK A SYMBOL' }, // карта №11: ряд кнопок-символов на сукне
   pactNews: { ru: 'СДЕЛКА: {0} / {1}', en: 'DEAL: {0} / {1}' }, // новость на стекле, когда сделку взяли
   pactOver: { ru: 'СДЕЛКА КОНЧИЛАСЬ', en: 'THE DEAL IS OVER' }, // новость на стекле, когда срок вышел
   shopClosedByPact: { ru: 'МАГАЗИН ЗАКРЫТ СДЕЛКОЙ', en: 'SHOP CLOSED BY THE DEAL' }, // вместо панели магазина

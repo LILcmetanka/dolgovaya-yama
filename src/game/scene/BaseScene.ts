@@ -3,6 +3,7 @@ import { achievementById, earnedAchievements, type AchievementId, type Achieveme
 import { amuletIdsFrom, multiplierStep, START_SOCKETS, type Amulet, type AmuletCounts, type AmuletId } from '../amulets';
 import { resetCodex } from '../codex';
 import { isDevMode } from '../devmode';
+import type { Pact } from '../dealerGame';
 import { CHIP_GOAL } from '../gameConfig';
 import { garlicOn, noEffects, START_SLOTS, type Item, type ItemEffects, type ShopItem } from '../items';
 import { formatChips, t } from '../lang';
@@ -103,6 +104,7 @@ export abstract class BaseScene extends Phaser.Scene {
   // при scene.restart() поля класса сами не сбрасываются.
   protected round = 0; // номер раунда: какой по счёту долг закрываем
   protected debt = 0; // долг этого раунда
+  protected debtNextMul = 1; // сделка №12: следующий долг дороже во столько раз (сразу сбрасывается в 1)
   protected balance = 0; // фишки на табло — твои; из них в конце раунда отдаётся долг
   protected earned = 0; // сколько игра отдала за забег (все приходы на табло): цель забега — chipGoal
   protected chipGoal = CHIP_GOAL; // порог, к которому идёт забег: 1 000 000, а после «ДАЛЬШЕ» — 10 000 000 (CHIP_RECORD)
@@ -159,6 +161,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isLastChance = false; // фишек не хватило: одна чистая прокрутка и два действия игрока (CollectorScene)
   protected secondWindUsed = false; // второе дыхание потрачено: следующий провал последнего шанса — KABOOM
   protected insuranceSaves = 0; // сколько раз страховка уже спасла кон в этом раунде: копий две — сработок две
+  protected pacts: Pact[] = []; // сделки Дилера (dealerGame.Pact): что из них действует в раунде, решает pactEffects
   protected isGameOver = false; // долг не отдан — DEATH, конец забега
   protected isRewinding = false; // кассету вставили — плёнка перематывается, потом сцена перезапустится с записью
   protected isPaused = false; // пауза (Esc, P, ⏸): анимации, таймеры и звук стоят
@@ -224,6 +227,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected resetState(): void {
     this.round = 1;
     this.debt = debtForRound(1);
+    this.debtNextMul = 1; // «следующий долг +20%» — только из сделки, в новом забеге его нет
     this.balance = 0;
     this.earned = 0;
     this.chipGoal = CHIP_GOAL; // новый забег снова идёт к миллиону; 10 000 000 — только после «ДАЛЬШЕ»
@@ -268,6 +272,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.isLastChance = false;
     this.secondWindUsed = false;
     this.insuranceSaves = 0;
+    this.pacts = []; // новый забег — Дилер ещё ничего не предлагал
     this.isSpinning = false;
     this.isRerolling = false;
     this.isRoundOver = false;

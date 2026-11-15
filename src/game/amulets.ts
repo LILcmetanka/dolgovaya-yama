@@ -40,11 +40,18 @@ export interface Amulet {
  */
 export const AMULET_PRICES: Record<Rarity, number> = { common: 1, rare: 3, legendary: 4, cursed: 1 };
 
+/** Цена в билетах: целые билеты, округлённые после скидки сделки (mul), но не меньше одного. */
+export function ticketPrice(price: number, mul = 1): number {
+  return Math.max(1, Math.round(price * mul));
+}
+
 /** Числа амулетов. Подобраны симуляцией. */
 export const CHERRY_PIT_FACTOR = 2; // косточка: паттерны из 🍒 платят во столько раз больше за каждую копию
 export const BELL_SPINS = 2; // колокольчик: столько прокруток за каждый паттерн из 🔔 за каждую копию
 export const PIGGY_COINS = 2; // копилка: прокрутка без выигрыша кладёт на кон столько × множитель (в степени копий)
 export const INSURANCE_SHARE = 0.75; // страховка: такая доля сгоревшего кона всё равно уходит на табло (один раз за копию за раунд)
+/** Сделка №5 «страховка возвращает 100%»: каждая следующая копия страховки вдвое дороже предыдущей. */
+export const INSURANCE_COPY_DOUBLING = 2;
 export const BOOST_BONUS = 1; // разгон: множитель растёт на столько больше за прокрутку за каждую копию (обычный шаг — MULTIPLIER_STEP)
 export const VEST_SHIELDS = 1; // бронежилет: столько паттернов из черепов за раунд не сжигают кон за каждую копию
 export const CUT_FACTOR = 2; // огранка: 💎 выпадает во столько раз чаще за каждую копию (в степени копий)
@@ -190,9 +197,14 @@ export function owns(owned: AmuletId[], id: AmuletId): boolean {
   return copiesOf(owned, id) > 0;
 }
 
-/** Цена амулета в билетах: переопределённая или по редкости. */
-export function amuletPrice(amulet: Amulet): number {
-  return amulet.price ?? AMULET_PRICES[amulet.rarity];
+/** Цена амулета в билетах: переопределённая или по редкости, со скидкой магазина (mul — сделка №2). */
+export function amuletPrice(amulet: Amulet, mul = 1): number {
+  return ticketPrice(amulet.price ?? AMULET_PRICES[amulet.rarity], mul);
+}
+
+/** Цена копии страховки со сделкой №5: k-я копия (k — уже купленные) вдвое дороже предыдущей. */
+export function insuranceCopyPrice(price: number, copies: number): number {
+  return Math.round(price * INSURANCE_COPY_DOUBLING ** Math.max(0, copies));
 }
 
 /** Сколько билетов за долг, отданный раньше конца раунда: оставшиеся прокрутки пропадают, а за EARLY_PAY_MIN_SPINS и больше — билет. */
@@ -201,9 +213,9 @@ export function earlyPayTickets(spinsLeft: number): number {
 }
 
 /** Цена следующего гнезда (сейчас гнёзд sockets). Гнёзд уже MAX_SOCKETS — null. */
-export function socketPrice(sockets: number): number | null {
+export function socketPrice(sockets: number, mul = 1): number | null {
   if (sockets >= MAX_SOCKETS) return null;
-  return SOCKET_PRICES[sockets - START_SOCKETS];
+  return ticketPrice(SOCKET_PRICES[sockets - START_SOCKETS], mul);
 }
 
 /** Что в витрине амулетов: AMULET_OFFER_SIZE разных случайных амулетов, которых ещё можно докупить (копий меньше потолка). */
@@ -288,10 +300,12 @@ export function piggyCoins(multiplier: number, owned: AmuletId[]): number {
   return owns(owned, 'piggy') ? PIGGY_COINS ** copiesOf(owned, 'piggy') * multiplier : 0;
 }
 
-/** Сколько сгоревшего кона страховка всё равно отдаёт на табло (доля INSURANCE_SHARE). */
-/** Сколько вернёт страховка: доля сгоревшего кона, пока сработок в раунде меньше, чем копий (used — сколько уже было). */
-export function insuranceRefund(lost: number, owned: AmuletId[], used = 0): number {
-  return used < copiesOf(owned, 'insurance') ? Math.floor(lost * INSURANCE_SHARE) : 0;
+/**
+ * Сколько вернёт страховка: доля сгоревшего кона, пока сработок в раунде меньше, чем копий (used — сколько уже было).
+ * share — доля возврата: INSURANCE_SHARE, а со сделкой №5 «страховка возвращает 100%» — 1.
+ */
+export function insuranceRefund(lost: number, owned: AmuletId[], used = 0, share = INSURANCE_SHARE): number {
+  return used < copiesOf(owned, 'insurance') ? Math.floor(lost * share) : 0;
 }
 
 /** Сколько паттернов из черепов в начале раунда не сжигают кон (бронежилет; VEST_SHIELDS за копию). */

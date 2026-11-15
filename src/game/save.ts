@@ -1,4 +1,4 @@
-import type { Amulet, AmuletCounts } from './amulets';
+import { ticketPrice, type Amulet, type AmuletCounts } from './amulets';
 import type { Pact } from './dealerGame';
 import type { MachineId } from './machines';
 import type { Item, ItemEffects } from './items';
@@ -41,6 +41,7 @@ export interface RunSave {
   bones: number;
   machineId?: MachineId; // какой автомат стоял на записи; в старых записях поля нет — остаётся текущий
   pacts?: Pact[]; // сделки Дилера с их сроком (dealerGame.Pact); в старых записях поля нет — считаем, что сделок нет
+  debtNextMul?: number; // сделка №12: следующий долг дороже во столько раз (1 — обычный); в старых записях поля нет
   diceDrought: number;
   patterns?: string[]; // какие паттерны были открыты на момент записи: откат возвращает стекло как на плёнке
   secondWindUsed?: boolean; // «второе дыхание» уже потрачено; в старых записях поля нет — считаем, что нет
@@ -48,9 +49,9 @@ export interface RunSave {
   devUsed?: boolean; // забег трогали во вкладке «ТЕСТ» до записи: откат этого не забывает, рекорд фишек не пишется; в старых записях поля нет — считаем, что нет
 }
 
-/** Цена кассеты в билетах, когда за забег уже куплено bought кассет: 2, 3, 4… */
-export function tapePrice(bought: number): number {
-  return TAPE_PRICE_START + TAPE_PRICE_STEP * bought;
+/** Цена кассеты в билетах, когда за забег уже куплено bought кассет: 2, 3, 4… mul — скидка магазина (сделка №2). */
+export function tapePrice(bought: number, mul = 1): number {
+  return ticketPrice(TAPE_PRICE_START + TAPE_PRICE_STEP * bought, mul);
 }
 
 /**
@@ -63,4 +64,14 @@ export function luckyCloversOf(record: { luckyClovers?: unknown }): number {
   const clovers = record.luckyClovers;
   if (typeof clovers !== 'number' || !Number.isFinite(clovers) || clovers <= 0) return 0;
   return Math.floor(clovers);
+}
+
+/**
+ * Множитель следующего долга с кассеты (сделка №12 «следующий долг +20%»). В старых записях поля нет — 1.
+ * Не число, NaN, 0 и минус — 1: испорченное поле не должно обнулить или опрокинуть долг.
+ */
+export function debtNextMulOf(record: { debtNextMul?: unknown }): number {
+  const mul = record.debtNextMul;
+  if (typeof mul !== 'number' || !Number.isFinite(mul) || mul <= 0) return 1;
+  return mul;
 }

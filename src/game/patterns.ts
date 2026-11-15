@@ -37,6 +37,14 @@ export const PATTERNS: Pattern[] = [
 /** Самый сильный паттерн: сильнее него на сетке ничего не собрать (последнему шансу важно — цели выше не бывает). */
 export const TOP_MULTIPLIER = Math.max(...PATTERNS.map((pattern) => pattern.multiplier));
 
+/**
+ * «Чёрные» паттерны — самый слабый из тех, что платят больше простой линии ×1 (ряд из трёх, столбец, диагонали):
+ * сейчас это ×2 (ряд из четырёх и квадрат). Из него считает поправку сделка №7 «вес чёрных паттернов +1».
+ */
+export const LOW_PATTERN_MULTIPLIER = Math.min(
+  ...PATTERNS.map((pattern) => pattern.multiplier).filter((multiplier) => multiplier > 1),
+);
+
 /** Паттерн из одних джокеров платит как самый дорогой символ. */
 const BEST_SYMBOL = SYMBOLS.reduce((best, symbol) => (symbol.price > best.price ? symbol : best));
 

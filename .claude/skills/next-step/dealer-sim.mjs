@@ -21,7 +21,10 @@ if (!Number.isInteger(VISITS) || VISITS <= 0) {
 }
 
 /** Политика бота — та же, что в full-run.mjs: чем выше в списке, тем охотнее берём. */
-const PACT_PRIORITY = ['double-step', 'quiet-round', 'tickets-shop', 'price-up', 'skull-calm', 'soft-skull'];
+const PACT_PRIORITY = [
+  'double-step', 'quiet-round', 'tickets-shop', 'price-up', 'skull-calm', 'soft-skull',
+  'cheap-shop', 'debt-cut', 'full-insurance', 'jackpot-weight', 'symbol-weight',
+];
 const ROUNDS = 30; // длина модельного забега
 const DICE_CHANCE = 0.95; // кубик приходит почти каждый раунд (его вес подстраивает evil.diceWeight)
 const DEATH_CHANCE = 0.12; // провал последнего шанса: счёт идёт назад, сроки сделок едут с ним
@@ -30,6 +33,16 @@ const LAST_CHANCE_STEP = 2; // насколько счёт уходит наза
 /** Что бот берёт со стола: первая по приоритету сделка, которой у него ещё нет (или null — отказ). */
 const pick = (offers, pacts, round) =>
   PACT_PRIORITY.map((id) => offers.find((pact) => pact.id === id && !D.pactLive(pacts, id, round))).find(Boolean);
+/**
+ * Запись сделки в кассету: для №11 бот выбирает самый дорогой символ, как в full-run.mjs. Выбирать не из чего —
+ * null: сделку без символа не берём (она ничего не делает, как отказ карты в DealerTable).
+ */
+const take = (choice, round) => {
+  if (choice.id !== 'symbol-weight') return D.pactOf(choice.id, round);
+  const symbols = D.pactSymbols(round);
+  if (!D.pactSymbolsAvailable(symbols)) return null;
+  return D.pactOf(choice.id, round, symbols.reduce((best, symbol) => (symbol.price > best.price ? symbol : best), symbols[0]));
+};
 
 // ---------- 1–2: предложения и решения бота ----------
 const offered = Object.fromEntries(D.PACTS.map((spec) => [spec.id, 0]));
@@ -79,6 +92,10 @@ const effectsOn = {
   '−1 прокрутка': (effects) => effects.spinsDelta < 0,
   'выигрыш больше': (effects) => effects.winMul > 1,
   'магазин закрыт': (effects) => effects.shopClosed,
+  'скидка магазина': (effects) => effects.shopDiscount < 1,
+  'страховка 100%': (effects) => effects.insuranceShare === D.INSURANCE_FULL_SHARE,
+  'джекпот тяжелее': (effects) => effects.jackpotWeightMul > 1,
+  'символ выбран': (effects) => effects.symbolLuck !== null,
 };
 const roundsOn = Object.fromEntries(Object.keys(effectsOn).map((name) => [name, 0]));
 let roundsSeen = 0;
@@ -93,7 +110,10 @@ for (let game = 0; game < 5000; game++) {
   for (let screen = 0; screen < ROUNDS; screen++) {
     if (Math.random() < DICE_CHANCE) {
       const choice = pick(D.offerPacts(), pacts, round);
-      if (choice) pacts.push(D.pactOf(choice.id, round));
+      if (choice) {
+        const pact = take(choice, round);
+        if (pact) pacts.push(pact);
+      }
     }
     const effects = D.pactEffects(pacts, round);
     roundsSeen += 1;
@@ -132,7 +152,10 @@ let tape = [];
 for (let i = 0; i < 12; i++) {
   const offers = D.offerPacts();
   const choice = pick(offers, tape, round);
-  if (choice) tape.push(D.pactOf(choice.id, round));
+  if (choice) {
+    const pact = take(choice, round);
+    if (pact) tape.push(pact);
+  }
   const effects = D.pactEffects(tape, round);
   const on = Object.entries(effectsOn)
     .filter(([, isOn]) => isOn(effects))
