@@ -137,8 +137,8 @@ export class GameScene extends CollectorScene {
       markTutorialDone();
       this.reveal = null;
     }
-    // Тьма первого забега: шкала замаха стоит вне пятна света — её не видно, значит и не нажимать,
-    // и подсказку над тьмой не показывать. Покажется, когда тьма погаснет (BaseScene.finishTutorial).
+    // Тьма первого забега: шкала замаха стоит вне пятна света — её не видно, но рычаг дёргать можно:
+    // шкала включится, когда тьма погаснет. И подсказку над тьмой не показывать (BaseScene.finishTutorial).
     if (this.reveal) this.panel.setChargeVisible(false);
     this.setupKeyboard();
     this.setupSound();
@@ -252,10 +252,10 @@ export class GameScene extends CollectorScene {
    * Нажали рычаг (пробел, Enter или мышь): начинаем замах. Шкала растёт, пока держат, — её обновляет update().
    * Вне игры (пауза, магазин, окно перемешки, у монитора) замах не начинается: там у этих клавиш своё дело.
    * Источник — клавиша или рычаг: отпускание чужого источника замах не завершает (см. BaseScene.endCharge).
+   * Тьма обучения прячет шкалу замаха и подсказки, но рычаг в пятне света — дёргать можно.
    */
   private beginCharge(source: ChargeSource): void {
     if (this.isCharging || !this.canAct()) return;
-    if (this.reveal?.isActive) return; // тьма первого забега: рычаг ещё не показан
     this.startCharging(source);
   }
 
