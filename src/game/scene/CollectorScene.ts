@@ -1,4 +1,5 @@
 import { interestCoins, TICKETS_PER_DEBT, winFactor } from '../amulets';
+import { shiftPacts } from '../dealerGame';
 import { diceWeight } from '../evil';
 import { CHIP_RECORD } from '../gameConfig';
 import {
@@ -322,7 +323,9 @@ export abstract class CollectorScene extends SaveScene {
     this.sfx.play('payment');
     this.collector.clearGoodLuck();
     this.chipCase.open(() => {
+      const before = this.round;
       this.round = Math.max(0, this.round - WON_DEBT_ROUND_STEP); // магазин прибавит единицу: раунд N − 1, а не N + 1
+      this.pacts = shiftPacts(this.pacts, this.round - before); // сделка живёт сыгранные раунды, а не номер раунда
       this.openShop();
     });
   }
@@ -348,7 +351,9 @@ export abstract class CollectorScene extends SaveScene {
       if (this.isGameOver || this.isShopOpen) return;
       // Долг не закрыт — счёт не двигаем (FAILED_DEBT_ROUND_STEP = 1): магазин прибавит единицу, и следующий
       // долг будет тем же, без роста. Раньше счёт шёл на один долг назад — проигрыш выходил бафом.
+      const before = this.round;
       this.round = Math.max(0, this.round - FAILED_DEBT_ROUND_STEP);
+      this.pacts = shiftPacts(this.pacts, this.round - before); // сроки сделок едут вместе со счётом раундов
       this.openShop();
     });
   }

@@ -17,7 +17,7 @@ export const LAMP_BLUE = 0x38bdf8; // щит отбил черепа
 export const LAMP_GARLIC = 0xd9f99d; // пока действует чеснок, огни в покое бледно-зелёные
 export const LAMP_BLOOD = 0x991b1b; // следующая прокрутка кровавая — огни в покое тёмно-красные
 export const LAMP_ANGRY = 0xf97316; // фаза 2 «автомат злится» — огни в покое оранжевые
-export const LAMP_PURPLE = 0xa855f7; // игра Дилера
+export const LAMP_PURPLE = 0xa855f7; // стол Дилера
 export const LAMP_LUCK = 0x22c55e; // клевер: следующая прокрутка с паттерном — огни в покое ярко-зелёные
 
 /** Цвета надписей. */

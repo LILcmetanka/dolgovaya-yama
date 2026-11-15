@@ -110,9 +110,16 @@ const TEXTS = {
   },
   whoDealer: { ru: 'Дилер', en: 'Dealer' },
   whoDealerWhat: {
-    ru: 'Угадай больше, меньше или равно — промах сжигает кон',
-    en: 'Guess higher, lower or equal — a miss burns the pot',
+    ru: 'Предлагает сделку: баф за дебаф',
+    en: 'Offers a deal: a buff for a debuff',
   },
+  // Сделки Дилера (dealerGame.ts): карта на сукне — две подписи и две строки (сами тексты сделок — в dealerGame.PACTS).
+  pactBonus: { ru: 'ПОЛУЧАЕШЬ', en: 'YOU GET' },
+  pactCost: { ru: 'ПЛАТИШЬ', en: 'YOU PAY' },
+  pactRefuse: { ru: 'ОТКАЗАТЬСЯ', en: 'REFUSE' }, // кнопка внизу сукна, перед ней ✕
+  pactNews: { ru: 'СДЕЛКА: {0} / {1}', en: 'DEAL: {0} / {1}' }, // новость на стекле, когда сделку взяли
+  pactOver: { ru: 'СДЕЛКА КОНЧИЛАСЬ', en: 'THE DEAL IS OVER' }, // новость на стекле, когда срок вышел
+  shopClosedByPact: { ru: 'МАГАЗИН ЗАКРЫТ СДЕЛКОЙ', en: 'SHOP CLOSED BY THE DEAL' }, // вместо панели магазина
   // Замах рычага (DONTLIKE п. 8): подсказка к шкале заряда.
   chargeTitle: { ru: 'Замах', en: 'Charge' },
   chargeWhat: {
@@ -146,7 +153,7 @@ const TEXTS = {
   skullNote: { ru: 'Паттерн из черепов сжигает кон; сейчас {0}% клеток', en: 'A skull pattern burns the pot; {0}% of cells now' },
   ticketNote: { ru: '{0} на экране — билет', en: '{0} on screen — a ticket' },
   jokerNote: { ru: 'Заменяет любой символ в паттерне', en: 'Stands in for any symbol in a pattern' },
-  diceNote: { ru: 'Игра Дилера: больше или меньше', en: "Dealer's game: higher or lower" },
+  diceNote: { ru: 'Игра Дилера: сделка', en: "Dealer's game: a deal" },
   spiderNote: { ru: 'Съедает {0}% кона', en: 'Eats {0}% of the pot' },
   cloverNote: { ru: 'Следующая прокрутка — с паттерном; клеверов больше — паттерн сильнее', en: 'Next spin hits a pattern; more clovers — a stronger pattern' },
   lockNote: { ru: 'Паттерны через его столбец не считаются', en: "Patterns through its column don't count" },

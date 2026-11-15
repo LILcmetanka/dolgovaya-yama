@@ -14,6 +14,7 @@ import {
 import { CIGARETTES_FOR_ACHIEVEMENT, isBloodSpill, ITEM_ACHIEVEMENTS } from '../achievements';
 import { FREE_SPINS_GUARD } from '../bonus';
 import { bloodBurn, BLOOD_WIN, cellsOf, diceWeight, spiderBite } from '../evil';
+import { pactEffects, skullShareWeightMul, type Pact } from '../dealerGame';
 import {
   activeSlotEffects,
   CIGARETTE_SPINS,
@@ -33,13 +34,15 @@ import {
   type SlotEffectId,
 } from '../items';
 import { t } from '../lang';
+import { lastCharge } from '../levers';
 import { machineAtRoundStart, machineWinFactor } from '../machines';
 import { phaseAt } from '../phases';
-import { symbolWeightOf } from '../skullShare';
+import { skullShareOf, symbolWeightOf, type WeightContext } from '../skullShare';
 import { CENTER_X, cellX, cellY, DISPLAY, GRID_Y, PAYOUT_WINDOW, SPIN_LAMPS_Y } from '../layout';
 import { evaluateGrid, lockedColumns, ticketCells, type SpinResult } from '../patterns';
 import {
   GRID_ROWS,
+  isSkull,
   JOKER,
   MAX_SPINS_PER_ROUND,
   randomSymbol,
@@ -89,7 +92,7 @@ function conflictsWith(id: ItemId, effects: ItemEffects): boolean {
  * Слой раунда: прокрутка → итог (выигрыш на кон, черепа его сжигают или их отбивает щит; злые символы: паук ест кон,
  * замок блокирует столбец, кровь делает следующую прокрутку кровавой) → «забрать» на табло,
  * предметы с полки и амулеты в гнёздах во время прокруток, начало и конец раунда.
- * Выпал кубик — игра Дилера (слой DealerScene), прокрутки кончились — расплата (слой CollectorScene).
+ * Выпал кубик — сделки Дилера (слой DealerScene), прокрутки кончились — расплата (слой CollectorScene).
  * Короны, клевер и джекпот — слой BonusScene; бесплатные прокрутки за короны крутит этот слой (spinFree).
  * Автомат (классический, жадный, тихий) меняет веса символов и выплаты — его выбирают в магазине (machines.ts),
  * заржавевший столбец и смена автомата — слой MachineScene.
@@ -97,7 +100,7 @@ function conflictsWith(id: ItemId, effects: ItemEffects): boolean {
 export abstract class RoundScene extends MachineScene {
   /** Коллектор приходит за долгом — расплата; isPaidEarly — долг отдают раньше, банкомат сразу забирает. Её делает слой CollectorScene. */
   protected abstract callCollector(isPaidEarly: boolean): void;
-  /** Выпал кубик — игра Дилера «больше или меньше»; кончилась — done(). Её делает слой DealerScene. */
+  /** Выпал кубик — Дилер предлагает сделки (dealerGame); ушёл — done(). Её делает слой DealerScene. */
   protected abstract startDealerGame(done: () => void): void;
   private spinsThisRun = 0; // сколько раз крутил за забег — на третьей прокрутке из тьмы проступает записка
   // Сетка, которая ждёт решения в окне перемешки и подмены (шаг 63б): итог ещё не посчитан. null — окно закрыто.
@@ -107,8 +110,10 @@ export abstract class RoundScene extends MachineScene {
   private spinCharge = 0;
   /** Раунд закрыт ранней оплатой: Коллектор забирает долг сам (и после «ДАЛЬШЕ» с экрана победы — тоже). */
   protected isPaidEarly = false;
+  /** Сделки Дилера (dealerGame.Pact): что из них действует в раунде, решает dealerGame.pactEffects. Кассета их возвращает. */
+  protected pacts: Pact[] = [];
 
-  /** Новый забег: прокруток ещё не было, окно перемешки не висит. */
+  /** Новый забег: прокруток ещё не было, окно перемешки не висит, сделок Дилера нет. */
   protected resetState(): void {
     super.resetState();
     this.spinsThisRun = 0;
@@ -116,6 +121,7 @@ export abstract class RoundScene extends MachineScene {
     this.rerollTimer = undefined;
     this.spinCharge = 0;
     this.isPaidEarly = false;
+    this.pacts = [];
   }
 
   // ---------- Прокрутка ----------
@@ -154,12 +160,46 @@ export abstract class RoundScene extends MachineScene {
     this.screen.clearHighlights();
     this.refreshHud();
 
-    const base = weightsForRound(this.round, diceWeight(this.diceDrought)); // какие символы сейчас в автомате и с какими весами
+    const base = this.baseWeights(); // какие символы сейчас в автомате и с какими весами
     const weightOf = (symbol: SlotSymbol): number => this.symbolWeight(symbol, base, isFree);
     // Результат известен сразу (после клевера — с паттерном), анимация только показывает его.
     // Клевер на сетку и ржавый столбец работают всегда: спокойного режима больше нет.
     const grid = this.rollGrid(weightOf, true, true);
     this.screen.spin(grid, weightOf, () => this.finishSpin(grid, weightOf, multiplier, isFree));
+  }
+
+  /**
+   * Веса раунда — те же, что считает rules.weightsForRound, с поправкой сделок Дилера (dealerGame.pactEffects):
+   * «до конца раунда нет черепов» — черепам этого раунда вес 0, и в прокрутке их не будет.
+   * Второй раунд той же сделки (доля черепов +5 п.п.) веса не гасит: он двигает вес черепа в weightContext.
+   */
+  private baseWeights(): WeightOf {
+    const base = weightsForRound(this.round, diceWeight(this.diceDrought));
+    if (!pactEffects(this.pacts, this.round).noSkulls) return base;
+    return (symbol) => (isSkull(symbol) ? 0 : base(symbol));
+  }
+
+  /**
+   * Всё, от чего зависит вес символа, плюс поправка сделки «+5 п.п. черепов»: множитель веса черепа выводим из доли,
+   * которую видит игрок (dealerGame.skullShareWeightMul), поэтому прокрутка и плашка «💀 N%» показывают одно число.
+   */
+  protected override weightContext(charge = lastCharge()): WeightContext {
+    const base = super.weightContext(charge);
+    const delta = pactEffects(this.pacts, this.round).skullShareDelta;
+    if (delta <= 0) return base;
+    const mul = skullShareWeightMul(skullShareOf(this.round, this.diceDrought, base), delta);
+    return mul === 1 ? base : { ...base, skullMul: mul };
+  }
+
+  /** Шаг множителя серии: сделка «шаг вдвое» его удваивает (dealerGame.pactEffects). */
+  protected override streakStep(): number {
+    return super.streakStep() * pactEffects(this.pacts, this.round).multiplierStepMul;
+  }
+
+  /** Доля черепов для ачивки «50 на 50» — как плашка на корпусе: в раунде без черепов она 0. */
+  protected override currentSkullShare(): number {
+    if (pactEffects(this.pacts, this.round).noSkulls) return 0;
+    return super.currentSkullShare();
   }
 
   /**
@@ -182,6 +222,7 @@ export abstract class RoundScene extends MachineScene {
    */
   private skullShareNext(): number {
     if (this.isLastChance) return 0; // последний шанс: сетка чистая, черепов в ней нет — строка честно показывает 0
+    if (pactEffects(this.pacts, this.round).noSkulls) return 0; // сделка «нет черепов»: их и правда нет
     return this.currentSkullShare(); // то же число считает ачивка «50 на 50»: один код, а не два
   }
 
@@ -206,7 +247,7 @@ export abstract class RoundScene extends MachineScene {
 
   /**
    * Итог прокрутки: паттерн из черепов — onSkulls, иначе серия растёт, выигрыш или копилка — на кон, пауки едят кон.
-   * Кровь на экране — следующая прокрутка кровавая; короны, клевер и джекпот — collectBonuses. Выпал кубик — сначала игра Дилера, потом дальше.
+   * Кровь на экране — следующая прокрутка кровавая; короны, клевер и джекпот — collectBonuses. Выпал кубик — сначала сделки Дилера, потом дальше.
    * Единственный вход в подсчёт: и обычная прокрутка, и сетка после перемешки или подмены приходят сюда.
    */
   private evaluateSpin(grid: Grid, multiplier: number): void {
@@ -333,7 +374,7 @@ export abstract class RoundScene extends MachineScene {
   }
 
   /**
-   * После итога (и игры Дилера, если она была): впереди бесплатные прокрутки — следующая сама, прокрутки кончились — конец раунда,
+   * После итога (и сделок Дилера, если они были): впереди бесплатные прокрутки — следующая сама, прокрутки кончились — конец раунда,
    * иначе спокойный момент — может начаться новая фаза.
    */
   private afterSpin(): void {
@@ -411,7 +452,8 @@ export abstract class RoundScene extends MachineScene {
     const lost = this.pot;
     const refund = insuranceRefund(lost, this.amuletIds(), this.insuranceSaves);
     this.pot = 0;
-    this.streak = streakAfterSkull(this.streak);
+    // Сделка «череп роняет серию в ×1»: серия обнуляется, а не оставляет треть (SKULL_KEEPS_STREAK).
+    this.streak = pactEffects(this.pacts, this.round).skullWipesStreak ? 0 : streakAfterSkull(this.streak);
     this.sfx.play('skulls');
     this.screen.highlightSkulls(result.hits);
     this.effects.flashAndShake();
@@ -709,12 +751,26 @@ export abstract class RoundScene extends MachineScene {
     this.spinsLeft = spinsAfterBonus(this.spinsLeft, phaseAt(this.closedDebts()).bonusSpins);
     this.roundShields = vestShields(ids);
     if (owns(ids, 'greed')) this.amuletRack.trigger('greed');
+    // Сделка кончилась — одна короткая новость. Новый символ важнее, поэтому announceNewSymbols идёт следом
+    // и в раунде с новым символом перекрывает её (на стекле живёт одна новость).
+    if (this.dropExpiredPacts()) this.screen.announceNews(t('pactOver'));
     this.announceNewSymbols();
     this.panel.popSpinLamps(this.spinsLeft); // лишние лампочки (фаза 2, сигареты) появляются сразу, а не вторым «попом»
     this.screen.flashLamps(LAMP_GREEN, NEW_ROUND_LAMPS_TIME);
     this.sfx.play('roundStart');
     this.checkPhase(); // начало раунда — спокойный момент; после зелёных огней раунда, иначе они перекроют красную вспышку фазы
     this.refreshHud();
+  }
+
+  /**
+   * Убрать сделки, чей срок вышел (последний раунд — untilRound): их срок прошёл вместе с прошлым раундом,
+   * и в этом они уже ничего не делают. Вернёт true — что-то кончилось, и об этом стоит сказать один раз.
+   */
+  private dropExpiredPacts(): boolean {
+    const alive = this.pacts.filter((pact) => pact.untilRound >= this.round);
+    if (alive.length === this.pacts.length) return false;
+    this.pacts = alive;
+    return true;
   }
 
   /** В автомат вошли новые символы — новость на экране, а на мониторе они появляются. Один раз за раунд: после последнего шанса номер раунда меньше, новости нет. */

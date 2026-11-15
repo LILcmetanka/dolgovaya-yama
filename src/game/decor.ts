@@ -83,13 +83,7 @@ export const TICKET_TEXTURE = 'ticket'; // красный билет — вто�
 export const SOCKET_CAP_TEXTURE = 'socket-cap'; // заглушка закрытого гнезда для амулета
 export const CRACK_TEXTURE = 'screen-crack'; // дыра и трещины на экране автомата после взрыва
 export const CRACK_SIZE = 150; // сторона картинки с трещинами
-export const CARD_BACK_TEXTURE = 'card-back'; // рубашка карты Дилера
-export const DEALER_FELT_TEXTURE = 'dealer-felt'; // стол Дилера поверх экрана
-export const CHOICE_HIGHER_TEXTURE = 'choice-higher'; // кнопка «>» — следующая больше
-export const CHOICE_EQUAL_TEXTURE = 'choice-equal'; // кнопка «=» — такая же
-export const CHOICE_LOWER_TEXTURE = 'choice-lower'; // кнопка «<» — меньше
-export const CHIP_STACK_TEXTURE = 'chip-stack'; // фишка сбоку-сверху: из таких складывается стопка — ставка у Дилера
-export const STAKE_GLOW_TEXTURE = 'stake-glow'; // золотое свечение под ставкой Дилера: можно остановиться
+export const DEALER_FELT_TEXTURE = 'dealer-felt'; // сукно Дилера поверх экрана: на него ложатся карты-сделки
 export const RUST_TEXTURE = 'rust-column'; // ржавчина на заевшем столбце сетки
 const ROOM_TEXTURE = 'room';
 const MACHINE_TEXTURE = 'machine'; // детали корпуса: окантовка, табло, стекло, окна, гнёзда
@@ -133,11 +127,6 @@ const CHIP_EDGE = '#450a0a'; // кайма и обводка «1»
 const CHIP_CREAM = '#fef3c7'; // вставки по ободу, кольцо и «1»
 const CHIP_GOLD = 'rgba(253, 224, 71, 0.85)'; // тонкое внутреннее кольцо
 const CHIP_NOTCHES = 8; // кремовые вставки по ободу
-const CHIP_TOP = 0xdc2626; // фишка в стопке: верхняя грань — того же красного, что фишка анфас
-const CHIP_SIDE = 0x991b1b; // бок — темнее
-/** Свечение под ставкой Дилера: мягкий золотой круг. */
-const STAKE_GLOW_SIZE = 96; // поперечник, px
-const STAKE_GLOW_RGB = '253, 224, 71'; // золото, как огни выигрыша
 /** Билет: красный корешок с вырезами по бокам. Доли — от высоты билета (линия отрыва — от ширины). */
 const TICKET_WIDTH = 36;
 const TICKET_HEIGHT = 22;
@@ -1644,129 +1633,18 @@ export function createCrackTexture(scene: Phaser.Scene): void {
   texture.refresh(); // передать нарисованное в видеокарту
 }
 
-/** Имя текстуры карты Дилера, например 'card-7'. */
-export function cardTexture(value: number): string {
-  return `card-${value}`;
-}
-
 /**
- * Игра Дилера: карты от min до max (белые, крупная цифра, ♠ в углах), рубашка, фиолетовое сукно поверх экрана,
- * две кнопки-стрелки, фишка для стопки-ставки и свечение под ней.
- * Цифры нарисованы прямо на картах, поэтому карту можно переворачивать одной картинкой.
+ * Стол Дилера: фиолетовое сукно поверх экрана автомата. На сукно ложатся три карты-сделки (parts/dealerTable.ts):
+ * сами карты рисует стол, в decor.ts нужна только подложка.
  */
-export function createDealerTextures(scene: Phaser.Scene, min: number, max: number, felt: Box): void {
-  const width = 66;
-  const height = 92;
-  for (let value = min; value <= max; value++) {
-    const key = cardTexture(value);
-    if (scene.textures.exists(key)) continue;
-    const texture = createSharpCanvas(scene, key, width, height);
-    if (!texture) continue;
-    drawCard(texture.context, width, height, String(value));
-    texture.refresh(); // передать нарисованное в видеокарту
-  }
-  if (!scene.textures.exists(CARD_BACK_TEXTURE)) {
-    const g = scene.add.graphics();
-    g.fillStyle(0xf8fafc);
-    g.fillRoundedRect(0, 0, width, height, 8);
-    g.fillStyle(0x9d174d);
-    g.fillRoundedRect(5, 5, width - 10, height - 10, 6); // рубашка
-    g.lineStyle(2, 0xfbcfe8, 0.5);
-    for (let y = 14; y < height - 10; y += 8) g.lineBetween(10, y, width - 10, y); // полосы рубашки
-    g.lineStyle(3, 0xfbcfe8);
-    g.strokeCircle(width / 2, height / 2, 14); // круг посередине
-    bake(g, CARD_BACK_TEXTURE, width, height);
-  }
-  if (!scene.textures.exists(DEALER_FELT_TEXTURE)) {
-    const g = scene.add.graphics();
-    g.fillStyle(0x2e1065);
-    g.fillRoundedRect(0, 0, felt.width, felt.height, 16); // фиолетовое сукно
-    g.lineStyle(3, 0xa855f7);
-    g.strokeRoundedRect(8, 8, felt.width - 16, felt.height - 16, 12);
-    bake(g, DEALER_FELT_TEXTURE, felt.width, felt.height);
-  }
-  if (!scene.textures.exists(CHOICE_HIGHER_TEXTURE)) bakeChoice(scene, CHOICE_HIGHER_TEXTURE, 0x15803d, 'higher');
-  if (!scene.textures.exists(CHOICE_EQUAL_TEXTURE)) bakeChoice(scene, CHOICE_EQUAL_TEXTURE, 0x7e22ce, 'equal');
-  if (!scene.textures.exists(CHOICE_LOWER_TEXTURE)) bakeChoice(scene, CHOICE_LOWER_TEXTURE, 0xb91c1c, 'lower');
-  if (!scene.textures.exists(CHIP_STACK_TEXTURE)) bakeStackChip(scene);
-  if (!scene.textures.exists(STAKE_GLOW_TEXTURE)) drawStakeGlow(scene);
-}
-
-/** Фишка сбоку-сверху: красная грань с белым кольцом и тёмный бок с белыми насечками. Из таких складывается стопка. */
-function bakeStackChip(scene: Phaser.Scene): void {
+export function createDealerFelt(scene: Phaser.Scene, felt: Box): void {
+  if (scene.textures.exists(DEALER_FELT_TEXTURE)) return;
   const g = scene.add.graphics();
-  g.fillStyle(CHIP_SIDE);
-  g.fillEllipse(18, 11, 36, 12); // нижний край
-  g.fillRect(0, 5, 36, 6); // бок
-  g.fillStyle(0xffffff);
-  for (const x of [5, 16, 27]) g.fillRect(x, 8, 4, 6); // белые насечки на боку
-  g.fillStyle(CHIP_TOP);
-  g.fillEllipse(18, 5, 36, 10); // верхняя грань
-  g.lineStyle(1.5, 0xffffff);
-  g.strokeEllipse(18, 5, 22, 6); // белое кольцо на грани
-  bake(g, CHIP_STACK_TEXTURE, 36, 18);
-}
-
-/** Свечение под ставкой: золотой круг, яркий до середины радиуса (её закрывает стопка) и прозрачный к краю — радиальный градиент на canvas. */
-function drawStakeGlow(scene: Phaser.Scene): void {
-  const size = STAKE_GLOW_SIZE;
-  const texture = createSharpCanvas(scene, STAKE_GLOW_TEXTURE, size, size);
-  if (!texture) return;
-  const ctx = texture.context;
-  const glow = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  glow.addColorStop(0, `rgba(${STAKE_GLOW_RGB}, 0.95)`);
-  glow.addColorStop(0.55, `rgba(${STAKE_GLOW_RGB}, 0.6)`);
-  glow.addColorStop(1, `rgba(${STAKE_GLOW_RGB}, 0)`);
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, size, size);
-  texture.refresh(); // передать нарисованное в видеокарту
-}
-
-/** Лицо карты: белая, цифра крупно посередине, ♠ в углах. */
-function drawCard(ctx: CanvasRenderingContext2D, width: number, height: number, text: string): void {
-  ctx.beginPath();
-  ctx.roundRect(0, 0, width, height, 8);
-  ctx.fillStyle = '#f8fafc';
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#94a3b8';
-  ctx.stroke();
-  ctx.fillStyle = '#111827';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = `bold 40px ${FONT}`;
-  ctx.fillText(text, width / 2, height / 2 + 2);
-  ctx.font = `14px ${FONT}`;
-  ctx.fillText('♠', 11, 13);
-  ctx.fillText('♠', width - 11, height - 13);
-}
-
-/**
- * Круглая кнопка выбора у Дилера: цветной круг с золотым ободом и белым знаком «>», «=» или «<», нарисованным линиями (без шрифта).
- * Стоят слева от открытой карты, поэтому читаются вместе с ней: «> 5» — больше пяти.
- */
-function bakeChoice(scene: Phaser.Scene, key: string, color: number, sign: 'higher' | 'equal' | 'lower'): void {
-  const g = scene.add.graphics();
-  g.fillStyle(0x000000, 0.45);
-  g.fillCircle(27, 29, 25); // тень
-  g.fillStyle(color);
-  g.fillCircle(26, 26, 25);
-  g.lineStyle(3, 0xfbbf24);
-  g.strokeCircle(26, 26, 23);
-  g.lineStyle(6, 0xffffff);
-  if (sign === 'equal') {
-    g.lineBetween(14, 20, 38, 20);
-    g.lineBetween(14, 32, 38, 32);
-  } else {
-    const tip = sign === 'higher' ? 37 : 15; // острие знака: у «>» справа, у «<» слева
-    const back = sign === 'higher' ? 16 : 36;
-    g.beginPath();
-    g.moveTo(back, 14);
-    g.lineTo(tip, 26);
-    g.lineTo(back, 38);
-    g.strokePath();
-  }
-  bake(g, key, 54, 56);
+  g.fillStyle(0x2e1065);
+  g.fillRoundedRect(0, 0, felt.width, felt.height, 16); // фиолетовое сукно
+  g.lineStyle(3, 0xa855f7);
+  g.strokeRoundedRect(8, 8, felt.width - 16, felt.height - 16, 12);
+  bake(g, DEALER_FELT_TEXTURE, felt.width, felt.height);
 }
 
 /** Атмосфера: пылинка (мягкая точка), полосы развёртки поверх экрана и тёмные края всего вида. */

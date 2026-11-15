@@ -90,7 +90,7 @@ function saveChipRecord(record: number): void {
 /**
  * Сцена игры собрана слоями — каждый слой в своём файле добавляет свою часть игры:
  * BaseScene (состояние забега и табло) → PhaseScene (фазы) → BonusScene (короны, клевер, джекпот) →
- * MachineScene (автомат: ржавчина, смена в начале раунда) → RoundScene (прокрутка, кон, предметы) → DealerScene (игра Дилера) →
+ * MachineScene (автомат: ржавчина, смена в начале раунда) → RoundScene (прокрутка, кон, предметы) → DealerScene (сделки Дилера) →
  * ShopScene (магазин) → SaveScene (кассета: записать забег и откатиться) → CollectorScene (расплата и последний шанс) →
  * GameScene (создаёт части и разбирает клавиши).
  *
@@ -155,7 +155,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isShopOpen = false; // панель магазина вообще на экране (и когда покупки закрыты: крутится барабан)
   protected isVictoryPending = false; // цель взята, но победа ждёт конца текущего действия (CollectorScene.checkChipGoal)
   protected isAwaitingPayment = false; // банкомат выехал и фишек хватает — ждём «отдать» (клик по банкомату или Enter)
-  protected isDealing = false; // идёт игра Дилера «больше или меньше» — крутить и забирать нельзя
+  protected isDealing = false; // идёт стол Дилера со сделками — крутить и забирать нельзя
   protected isLastChance = false; // фишек не хватило: одна чистая прокрутка и два действия игрока (CollectorScene)
   protected secondWindUsed = false; // второе дыхание потрачено: следующий провал последнего шанса — KABOOM
   protected insuranceSaves = 0; // сколько раз страховка уже спасла кон в этом раунде: копий две — сработок две
@@ -461,7 +461,15 @@ export abstract class BaseScene extends Phaser.Scene {
 
   /** Множитель следующей прокрутки: серия × шаг (с «Разгоном» шаг больше, в фазе 2 — ещё больше). */
   protected multiplier(): number {
-    return multiplierForStreak(this.streak, multiplierStep(this.amuletIds()) + this.phase.multiplierBonus);
+    return multiplierForStreak(this.streak, this.streakStep());
+  }
+
+  /**
+   * Шаг множителя серии: амулет «Разгон» его увеличивает, фаза 2 прибавляет ещё один (замечание 19).
+   * Сделка Дилера «шаг вдвое» шаг удваивает — RoundScene.streakStep.
+   */
+  protected streakStep(): number {
+    return multiplierStep(this.amuletIds()) + this.phase.multiplierBonus;
   }
 
   /**

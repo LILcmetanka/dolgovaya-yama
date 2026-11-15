@@ -1,3 +1,4 @@
+import { readPacts } from '../dealerGame';
 import { copyEffects } from '../items';
 import { isPatternId } from '../progress';
 import { luckyCloversOf, tapePrice, type RunSave } from '../save';
@@ -14,6 +15,7 @@ export abstract class SaveScene extends ShopScene {
   /** Магазин открылся: у кассеты — её цена. */
   protected openShop(): void {
     super.openShop();
+    if (!this.isShopOpen) return; // магазин закрыт сделкой Дилера: панели нет, и ценника кассеты тоже
     this.showTapePrice();
   }
 
@@ -90,6 +92,7 @@ export abstract class SaveScene extends ShopScene {
       amuletCounts: { ...this.amuletCounts },
       bones: this.bones,
       machineId: this.machineId,
+      pacts: this.pacts.map((pact) => ({ ...pact })), // сделки Дилера: их срок тоже часть снимка
       diceDrought: this.diceDrought,
       patterns: [...this.patternSet], // стекло на плёнке: откат вернёт ровно этот набор
       secondWindUsed: this.secondWindUsed, // на записи флаг такой, какой был: запись до провала — дыхание ещё есть
@@ -162,6 +165,9 @@ export abstract class SaveScene extends ShopScene {
     this.bones = record.bones;
     // Запись без автомата (старая кассета) — остаётся тот, что стоит сейчас.
     if (record.machineId !== undefined) this.machineId = record.machineId;
+    // Сделки Дилера с плёнки: неизвестные id отбрасываем, битый срок — 0 (dealerGame.readPacts);
+    // в старой записи поля нет — сделок нет.
+    this.pacts = readPacts(record.pacts);
     // Корпус его цвета и значок покажет MachineBadge — части строятся после.
     this.diceDrought = record.diceDrought;
     // Откат не пополняет ни дыхание, ни страховку: то, что уже потрачено, записью не возвращается.

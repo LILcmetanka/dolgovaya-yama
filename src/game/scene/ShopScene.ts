@@ -1,7 +1,9 @@
 import { addCopy, amuletPrice, countOf, randomAmuletOffer, socketPrice } from '../amulets';
 import { amuletKey, itemKey, see, WHO_COLLECTOR } from '../codex';
+import { pactEffects } from '../dealerGame';
 import { canWin, DRUM_SECTORS, drumChips, drumPrice, prizeItem, randomSector, type DrumPrize } from '../drum';
 import { itemPrice, MAX_SLOTS, offerReplacement, randomOffer, slotPrice, type ShopItem } from '../items';
+import { t } from '../lang';
 import { machineItemAllowed } from '../machines';
 import { debtForRound } from '../rules';
 import type { SoundName } from '../sound';
@@ -33,6 +35,11 @@ export abstract class ShopScene extends DealerScene {
    */
   protected openShop(): void {
     this.cancelChargeNow(); // магазин — замах снят
+    // Сделка «магазин закрыт 2 раунда» (dealerGame.pactEffects): панель не выезжает вовсе, покупок нет.
+    if (pactEffects(this.pacts, this.round).shopClosed) {
+      this.skipClosedShop();
+      return;
+    }
     this.round += 1;
     this.debt = debtForRound(this.round);
     this.isShopOpen = true; // панель на экране — и пока едет, и когда уже стоит
@@ -67,6 +74,24 @@ export abstract class ShopScene extends DealerScene {
       this.refreshShop();
     });
     this.refreshShop(); // пока панель едет: цены барабана и рядов — новые, прошлый заход не мелькает
+  }
+
+  /**
+   * Магазин закрыт сделкой Дилера: жалюзи не выезжают, покупок нет — только записка с новым долгом и новый раунд.
+   * Долг и счёт раунда двигаются так же, как в openShop, иначе следующий долг посчитался бы от старого.
+   */
+  private skipClosedShop(): void {
+    this.round += 1;
+    this.debt = debtForRound(this.round);
+    this.isShopOpen = false;
+    this.isShopping = false;
+    this.isLeavingShop = false;
+    this.updateRecord();
+    this.collector.flipNote(this.debt);
+    this.screen.announceNews(t('shopClosedByPact'));
+    this.sfx.play('deny');
+    if (this.isGameOver) return; // победа пришла, пока банкомат уезжал: раунд начнёт «ДАЛЬШЕ»
+    this.startRound();
   }
 
   /** В магазине показали предметы и амулеты (и Коллектор уже приходил): всё это теперь на экране на стене; впервые — там мигает «NEW». */

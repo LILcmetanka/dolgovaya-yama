@@ -18,6 +18,7 @@ export interface WeightContext {
   amulets: readonly AmuletId[];
   effects: ItemEffects;
   charge: number; // замах рычага 0…1: двигает вес черепа и дорогих символов
+  skullMul?: number; // поправка веса черепа от сделки Дилера (dealerGame.skullShareWeightMul); без неё — 1
 }
 
 /**
@@ -31,6 +32,7 @@ export function symbolWeightOf(symbol: SlotSymbol, base: WeightOf, ctx: WeightCo
   const skullFactor = isSkull(symbol) ? machineSkullFactor(ctx.machineId) : 1;
   const machined = amuletWeight(symbol, base(symbol), [...ctx.amulets]) * skullFactor;
   let weight = boostWeight(symbol, machined, ctx.effects); // чеснок: череп легче, вишни: вишня тяжелее
+  if (ctx.skullMul !== undefined && isSkull(symbol)) weight *= ctx.skullMul; // сделка Дилера: черепов больше
   if (ctx.effects.risk && isSkull(symbol)) weight *= RISK_SKULL_FACTOR; // риск: черепа втрое чаще
   if (ctx.effects.luckSpin && isSkull(symbol)) weight = 0; // фарт: на этой прокрутке черепов нет
   // Замах рычага: сильный — черепа чаще и крупные символы тоже, слабый — тихо и безопасно.

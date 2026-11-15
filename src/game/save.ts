@@ -1,4 +1,5 @@
 import type { Amulet, AmuletCounts } from './amulets';
+import type { Pact } from './dealerGame';
 import type { MachineId } from './machines';
 import type { Item, ItemEffects } from './items';
 
@@ -39,6 +40,7 @@ export interface RunSave {
   amuletCounts: AmuletCounts; // сколько копий каждого амулета (шаг 62б: копии не занимают гнёзда)
   bones: number;
   machineId?: MachineId; // какой автомат стоял на записи; в старых записях поля нет — остаётся текущий
+  pacts?: Pact[]; // сделки Дилера с их сроком (dealerGame.Pact); в старых записях поля нет — считаем, что сделок нет
   diceDrought: number;
   patterns?: string[]; // какие паттерны были открыты на момент записи: откат возвращает стекло как на плёнке
   secondWindUsed?: boolean; // «второе дыхание» уже потрачено; в старых записях поля нет — считаем, что нет

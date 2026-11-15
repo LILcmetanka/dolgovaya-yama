@@ -119,7 +119,7 @@ export class GameScene extends CollectorScene {
     // видно её на панели только вместе с открытой механикой (первый аргумент).
     this.cassette = new Cassette(this, this.cassetteUnlocked(), this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip, this.shop.layer);
     this.drum = new Drum(this, () => this.spinDrum(), this.tooltip, this.sfx, this.drumUnlocked(), this.shop.layer);
-    this.dealerTable = new DealerTable(this, (dir) => this.guess(dir), () => this.stopDealing(), this.sfx);
+    this.dealerTable = new DealerTable(this, (id) => this.acceptPact(id), () => this.refusePacts());
     this.effects = new Effects(this);
     this.achievements = new AchievementWindow(this); // окно ачивки — после эффектов: оно ложится поверх сетки
     this.pumpAchievements(); // то, что выдано до постройки окна (или до рестарта), показываем теперь
@@ -470,9 +470,6 @@ export class GameScene extends CollectorScene {
       }
       this.payEarly(); // отдать долг раньше: фишек на табло хватает — записка светится
     });
-    this.onKey('UP', () => this.onUp());
-    this.onKey('DOWN', () => this.onDown());
-    this.onKey('PLUS', () => this.guess('equal')); // у Дилера — «=»: в Phaser клавиша «= / +» зовётся PLUS (код 187)
     this.onKey('RIGHT', () => this.toggleMonitor()); // экран на стене — справа
     this.onKey('LEFT', () => this.lookBack());
     // Отпускание клавиши и мыши — конец замаха: заряд уходит в прокрутку (DONTLIKE п. 8).
@@ -517,13 +514,13 @@ export class GameScene extends CollectorScene {
 
   /**
    * Enter: на паузе — продолжить, в окне перемешки — пропустить его, банкомат выехал — отдать долг,
-   * у Дилера — остановиться, иначе — забрать кон. В последнем шансе кона нет: сцена его не берёт (canAct()).
+   * у Дилера — отказаться от сделки, иначе — забрать кон. В последнем шансе кона нет: сцена его не берёт (canAct()).
    */
   private onEnter(): void {
     if (this.isPaused) this.resumeGame();
     else if (this.isRerolling) this.skipReroll();
     else if (this.isAwaitingPayment) this.payDebt();
-    else if (this.isDealing) this.stopDealing();
+    else if (this.isDealing) this.refusePacts();
     // Кон на кону — Enter забирает; пусто — замахивается, как пробел.
     else if (this.pot === 0 && this.canAct()) this.beginCharge('key');
     else this.take();
@@ -543,16 +540,6 @@ export class GameScene extends CollectorScene {
     else if (this.isShopping) this.onShopNumber(index);
     else if (index === TAPE_KEY) this.useTape();
     else if (index < MAX_SLOTS) this.useItem(index);
-  }
-
-  /** ↑: у Дилера — «>» (больше). */
-  private onUp(): void {
-    this.guess('higher');
-  }
-
-  /** ↓: у Дилера — «<» (меньше). */
-  private onDown(): void {
-    this.guess('lower');
   }
 
   /**

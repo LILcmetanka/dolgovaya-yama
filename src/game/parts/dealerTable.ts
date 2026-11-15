@@ -1,230 +1,164 @@
 import Phaser from 'phaser';
-import {
-  CARD_BACK_TEXTURE,
-  cardTexture,
-  CHIP_STACK_TEXTURE,
-  CHOICE_EQUAL_TEXTURE,
-  CHOICE_HIGHER_TEXTURE,
-  CHOICE_LOWER_TEXTURE,
-  createDealerTextures,
-  DEALER_FELT_TEXTURE,
-  STAKE_GLOW_TEXTURE,
-} from '../decor';
-import { canGuessWin, CARD_MAX, CARD_MIN, type Guess } from '../dealerGame';
+import { createDealerFelt, DEALER_FELT_TEXTURE } from '../decor';
+import type { PactId, PactSpec } from '../dealerGame';
 import { SCREEN } from '../layout';
-import type { Sfx } from '../sound';
-import { addText, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT } from '../theme';
+import { t } from '../lang';
+import { addText, GOLD_TEXT, GREEN_TEXT, POPUP_DEPTH, RED_TEXT } from '../theme';
 
-// Где что на столе (поверх экрана автомата).
-const CARD_LEFT_X = SCREEN.x - 40; // открытая карта
-const CARD_RIGHT_X = SCREEN.x + 110; // следующая — рубашкой вверх
-const CARD_Y = SCREEN.y + 14;
-// Выбор — столбиком слева от открытой карты, чтобы читался вместе с ней: «> 5», «= 5», «< 5».
-const CHOICE_X = SCREEN.x - 130;
-const CHOICE_STEP = 58; // между кнопками по высоте; «=» — напротив середины карты
-const CHOICE_DIM = 0.25; // выбор, который не может выиграть, — такой тусклый
-// Ставка сверху: стопка фишек, правее — «× 30».
-const STACK_X = SCREEN.x - 52;
-const STACK_Y = SCREEN.y - 76; // нижняя фишка стопки
-const STACK_STEP = 6; // каждая следующая фишка в стопке выше на столько
-const STACK_START = 2; // столько фишек в стопке, когда Дилер садится за стол
-const STACK_MAX = 6; // за каждую угаданную карту — ещё фишка, но не больше этого
-const STACK_JUMP = 10; // угадал — стопка подпрыгивает на столько
-const GLOW_Y = STACK_Y - 12; // свечение — под серединой стопки
-const GLOW_MIN = 0.45; // свечение пульсирует: гаснет до такой яркости и разгорается снова
-const STAKE_TEXT_X = STACK_X + 26;
-const STAKE_TEXT_Y = STACK_Y - 10;
-const BURN_COLOR = 0xff5a1f; // не угадал — фишки стопки горят огнём (как фишка в окошке выплаты)
+// Три карты-сделки лежат на сукне слева направо: в каждой «получаешь» зелёным и «платишь» красным.
+const CARD_W = 138;
+const CARD_H = 196;
+const CARD_GAP = 10;
+const CARD_Y = SCREEN.y - 12;
+const CARD_RADIUS = 10;
+const CARD_FILL = 0x111827; // тёмная карта: на ней читаются и зелёная, и красная строки
+const CARD_EDGE = 0xfbbf24; // золотой обод, как у всего в автомате
+const CARD_PAD = 8; // от края карты до текста
+const CARD_TEXT_W = CARD_W - 2 * CARD_PAD;
+const LABEL_SIZE = 10; // «ПОЛУЧАЕШЬ» / «ПЛАТИШЬ»
+const LINE_SIZE = 13; // сами строки сделки
+const BONUS_LABEL_Y = -84;
+const BONUS_Y = -70;
+const COST_LABEL_Y = 16;
+const COST_Y = 30;
+const REFUSE_Y = SCREEN.y + 122; // кнопка отказа внизу сукна
+const REFUSE_SIZE = 16;
 const DEPTH = POPUP_DEPTH - 1; // под всплывающими надписями, но над сеткой
-// Анимации, мс.
-const FLIP_TIME = 160; // половина переворота карты
-const SLIDE_TIME = 300; // угаданная карта уезжает на место открытой
-const APPEAR_TIME = 250;
-const GLOW_TIME = 600; // свечение от яркого до тусклого
-const JUMP_TIME = 120; // стопка подпрыгивает — вверх, столько же вниз
-const CHIP_SLIDE_TIME = 450; // остановился — фишки стопки съезжают на кон
-const CHIP_SLIDE_STAGGER = 70; // друг за другом, сверху стопки
+const APPEAR_TIME = 220;
+const CARD_STAGGER = 80; // карты ложатся друг за другом
+const HOVER_SCALE = 1.04;
+const HOVER_TIME = 100;
+
+/** Одна карта на сукне: подложка, две подписи и две строки сделки. */
+interface Card {
+  container: Phaser.GameObjects.Container;
+  bonus: Phaser.GameObjects.Text;
+  cost: Phaser.GameObjects.Text;
+  id: PactId | null; // что лежит на карте сейчас; null — карта пустая и не нажимается
+}
 
 /**
- * Игра Дилера поверх экрана автомата: фиолетовое сукно, открытая карта и карта рубашкой вверх,
- * слева от открытой карты столбиком выбор «>», «=», «<», сверху — ставка: стопка фишек и «× 30».
- * Угадал — стопка светится: клик по ней (или Enter — его ловит сцена) — остановиться, фишки съезжают на кон.
+ * Стол Дилера поверх экрана автомата: фиолетовое сукно, на нём три карты-сделки (dealerGame.PACTS), внизу «✕ ОТКАЗАТЬСЯ».
+ * Клик по карте берёт сделку, клик по отказу закрывает стол: раунд идёт дальше, как без Дилера.
+ * Угадайки «больше, меньше или равно» больше нет (решение автора 15.11.2026).
  */
 export class DealerTable {
   private readonly scene: Phaser.Scene;
   private readonly felt: Phaser.GameObjects.Image;
-  private readonly openCard: Phaser.GameObjects.Image; // открытая карта
-  private readonly nextCard: Phaser.GameObjects.Image; // следующая карта: рубашкой вверх, при угадывании переворачивается
-  private readonly stackGlow: Phaser.GameObjects.Image; // свечение под стопкой — можно остановиться; клик по нему — стоп
-  private readonly stack: Phaser.GameObjects.Container; // стопка фишек — ставка
-  private readonly stackChips: Phaser.GameObjects.Image[] = []; // фишки стопки, снизу вверх
-  private readonly stakeText: Phaser.GameObjects.Text; // «× 30»
-  private readonly choices: [Guess, Phaser.GameObjects.Image][] = []; // «>», «=», «<» сверху вниз
-  private readonly sfx: Sfx;
-  private chipsShown = STACK_START; // сколько фишек в стопке сейчас
+  private readonly cards: Card[] = [];
+  private readonly refuse: Phaser.GameObjects.Text;
+  private isClosing = false; // стол уже уезжает: второй клик не должен взять вторую сделку
 
-  /** guess(dir) — кликнули по кнопке выбора, stop() — по светящейся стопке. */
-  constructor(scene: Phaser.Scene, guess: (dir: Guess) => void, stop: () => void, sfx: Sfx) {
+  /** accept(id) — кликнули по карте сделки, refuse() — по «✕ ОТКАЗАТЬСЯ». */
+  constructor(scene: Phaser.Scene, accept: (id: PactId) => void, refuse: () => void) {
     this.scene = scene;
-    this.sfx = sfx;
-    createDealerTextures(scene, CARD_MIN, CARD_MAX, SCREEN);
-    this.felt = scene.add.image(SCREEN.x, SCREEN.y, DEALER_FELT_TEXTURE);
-    this.openCard = scene.add.image(CARD_LEFT_X, CARD_Y, CARD_BACK_TEXTURE);
-    this.nextCard = scene.add.image(CARD_RIGHT_X, CARD_Y, CARD_BACK_TEXTURE);
-    this.stackGlow = scene.add.image(STACK_X, GLOW_Y, STAKE_GLOW_TEXTURE).setDepth(DEPTH).setVisible(false);
-    this.stackGlow.setInteractive({ useHandCursor: true }).disableInteractive();
-    this.stackGlow.on('pointerdown', stop);
-    for (let index = 0; index < STACK_MAX; index++) {
-      this.stackChips.push(scene.add.image(0, -index * STACK_STEP, CHIP_STACK_TEXTURE));
-    }
-    this.stack = scene.add.container(STACK_X, STACK_Y, this.stackChips);
-    this.stakeText = addText(scene, STAKE_TEXT_X, STAKE_TEXT_Y, '', LED_STYLE).setOrigin(0, 0.5);
-    for (const [dir, texture, row] of [
-      ['higher', CHOICE_HIGHER_TEXTURE, -1],
-      ['equal', CHOICE_EQUAL_TEXTURE, 0],
-      ['lower', CHOICE_LOWER_TEXTURE, 1],
-    ] as const) {
-      const choice = scene.add.image(CHOICE_X, CARD_Y + row * CHOICE_STEP, texture);
-      choice.setInteractive({ useHandCursor: true });
-      choice.on('pointerdown', () => guess(dir));
-      this.choices.push([dir, choice]);
-    }
-    for (const object of this.objects()) object.setDepth(DEPTH).setVisible(false);
+    createDealerFelt(scene, SCREEN);
+    this.felt = scene.add.image(SCREEN.x, SCREEN.y, DEALER_FELT_TEXTURE).setDepth(DEPTH).setVisible(false);
+    const offset = CARD_W + CARD_GAP; // центры карт: −offset, 0, +offset от середины сукна
+    for (const index of [-1, 0, 1]) this.cards.push(this.makeCard(SCREEN.x + index * offset, accept));
+    this.refuse = addText(scene, SCREEN.x, REFUSE_Y, `✕ ${t('pactRefuse')}`, {
+      fontSize: `${REFUSE_SIZE}px`,
+      fontStyle: 'bold',
+      color: GOLD_TEXT,
+      stroke: '#0f172a',
+      strokeThickness: 4,
+    })
+      .setOrigin(0.5)
+      .setDepth(DEPTH)
+      .setVisible(false);
+    this.refuse.setInteractive({ useHandCursor: true }).disableInteractive();
+    this.refuse.on('pointerdown', refuse);
   }
 
-  /** Всё, что есть на столе, пока Дилер за ним сидит (свечение — только когда можно остановиться). */
-  private objects(): (Phaser.GameObjects.Image | Phaser.GameObjects.Text | Phaser.GameObjects.Container)[] {
-    return [this.felt, this.openCard, this.nextCard, this.stack, this.stakeText, ...this.choices.map(([, choice]) => choice)];
+  /** Пустая карта на своём месте: подложка, подписи «получаешь/платишь» и две строки — их заполняет open(). */
+  private makeCard(x: number, accept: (id: PactId) => void): Card {
+    const background = this.scene.add.graphics();
+    this.drawCard(background);
+    const label = (y: number, text: string, color: string): Phaser.GameObjects.Text =>
+      addText(this.scene, 0, y, text, { fontSize: `${LABEL_SIZE}px`, fontStyle: 'bold', color }).setOrigin(0.5, 0);
+    const line = (y: number, color: string): Phaser.GameObjects.Text =>
+      addText(this.scene, 0, y, '', {
+        fontSize: `${LINE_SIZE}px`,
+        fontStyle: 'bold',
+        color,
+        align: 'center',
+        wordWrap: { width: CARD_TEXT_W, useAdvancedWrap: true },
+      }).setOrigin(0.5, 0);
+    const bonus = line(BONUS_Y, GREEN_TEXT);
+    const cost = line(COST_Y, RED_TEXT);
+    const container = this.scene.add.container(x, CARD_Y, [
+      background,
+      label(BONUS_LABEL_Y, t('pactBonus'), GREEN_TEXT),
+      bonus,
+      label(COST_LABEL_Y, t('pactCost'), RED_TEXT),
+      cost,
+    ]);
+    const card: Card = { container, bonus, cost, id: null };
+    container.setSize(CARD_W, CARD_H).setDepth(DEPTH).setVisible(false);
+    container.setInteractive({ useHandCursor: true }).disableInteractive();
+    container.on('pointerdown', () => {
+      if (card.id) accept(card.id);
+    });
+    // Наведение: карта чуть подрастает — видно, что её можно взять.
+    container.on('pointerover', () => this.scene.tweens.add({ targets: container, scale: HOVER_SCALE, duration: HOVER_TIME }));
+    container.on('pointerout', () => this.scene.tweens.add({ targets: container, scale: 1, duration: HOVER_TIME }));
+    return card;
   }
 
-  /** Дилер садится за стол: ставка (стопка и «× 30»), открытая карта card и карта рубашкой вверх. */
-  open(stake: number, card: number): void {
-    for (const object of this.objects()) object.setVisible(true).setAlpha(0);
-    const choices = this.choices.map(([, choice]) => choice);
-    this.scene.tweens.add({ targets: this.objects().filter((object) => !choices.includes(object as Phaser.GameObjects.Image)), alpha: 1, duration: APPEAR_TIME });
-    this.stakeText.setText(`× ${stake}`).setColor(LED_COLOR);
-    this.showChips(STACK_START);
-    this.openCard.setTexture(cardTexture(card)).setPosition(CARD_LEFT_X, CARD_Y).setScale(1);
-    this.nextCard.setTexture(CARD_BACK_TEXTURE).setPosition(CARD_RIGHT_X, CARD_Y).setScale(1).setAngle(0);
-    this.showChoices(card, APPEAR_TIME);
+  /** Подложка карты: тёмный прямоугольник с золотым ободом и лёгкой тенью. */
+  private drawCard(graphics: Phaser.GameObjects.Graphics): void {
+    graphics.clear();
+    graphics.fillStyle(0x000000, 0.45);
+    graphics.fillRoundedRect(-CARD_W / 2 + 3, -CARD_H / 2 + 4, CARD_W, CARD_H, CARD_RADIUS); // тень
+    graphics.fillStyle(CARD_FILL, 0.94);
+    graphics.fillRoundedRect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, CARD_RADIUS);
+    graphics.lineStyle(3, CARD_EDGE);
+    graphics.strokeRoundedRect(-CARD_W / 2, -CARD_H / 2, CARD_W, CARD_H, CARD_RADIUS);
   }
 
-  /** Выбор под открытую карту card: тот, что не может выиграть, — тусклый и не нажимается. Яркость меняется за fadeTime мс. */
-  private showChoices(card: number, fadeTime = 0): void {
-    for (const [dir, choice] of this.choices) {
-      const canWin = canGuessWin(card, dir);
-      if (canWin) choice.setInteractive({ useHandCursor: true });
-      else choice.disableInteractive(true); // и курсор-рука пропадает, даже если мышь над кнопкой
-      const alpha = canWin ? 1 : CHOICE_DIM;
-      this.scene.tweens.killTweensOf(choice);
-      if (fadeTime > 0) this.scene.tweens.add({ targets: choice, alpha, duration: fadeTime });
-      else choice.setAlpha(alpha);
-    }
-  }
-
-  /** В стопке count фишек, обычного цвета (после проигрыша они горели). */
-  private showChips(count: number): void {
-    this.chipsShown = count;
-    this.stackChips.forEach((chip, index) => chip.setVisible(index < count).clearTint().setTintMode(Phaser.TintModes.MULTIPLY));
-  }
-
-  /**
-   * Можно остановиться (угадал): стопка подпрыгивает и светится, курсор над ней — рука.
-   * Нельзя (открывается карта, Дилер уходит) — свечение гаснет.
-   */
-  showStoppable(isStoppable: boolean): void {
-    this.scene.tweens.killTweensOf(this.stackGlow);
-    this.stackGlow.setVisible(isStoppable).setAlpha(1);
-    if (!isStoppable) {
-      this.stackGlow.disableInteractive(true); // и курсор-рука пропадает, даже если мышь над стопкой
-      return;
-    }
-    this.stackGlow.setInteractive();
-    this.scene.tweens.add({ targets: this.stackGlow, alpha: GLOW_MIN, duration: GLOW_TIME, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-    this.scene.tweens.add({ targets: this.stack, y: STACK_Y - STACK_JUMP, duration: JUMP_TIME, yoyo: true, ease: 'Quad.easeOut' });
-  }
-
-  /**
-   * Открыть следующую карту next. Угадал — ставка подпрыгивает с новым числом, в стопке на фишку больше,
-   * открытая карта сменяется следующей, справа — новая рубашка. Не угадал — карта трясётся, ставка горит. Потом done().
-   */
-  reveal(next: number, isRight: boolean, stake: number, done: () => void): void {
-    this.sfx.play('card');
-    this.sfx.play(isRight ? 'cardWin' : 'cardLose', FLIP_TIME * 2 / 1000);
-    this.scene.tweens.add({
-      targets: this.nextCard,
-      scaleX: 0,
-      duration: FLIP_TIME,
-      yoyo: true,
-      onYoyo: () => this.nextCard.setTexture(cardTexture(next)),
-      onComplete: () => (isRight ? this.win(next, stake, done) : this.lose(done)),
+  /** Дилер положил карты: каждая появляется со сдвигом, строки — из сделки. Лишние карты (сделок меньше) гаснут. */
+  open(offers: readonly PactSpec[]): void {
+    this.isClosing = false;
+    this.felt.setVisible(true).setAlpha(1);
+    this.refuse.setVisible(true).setAlpha(1).setInteractive({ useHandCursor: true });
+    this.cards.forEach((card, index) => {
+      const offer = offers[index];
+      if (!offer) {
+        card.id = null;
+        card.container.setVisible(false).disableInteractive();
+        return;
+      }
+      card.id = offer.id;
+      card.bonus.setText(t(offer.bonus));
+      card.cost.setText(t(offer.cost));
+      card.container.setVisible(true).setAlpha(0).setScale(1).setY(CARD_Y + 16);
+      card.container.setInteractive({ useHandCursor: true });
+      this.scene.tweens.add({
+        targets: card.container,
+        alpha: 1,
+        y: CARD_Y,
+        delay: index * CARD_STAGGER,
+        duration: APPEAR_TIME,
+        ease: 'Quad.easeOut',
+      });
     });
   }
 
-  /** Угадал: открытая карта — та, что открыли; справа новая рубашка; ставка выросла — и стопка тоже. */
-  private win(next: number, stake: number, done: () => void): void {
-    this.stakeText.setText(`× ${stake}`);
-    pulse(this.scene, this.stakeText, 1.3);
-    this.showChips(Math.min(STACK_MAX, this.chipsShown + 1));
+  /** Стол уходит: карты и отказ тают, карты больше не нажимаются. Доехало — done(). */
+  close(done?: () => void): void {
+    if (this.isClosing) return;
+    this.isClosing = true;
+    for (const card of this.cards) card.container.disableInteractive();
+    this.refuse.disableInteractive();
     this.scene.tweens.add({
-      targets: this.nextCard,
-      x: CARD_LEFT_X,
-      duration: SLIDE_TIME,
-      ease: 'Cubic.easeInOut',
-      onComplete: () => {
-        this.openCard.setTexture(cardTexture(next));
-        this.nextCard.setTexture(CARD_BACK_TEXTURE).setX(CARD_RIGHT_X);
-        this.showChoices(next);
-        done();
-      },
-    });
-  }
-
-  /** Не угадал: открытая карта трясётся, ставка краснеет, фишки стопки горят. */
-  private lose(done: () => void): void {
-    this.stakeText.setColor(RED_TEXT);
-    for (const chip of this.stackChips) chip.setTint(BURN_COLOR).setTintMode(Phaser.TintModes.FILL);
-    this.scene.tweens.add({ targets: this.nextCard, angle: 8, duration: 60, yoyo: true, repeat: 3 });
-    this.scene.time.delayedCall(700, done);
-  }
-
-  /** Остановился: свечение гаснет, фишки стопки друг за другом, сверху, съезжают со стола в (x, y) — на кон. Доехала последняя — done(). */
-  slideStake(x: number, y: number, done: () => void): void {
-    this.showStoppable(false);
-    this.stack.setVisible(false);
-    const count = this.chipsShown;
-    for (let index = 0; index < count; index++) {
-      const fromY = STACK_Y - (count - 1 - index) * STACK_STEP; // первой съезжает верхняя
-      this.slideChip(fromY, x, y, index * CHIP_SLIDE_STAGGER, index === count - 1 ? done : undefined);
-    }
-  }
-
-  /** Фишка стопки через delay мс съезжает с высоты fromY в (x, y); доехала — исчезает (и arrived(), если он есть). */
-  private slideChip(fromY: number, x: number, y: number, delay: number, arrived?: () => void): void {
-    const chip = this.scene.add.image(STACK_X, fromY, CHIP_STACK_TEXTURE).setDepth(DEPTH);
-    this.scene.tweens.add({
-      targets: chip,
-      x,
-      y,
-      delay,
-      duration: CHIP_SLIDE_TIME,
-      ease: 'Cubic.easeIn',
-      onComplete: () => {
-        chip.destroy();
-        arrived?.();
-      },
-    });
-  }
-
-  /** Дилер уходит: стол тает. */
-  close(): void {
-    this.showStoppable(false);
-    this.scene.tweens.add({
-      targets: this.objects(),
+      targets: [this.felt, this.refuse, ...this.cards.map((card) => card.container)],
       alpha: 0,
       duration: APPEAR_TIME,
       onComplete: () => {
-        for (const object of this.objects()) object.setVisible(false);
+        this.felt.setVisible(false);
+        this.refuse.setVisible(false);
+        for (const card of this.cards) card.container.setVisible(false);
+        done?.();
       },
     });
   }
