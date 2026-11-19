@@ -52,7 +52,7 @@ export class Effects {
   }
 
   /** Надпись всплывает в точке (x, y): поднимается и тает. fontSize — кегль (по умолчанию как у попапа). */
-  popupAt(x: number, y: number, text: string, color: string, fontSize?: number): void {
+  popupAt(x: number, y: number, text: string, color: string, fontSize?: number): Phaser.GameObjects.Text {
     const style = fontSize === undefined ? { ...POPUP_STYLE, color } : { ...POPUP_STYLE, fontSize: `${fontSize}px`, color };
     const label = addText(this.scene, x, y, text, style)
       .setOrigin(0.5)
@@ -65,6 +65,7 @@ export class Effects {
       ease: 'Cubic.easeOut',
       onComplete: () => label.destroy(),
     });
+    return label;
   }
 
   /** Удар черепов: красная вспышка и лёгкая тряска экрана. */

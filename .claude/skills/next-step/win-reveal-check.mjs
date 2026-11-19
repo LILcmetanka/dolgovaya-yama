@@ -143,6 +143,13 @@ try {
     window.__hl = { calls: 0, cells: 0, firstAt: null, perCall: [] };
     window.__hist = [];
     window.__snd = [];
+    window.__popups = [];
+    const eff = g.effects, origPopupAt = eff.popupAt.bind(eff);
+    eff.popupAt = (x, y, text, color, fontSize) => {
+      const label = origPopupAt(x, y, text, color, fontSize);
+      if (/^\\+\\d+$/.test(text)) window.__popups.push(label);
+      return label;
+    };
     const gfx = g.screen.cellHighlights;
     window.__gfx = { drawn: 0 };
     const origStroke = gfx.strokeRoundedRect.bind(gfx);
@@ -196,6 +203,8 @@ try {
       return JSON.stringify({
         calls: h.calls, cells: h.cells, perCall: h.perCall, drawn: window.__gfx.drawn, alpha: Math.round(g.screen.cellHighlights.alpha * 100) / 100,
         pot: g.payout.pot, gamePot: g.pot, spinning: g.isSpinning,
+        popups: window.__popups.filter((l) => l.active).length,
+        popupText: window.__popups.filter((l) => l.active).map((l) => l.text).join(','),
         paused: g.isPaused, tape: g.tapeState, record: g.tapeRecord === null,
         spinsLeft: g.spinsLeft, spins: g.spinsThisRun,
       });
@@ -246,6 +255,7 @@ try {
     window.__hl = { calls: 0, cells: 0, firstAt: null, perCall: [] };
     window.__hist = [];
     window.__snd = [];
+    window.__popups = [];
     return JSON.stringify({ pot: g.pot, spinsLeft: g.spinsLeft, multiplier: g.multiplier(), debt: g.debt, machine: g.machineId, amulets: g.amuletIds(), pacts: g.pacts.length, spinning: g.isSpinning });
   }; 1`);
 
@@ -317,12 +327,16 @@ try {
   check(early1.calls === 1 && early1.drawn === cells3[0] && early1.cells === cells3[0], `через 0,1 с на сетке только первый паттерн: ${early1.calls} шаг, ${early1.drawn} клеток в рамке (row3)`);
   check(early1.alpha === 1, `через 0,1 с рамка зажглась целиком: alpha ${early1.alpha}`);
   check(early1.pot === POT_BEFORE + symbols.seven.price && early1.pot < POT_BEFORE + gain1, `через 0,1 с в окошке только первая доля: ${early1.pot} (итог ${POT_BEFORE + gain1})`);
+  const d1 = symbols.seven.price * multOf('row3') * before1.multiplier;
+  check(early1.popups === 1 && early1.popupText === '+' + d1, `через 0,1 с на сетке один попап шага: ${early1.popups} шт «${early1.popupText}» (ждали +${d1})`);
 
   const middle1 = json(await val('window.__snap(500)'));
   await shot('reveal-2.png');
   check(middle1.calls === 2 && middle1.drawn === cells3[1], `через 0,5 с горит только второй паттерн: ${middle1.calls} шага, ${middle1.drawn} клеток (а не ${cells3[0] + cells3[1]} суммой)`);
   check(middle1.pot === POT_BEFORE + Math.round((symbols.seven.price + symbols.bell.price) * before1.multiplier), `через 0,5 с в окошке ровно две доли: ${middle1.pot}`);
   check(middle1.pot < POT_BEFORE + gain1 && middle1.spinning === true, 'показ ещё идёт, окошко ещё не финальное');
+  const d2 = Math.round((symbols.seven.price + symbols.bell.price) * before1.multiplier) - Math.round(symbols.seven.price * before1.multiplier);
+  check(middle1.popups === 1 && middle1.popupText === '+' + d2, `через 0,5 с остался только попап второго шага: ${middle1.popups} шт «${middle1.popupText}» (ждали +${d2})`);
 
   const late1 = json(await val('window.__snap(1500)'));
   await shot('reveal-3.png');
@@ -331,6 +345,7 @@ try {
   check(late1.spinning === false, 'через 1,5 с показ кончился, ввод свободен');
   check(late1.pot === POT_BEFORE + gain1, `финальное окошко = potBefore + gain: ${late1.pot} = ${POT_BEFORE} + ${gain1}`);
   check(late1.gamePot === POT_BEFORE + gain1, `на кону ровно посчитанный выигрыш: ${late1.gamePot}`);
+  check(late1.popups === 1 && late1.popupText === '+' + gain1, `после итога остался только попап суммы, шаговых нет: ${late1.popups} шт «${late1.popupText}» (ждали +${gain1})`);
 
   // Кадры каскада: рамка горит одна и гаснет к концу своего шага, в начале следующего — снова alpha 1.
   const frames1 = stepFrames(json(await val('window.__frames()')), STEP3, HITS3.length, HOLD3);

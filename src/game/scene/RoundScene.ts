@@ -1,3 +1,4 @@
+import type Phaser from 'phaser';
 import {
   amuletPatternWin,
   amuletsOnWin,
@@ -73,6 +74,8 @@ const TICKET_BORDER = 0xf59e0b; // рамки на клетках с билет�
 const SPIDER_BORDER = 0xa855f7; // рамки на пауках, когда они съели часть кона
 const REVEAL_NOTE_SPIN = 3; // после третьей прокрутки из тьмы проступает долг (первый забег)
 const MIN_ROUND_SPINS = 1; // сделка «−1 прокрутка» не может оставить раунд без прокруток вовсе
+// Прошлый попап шага гаснет к следующему; POPUP_TIME не трогаем — он для прочих надписей.
+const WIN_POPUP_FADE_MS = 90;
 
 /** «+12», «+4 ×3 = +12» или с амулетами «+4 ×3 ×2 = +24». */
 function formatWin(win: number, multiplier: number, factor: number, gain: number): string {
@@ -117,6 +120,8 @@ export abstract class RoundScene extends MachineScene {
   // Сколько показано в окошке выплаты посреди каскада; null — каскада нет, окошко показывает кон как обычно.
   // Нужно, чтобы любой refreshHud во время показа (снятие паузы, новость) не выдал финальную сумму раньше времени.
   private revealShown: number | null = null;
+  // Последний попап шага каскада: его гасим к следующему шагу, чтобы надписи не копились.
+  private winPopup: Phaser.GameObjects.Text | null = null;
 
   /** Новый забег: прокруток ещё не было, решения по перемешке не висит, сделок Дилера нет. */
   protected resetState(): void {
@@ -130,6 +135,7 @@ export abstract class RoundScene extends MachineScene {
     this.bankKeptThisRound = false;
     this.revealId += 1; // новый забег: недосмотренный каскад не должен вернуться в него своим колбэком
     this.revealShown = null;
+    this.fadeWinPopup(); // попап прошлого показа не должен пережить сброс забега
   }
 
   // ---------- Прокрутка ----------
@@ -647,12 +653,14 @@ export abstract class RoundScene extends MachineScene {
     this.time.delayedCall(steps.length * stepMs + hold, () => {
       if (this.revealId !== id) return; // сцена перезапустилась: показ не наш, снимать нечего
       if (this.isGameOver) {
+        this.fadeWinPopup(); // на KABOOM попап шага тоже убираем
         this.revealShown = null; // KABOOM: каскад снят, окошко снова живёт обычным путём
         this.isSpinning = false; // раунд кончился на KABOOM, но не запираем сцену: если забег продолжится без resetState, ввод свободен
         this.refreshHud();
         return;
       }
       this.sfx.play(gain >= this.debt / 2 ? 'bigWin' : 'win'); // итог — один раз и в конце, а не на t0
+      this.fadeWinPopup(); // прошлый попап шага гаснет к итоговому
       this.effects.popup(formatWin(win, multiplier, factor, gain), GOLD_TEXT);
       this.effects.burstFromGrid(gain);
       this.payout.addWin(this.pot, this.debt); // в окошке — настоящий кон: он равен potBefore + последнего shown
@@ -670,16 +678,34 @@ export abstract class RoundScene extends MachineScene {
    * Звук на шаг один: короткий «coin».
    */
   private showWinStep(step: RevealStep, potBefore: number, fadeDelay: number, fadeDuration: number): void {
+    this.fadeWinPopup(); // попап прошлого шага гаснет к этому шагу — надписи не копятся
     this.screen.startWinStep(step.hit); // прошлые рамки сняты: горит только этот паттерн
     this.sfx.play('coin');
     const cols = step.hit.cells.map(([, col]) => cellX(col));
     const rows = step.hit.cells.map(([row]) => cellY(row));
     const x = (Math.min(...cols) + Math.max(...cols)) / 2; // попап — в центр фигуры
     const y = (Math.min(...rows) + Math.max(...rows)) / 2;
-    if (step.delta > 0) this.effects.popupAt(x, y - 30, `+${step.delta}`, GOLD_TEXT); // округление может дать и 0
+    if (step.delta > 0) this.winPopup = this.effects.popupAt(x, y - 30, `+${step.delta}`, GOLD_TEXT); // округление может дать и 0
     this.revealShown = potBefore + step.shown; // только показ: в состояние не пишем
     this.payout.showPot(this.revealShown, this.debt);
     this.screen.fadeWinHighlights(fadeDelay, fadeDuration); // последние 45% шага рамка тает в ноль
+  }
+
+  /** Попап шага гаснет быстро к следующему шагу: твин в ноль за WIN_POPUP_FADE_MS, потом убираем. */
+  private fadeWinPopup(): void {
+    const winPopup = this.winPopup;
+    if (!winPopup || !winPopup.active) {
+      this.winPopup = null;
+      return;
+    }
+    this.tweens.killTweensOf(winPopup);
+    this.tweens.add({
+      targets: winPopup,
+      alpha: 0,
+      duration: WIN_POPUP_FADE_MS,
+      onComplete: () => winPopup?.destroy(),
+    });
+    this.winPopup = null;
   }
 
   /** Прокрутка без выигрыша: копилка кладёт на кон немного фишек (× множитель). */
