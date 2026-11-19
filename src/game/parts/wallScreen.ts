@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { ACHIEVEMENTS } from '../achievements';
+import { ACHIEVEMENTS, type Achievement } from '../achievements';
 import { CROWNS_FOR_FREE_SPINS, FREE_SPINS } from '../bonus';
 import {
   amuletTexture,
@@ -59,13 +59,37 @@ const SPACE_KEY = '␣'; // так в списке клавиш помечен �
 const PAD = 20;
 const SYMBOLS_WIDTH = WALL_PANEL.width - 2 * PAD; // картинка вкладки «Символы» — на всю ширину экрана
 const SYMBOLS_HEIGHT = 500;
-// Вкладки «Предметы» и «Кто есть кто»: строки в два столбца.
+// Списки планшета («Предметы», «Кто есть кто», «Ачивки») — одни и те же карточки: рамка 2 px, радиус 8,
+// значок 28, отступ 16 до названия 21 bold и описания 16. Одна высота ряда на все вкладки.
 const ROW_COLUMNS = 2;
-const ROW_WIDTH = 505;
-const ROW_HEIGHT = 78; // ряд: название и до двух строк описания — выше прежних 66, иначе описание наезжало на следующий ряд
-const ROW_ICON = 48;
+const ROW_WIDTH = 505; // от левого края карточки до левого края соседней
+const ROW_GAP = 10; // просвет между карточками
+const CARD_WIDTH = ROW_WIDTH - ROW_GAP;
+const ROW_HEIGHT = 72; // название и до двух строк описания; 7 рядов в панели (514 px) — 14 карточек на страницу
+const ROW_ICON = 28;
+const ROW_ICON_GAP = 16; // от значка до названия
+const ROW_TEXT_WIDTH = 421; // шире текст не бывает: карточка 495, поля 12 — дальше рамка
+const ROW_NAME_FONT = 21;
+const ROW_NAME_FONT_MIN = 14; // длинное название ужимается по ширине текста
+const ROW_NAME_TOP = 4; // от верха карточки до названия
+const ROW_DESC_TOP = 31; // описание — под названием
 const ROW_DESC_LINES = 2; // описание длиннее двух строк обрезается: ряд не растягиваем
 const DIM_INK = '#8fc3cc';
+// Плашки планшета (вкладки и кнопки шапки) и карточки — одна обводка и один радиус на весь экран.
+const PANEL_RADIUS = 8;
+const CARD_LINE = 2;
+const CARD_LINE_ALPHA = 0.45;
+const CARD_DIM_LINE_ALPHA = 0.22; // неполученная ачивка: рамка вполсилы, как и текст
+const CARD_PAD = 12; // поле карточки слева
+const COUNTER_FONT = 16; // «‹ 1/2 ›» в нижнем правом углу содержимого
+// Панель подробностей ачивки (клик по карточке): внутри стекла, над вкладками и содержимым, под подсказкой.
+const DETAIL_WIDTH = 620;
+const DETAIL_HEIGHT = 380;
+const DETAIL_SHADE_DEPTH = OVERLAY_DEPTH + 2;
+const DETAIL_DEPTH = DETAIL_SHADE_DEPTH + 1;
+const DETAIL_LINE_ALPHA = 0.6;
+const DETAIL_NAME_FONT = 26;
+const DETAIL_NAME_FONT_MIN = 18;
 // Раздел «?» и вкладка «ТЕСТ» (режим разработчика, devmode.ts). Сверху — строка кнопок, под ней
 // два столбца: слева все предметы, справа все амулеты, у каждого кнопка «+1».
 const DEV_BUTTON_HEIGHT = 32;
@@ -82,16 +106,10 @@ const DEV_NAME_WIDTH = 380; // шире название не бывает: да
 const DEV_ADD = { width: 40, height: 24 }; // кнопка «+1» у каждого предмета и амулета
 const DEV_ADD_LABEL = '+1';
 const DEV_NAME_FONT = '15px';
-// Вкладка «Ачивки»: все 44 ачивки сеткой в два столбца, по 11 рядов на страницу — 22 на страницу, две страницы.
-// Ряд — значок и название. Полученные — обычным светлым, любая неполученная (секретная или нет) — «???»
-// с притушенным значком-вопросом: название выдало бы, что ещё можно получить в игре.
+// Вкладка «Ачивки»: все 44 ачивки теми же карточками, что и остальные списки, в два столбца. Полученные — светлые
+// с цветным значком, любая неполученная (секретная или нет) — «❓ ???»: название выдало бы, что ещё можно получить.
+// Клик по карточке открывает панель подробностей (полученная — с описанием, скрытая — без спойлера).
 const ACH_COLUMNS = 2;
-const ACH_ROW_HEIGHT = 46; // 11 рядов = 506: в панель между шапкой и нижней рамкой (514) влезает
-const ACH_ICON = 28;
-const ACH_ICON_GAP = 16; // от значка до названия
-const ACH_NAME_WIDTH = ROW_WIDTH - ACH_ICON - ACH_ICON_GAP - 6; // шире названия не бывает: fitTextWidth ужимает
-const ACH_NAME_FONT = 20;
-const ACH_NAME_FONT_MIN = 14;
 const ACH_DIM_ALPHA = 0.4; // неполученные: серые и вполсилы, значок тоже притушен
 const ACH_HIDDEN_SIGN = '❓';
 const ACH_HIDDEN_NAME = '???';
@@ -195,6 +213,9 @@ function symbolNote(symbol: SlotSymbol, round: number): string {
  * символы — зелёное «NEW» мигает, пока экран не откроют. Клик по нему (→ ловит сцена) открывает большой экран поверх игры с вкладками:
  * «Символы» (цены и что делает каждый; новые — в золотой рамке), «Предметы», «Кто есть кто», «Ачивки» (только
  * полученные; любые неполученные — «???») и «Как играть» (долг, порядок, клавиши).
+ * Списки нарисованы одними карточками: рамка 2 px, радиус 8, значок 28, название 21 и описание 16. По клику на карточку
+ * ачивки открывается панель подробностей (у неполученной — «???», «Условие скрыто», без спойлера); её закрывают ✕,
+ * клик мимо и Esc — планшет при этом остаётся открытым.
  * Цель забега — на записке над экраном на стене (GOAL_NOTE, Collector).
  * В шапке справа от вкладок — ⚙: настройки (громкость и язык) открываются отсюда. Рядом с ним — маленький раздел
  * «?»: строка с кодом (hookster) включает режим разработчика, и раздел становится вкладкой «ТЕСТ» (devmode.ts).
@@ -224,6 +245,8 @@ export class WallScreen {
   private devInputText?: Phaser.GameObjects.Text; // надпись строки — живёт, пока открыт раздел «?»
   private devInputBox?: Phaser.GameObjects.Rectangle; // рамка строки — её трясём при неверном коде
   private devErrorText?: Phaser.GameObjects.Text;
+  private detail: Phaser.GameObjects.Container | null = null; // панель подробностей ачивки поверх вкладки
+  private detailShade: Phaser.GameObjects.Rectangle | null = null; // затемнение под ней: клик мимо закрывает только её
 
   /** round — какой раунд идёт: в «Символах» те, что уже есть в автомате; toggle — кликнули по телевизору или закрыли большой экран; openSettings — нажали ⚙ в шапке вкладок; dev — действия вкладки «ТЕСТ». */
   constructor(scene: Phaser.Scene, round: number, toggle: () => void, openSettings: () => void, dev: DevActions) {
@@ -320,6 +343,7 @@ export class WallScreen {
   /** Большой экран закрывается — сразу done(): вид не поворачивался, ждать нечего. */
   close(done: () => void): void {
     this.isOpen = false;
+    this.closeDetail();
     this.hideOverlay();
     done();
   }
@@ -356,7 +380,7 @@ export class WallScreen {
     const tabY = top + PAD + TAB_HEIGHT / 2;
     TABS.forEach((tab, index) => {
       const x = left + PAD + TAB_WIDTH / 2 + index * (TAB_WIDTH + 8);
-      const box = scene.add.rectangle(x, tabY, TAB_WIDTH, TAB_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.5);
+      const box = scene.add.rectangle(x, tabY, TAB_WIDTH, TAB_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.5).setRounded(PANEL_RADIUS);
       box.setInteractive({ useHandCursor: true });
       box.on('pointerdown', () => this.showTab(tab.id));
       const text = addText(scene, x, tabY, '', { fontSize: `${TAB_FONT}px`, fontStyle: 'bold', color: INK }).setOrigin(0.5);
@@ -367,21 +391,21 @@ export class WallScreen {
     // ⚙ — настройки (громкость, язык), как раньше в углу комнаты: теперь только здесь, на планшете.
     createGearTexture(scene);
     const gearX = left + PAD + TABS.length * (TAB_WIDTH + 8) + GEAR_SIZE / 2;
-    const gearBox = scene.add.rectangle(gearX, tabY, GEAR_SIZE, GEAR_SIZE, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.5);
+    const gearBox = scene.add.rectangle(gearX, tabY, GEAR_SIZE, GEAR_SIZE, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.5).setRounded(PANEL_RADIUS);
     gearBox.setInteractive({ useHandCursor: true });
     gearBox.on('pointerdown', openSettings);
     const gear = scene.add.image(gearX, tabY, GEAR_TEXTURE).setTint(PANEL_LINE).setAlpha(0.9);
     this.overlay.push(gearBox, gear);
     // Раздел «?» сразу за ⚙: без названия, просто знак. С режимом разработчика тут «ТЕСТ» (devmode.ts).
     const devX = gearX + GEAR_SIZE / 2 + DEV_TAB_GAP + DEV_TAB_WIDTH / 2;
-    const devBox = scene.add.rectangle(devX, tabY, DEV_TAB_WIDTH, TAB_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.5);
+    const devBox = scene.add.rectangle(devX, tabY, DEV_TAB_WIDTH, TAB_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.5).setRounded(PANEL_RADIUS);
     devBox.setInteractive({ useHandCursor: true });
     devBox.on('pointerdown', () => this.showTab('dev'));
     const devText = addText(scene, devX, tabY, this.devTabLabel(), { fontSize: '20px', fontStyle: 'bold', color: INK }).setOrigin(0.5);
     this.devTab = { box: devBox, text: devText };
     this.overlay.push(devBox, devText);
     const crossX = left + WALL_PANEL.width - PAD - TAB_HEIGHT / 2;
-    const crossBox = scene.add.rectangle(crossX, tabY, TAB_HEIGHT, TAB_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.5);
+    const crossBox = scene.add.rectangle(crossX, tabY, TAB_HEIGHT, TAB_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.5).setRounded(PANEL_RADIUS);
     crossBox.setInteractive({ useHandCursor: true });
     crossBox.on('pointerdown', close);
     const cross = addText(scene, crossX, tabY, '✕', { fontSize: '26px', fontStyle: 'bold', color: INK }).setOrigin(0.5);
@@ -400,6 +424,7 @@ export class WallScreen {
 
   /** Вкладка tab: подсветить кнопку, собрать содержимое заново. Другая вкладка начинается с первой страницы. */
   private showTab(tab: Tab): void {
+    this.closeDetail(); // панель подробностей принадлежит прежней вкладке (и прежнему языку) — сносим её
     if (tab !== this.tab) this.page = 0;
     this.tab = tab;
     TABS.forEach((entry, index) => {
@@ -474,15 +499,15 @@ export class WallScreen {
   }
 
   /**
-   * Строки в два столбца: значок слева, название и описание справа. Под ними — плитки «???» по числу ещё не встреченного
-   * (что именно, не видно). Нечего показать совсем — «Пока ничего не встретил».
-   * Ряд — две строки или ряд плиток «???». Рядов бывает больше страницы (12 предметов и 11 амулетов), поэтому
-   * в панель влезает столько рядов, сколько в ней помещается по высоте, а остальные — по клику на панель или на «‹ 1/2 ›».
+   * Строки в два столбца — одними карточками (addCard): значок слева, название и описание справа. Под ними — плитки
+   * «???» по числу ещё не встреченного (что именно, не видно). Нечего показать совсем — «Пока ничего не встретил».
+   * Рядов бывает больше страницы, поэтому в панель влезает столько, сколько помещается по высоте,
+   * а остальные — по клику на панель или на счётчик «‹ 1/2 ›» в нижнем правом углу.
    */
   private buildRows(left: number, top: number, rows: Row[], hidden: number): void {
     const scene = this.scene;
     if (rows.length === 0 && hidden === 0) {
-      this.content.add(addText(scene, left + 10, top + 6, t('tabEmpty'), { fontSize: '22px', color: DIM_INK }));
+      this.content.add(addText(scene, left + CARD_PAD, top + 6, t('tabEmpty'), { fontSize: '22px', color: DIM_INK }));
       this.pages = 1;
       return;
     }
@@ -498,17 +523,7 @@ export class WallScreen {
     rowLines.forEach((line, index) => {
       if (index < first || index >= last) return;
       const y = top + (index - first) * ROW_HEIGHT;
-      line.forEach((row, column) => {
-        const x = left + column * ROW_WIDTH;
-        const iconX = x + ROW_ICON / 2 + 6;
-        const iconY = y + ROW_ICON / 2;
-        if (row.texture) this.content.add(scene.add.image(iconX, iconY, row.texture).setDisplaySize(ROW_ICON, ROW_ICON));
-        else this.content.add(addText(scene, iconX, iconY, row.sign ?? '', { fontSize: '36px' }).setOrigin(0.5));
-        const textX = x + ROW_ICON + 20;
-        this.content.add(addText(scene, textX, y, row.name, { fontSize: '21px', fontStyle: 'bold', color: INK }));
-        const description = { fontSize: '16px', color: DIM_INK, wordWrap: { width: ROW_WIDTH - ROW_ICON - 36 }, maxLines: ROW_DESC_LINES };
-        this.content.add(addText(scene, textX, y + 27, row.description, description));
-      });
+      line.forEach((row, column) => this.addCard(left + column * ROW_WIDTH, y, row, row.name, row.description));
     });
     for (let line = 0; line < hiddenLines; line++) {
       const index = rowLines.length + line;
@@ -517,33 +532,72 @@ export class WallScreen {
       const y = top + (index - first) * ROW_HEIGHT + HIDDEN_TOP_GAP + (ROW_HEIGHT - HIDDEN_HEIGHT) / 2;
       const from = line * HIDDEN_COLUMNS;
       for (let tile = from; tile < Math.min(hidden, from + HIDDEN_COLUMNS); tile++) {
-        const x = left + 10 + (tile - from) * (HIDDEN_WIDTH + HIDDEN_GAP);
-        const box = scene.add.rectangle(x + HIDDEN_WIDTH / 2, y + HIDDEN_HEIGHT / 2, HIDDEN_WIDTH, HIDDEN_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.25);
+        const x = left + CARD_PAD + (tile - from) * (HIDDEN_WIDTH + HIDDEN_GAP);
+        const box = scene.add
+          .rectangle(x + HIDDEN_WIDTH / 2, y + HIDDEN_HEIGHT / 2, HIDDEN_WIDTH, HIDDEN_HEIGHT, PANEL_COLOR)
+          .setStrokeStyle(CARD_LINE, PANEL_LINE, 0.25)
+          .setRounded(PANEL_RADIUS);
         const label = addText(scene, x + HIDDEN_WIDTH / 2, y + HIDDEN_HEIGHT / 2, '???', { fontSize: '22px', fontStyle: 'bold', color: DIM_INK }).setOrigin(0.5).setAlpha(0.6);
         this.content.add([box, label]);
       }
     }
-    if (this.pages > 1) {
-      // «‹ 1/2 ›» — под крестиком, над первым рядом: там пусто на любой вкладке со строками.
-      const counter = addText(scene, left + SYMBOLS_WIDTH, top - 7, `‹ ${this.page + 1}/${this.pages} ›`, { fontSize: '16px', color: DIM_INK }).setOrigin(1, 0.5);
-      counter.setInteractive({ useHandCursor: true });
-      counter.on('pointerdown', () => this.nextPage());
-      this.content.add(counter);
-    }
+    this.addPageCounter();
   }
 
   /**
-   * «Ачивки»: все ачивки игры (ACHIEVEMENTS, 44) сеткой в два столбца. Полученные — светлые и с цветным значком,
-   * любая неполученная — «???» с притушенным «❓»: и название, и значок выдали бы, что ещё можно получить.
-   * Состояние — из прогресса (hasAchievement), не из группы: в ТЕСТ-режиме он не пишется, поэтому вкладка
-   * честно показывает записанное. Поле group на показ не влияет.
-   * 44 пункта в панель не влезают: сколько рядов влезет по высоте, столько и на странице, остальные — по клику на панель
-   * или на счётчик «‹ 1/2 ›» (у achievements 22 на страницу, значит две).
+   * Карточка списка — одна на все вкладки планшета: рамка 2 px PANEL_LINE, радиус 8, значок 28, отступ 16 до названия
+   * 21 bold, описание 16 DIM_INK. dim — неполученная ачивка: значок и текст вполсилы. press — кликабельна вся карточка.
+   */
+  private addCard(x: number, y: number, icon: { texture?: string; sign?: string }, name: string, description: string, dim = false, press?: () => void): void {
+    const scene = this.scene;
+    const card = scene.add
+      .rectangle(x + CARD_WIDTH / 2, y + ROW_HEIGHT / 2, CARD_WIDTH, ROW_HEIGHT, PANEL_COLOR)
+      .setStrokeStyle(CARD_LINE, PANEL_LINE, dim ? CARD_DIM_LINE_ALPHA : CARD_LINE_ALPHA)
+      .setRounded(PANEL_RADIUS);
+    if (press) {
+      card.setInteractive({ useHandCursor: true });
+      card.on('pointerdown', press);
+    }
+    const iconX = x + CARD_PAD + ROW_ICON / 2;
+    const iconY = y + ROW_HEIGHT / 2;
+    const picture = icon.texture
+      ? scene.add.image(iconX, iconY, icon.texture).setDisplaySize(ROW_ICON, ROW_ICON)
+      : addText(scene, iconX, iconY, icon.sign ?? '', { fontSize: `${ROW_ICON}px` }).setOrigin(0.5);
+    const textX = x + CARD_PAD + ROW_ICON + ROW_ICON_GAP;
+    const title = addText(scene, textX, y + ROW_NAME_TOP, name, { fontSize: `${ROW_NAME_FONT}px`, fontStyle: 'bold', color: dim ? DIM_INK : INK });
+    // Длинные названия («Пачка скелетов в кармане», «A pack of skeletons in the pocket») ужимаются по ширине текста.
+    fitTextWidth(title, name, ROW_TEXT_WIDTH, ROW_NAME_FONT, ROW_NAME_FONT_MIN);
+    const note = addText(scene, textX, y + ROW_DESC_TOP, description, {
+      fontSize: '16px',
+      color: DIM_INK,
+      wordWrap: { width: ROW_TEXT_WIDTH },
+      maxLines: ROW_DESC_LINES,
+    });
+    this.content.add([card, picture, title, note]);
+    if (dim) for (const part of [picture, title, note]) part.setAlpha(ACH_DIM_ALPHA);
+  }
+
+  /** «‹ 1/2 ›» — нижний правый угол содержимого, в полосе PAD над нижней обводкой панели: с шапкой не спорит. */
+  private addPageCounter(): void {
+    if (this.pages <= 1) return;
+    const counter = addText(this.scene, WALL_PANEL.x + WALL_PANEL.width / 2 - PAD, WALL_PANEL.y + WALL_PANEL.height / 2 - PAD, `‹ ${this.page + 1}/${this.pages} ›`, {
+      fontSize: `${COUNTER_FONT}px`,
+      color: DIM_INK,
+    }).setOrigin(1, 0.5);
+    counter.setInteractive({ useHandCursor: true });
+    counter.on('pointerdown', () => this.nextPage());
+    this.content.add(counter);
+  }
+
+  /**
+   * «Ачивки»: все 44 — теми же карточками, что и остальные списки, в два столбца. Полученные светлые, с цветным
+   * значком и описанием; любая неполученная — «❓ ???» и «Условие скрыто»: ни название, ни значок не выдают, что ещё
+   * можно получить. Состояние — из прогресса (hasAchievement), не из группы: в ТЕСТ-режиме он не пишется.
+   * Клик по карточке — и полученной, и скрытой — открывает панель подробностей.
    */
   private buildAchievements(left: number, top: number): void {
-    const scene = this.scene;
     const bottom = WALL_PANEL.y + WALL_PANEL.height / 2 - PAD; // рамка панели: ниже неё ряды не ставим
-    const rowsPerPage = Math.max(1, Math.floor((bottom - top) / ACH_ROW_HEIGHT));
+    const rowsPerPage = Math.max(1, Math.floor((bottom - top) / ROW_HEIGHT));
     const perPage = rowsPerPage * ACH_COLUMNS;
     this.pages = Math.max(1, Math.ceil(ACHIEVEMENTS.length / perPage));
     if (this.page >= this.pages) this.page = 0;
@@ -552,24 +606,82 @@ export class WallScreen {
       const column = Math.floor(index / rowsPerPage);
       const row = index % rowsPerPage;
       const x = left + column * ROW_WIDTH;
-      const y = top + row * ACH_ROW_HEIGHT + ACH_ROW_HEIGHT / 2;
+      const y = top + row * ROW_HEIGHT;
       const isObtained = hasAchievement(achievement.id); // только записанное в прогресс: в ТЕСТ он не пишется
-      const isHidden = !isObtained; // неполученная любой группы — «❓ ???», без названия
-      const icon = addText(scene, x + ACH_ICON / 2 + 4, y, isHidden ? ACH_HIDDEN_SIGN : achievement.icon, { fontSize: `${ACH_ICON}px` }).setOrigin(0.5);
-      icon.setAlpha(isObtained ? 1 : ACH_DIM_ALPHA);
-      const name = addText(scene, x + ACH_ICON + ACH_ICON_GAP, y, '', { fontSize: `${ACH_NAME_FONT}px`, fontStyle: 'bold', color: isObtained ? INK : DIM_INK }).setOrigin(0, 0.5);
-      name.setAlpha(isObtained ? 1 : ACH_DIM_ALPHA);
-      // Длинные названия («Пачка скелетов в кармане», «A pack of skeletons in the pocket») ужимаются по ширине столбца.
-      fitTextWidth(name, isHidden ? ACH_HIDDEN_NAME : t(achievement.name), ACH_NAME_WIDTH, ACH_NAME_FONT, ACH_NAME_FONT_MIN);
-      this.content.add([icon, name]);
+      const name = isObtained ? t(achievement.name) : ACH_HIDDEN_NAME;
+      const description = isObtained ? t(achievement.what) : t('achConditionHidden');
+      const icon = { sign: isObtained ? achievement.icon : ACH_HIDDEN_SIGN };
+      this.addCard(x, y, icon, name, description, !isObtained, () => this.openDetail(achievement));
     });
-    if (this.pages > 1) {
-      // «‹ 1/2 ›» — под крестиком, над первым рядом: там пусто на любой вкладке со строками.
-      const counter = addText(scene, left + SYMBOLS_WIDTH, top - 7, `‹ ${this.page + 1}/${this.pages} ›`, { fontSize: '16px', color: DIM_INK }).setOrigin(1, 0.5);
-      counter.setInteractive({ useHandCursor: true });
-      counter.on('pointerdown', () => this.nextPage());
-      this.content.add(counter);
-    }
+    this.addPageCounter();
+  }
+
+  // ---------- Подробности ачивки ----------
+
+  /** Открыта панель подробностей ачивки? Пока да, Esc закрывает только её, а не весь планшет (GameScene.lookBack). */
+  private isDetailOpen(): boolean {
+    return this.detail !== null;
+  }
+
+  /** Закрыть панель подробностей. true — она была открыта: клик мимо, ✕ или Esc закрыли только её. */
+  closeDetail(): boolean {
+    const wasOpen = this.isDetailOpen();
+    this.detailShade?.destroy();
+    this.detail?.destroy(true);
+    this.detailShade = null;
+    this.detail = null;
+    return wasOpen;
+  }
+
+  /**
+   * Панель подробностей ачивки: крупный значок, название, полное описание и статус. У неполученной — «❓ ???»,
+   * «Условие скрыто» и «НЕ ПОЛУЧЕНО»: спойлера нет. Закрыть — ✕ в углу, клик мимо или Esc. Затемнение под панелью
+   * ловит клики: пока она открыта, вкладки под ней не переключаются (клик мимо просто закрывает панель).
+   */
+  private openDetail(achievement: Achievement): void {
+    this.closeDetail();
+    const scene = this.scene;
+    const isObtained = hasAchievement(achievement.id);
+    const halfW = DETAIL_WIDTH / 2;
+    const halfH = DETAIL_HEIGHT / 2;
+    const shade = scene.add.rectangle(VIEW_CENTER_X, 320, VIEW_WIDTH, 640, 0x000000, 0.35).setDepth(DETAIL_SHADE_DEPTH).setScrollFactor(0);
+    shade.setInteractive();
+    shade.on('pointerdown', () => this.closeDetail());
+    const panel = scene.add
+      .rectangle(0, 0, DETAIL_WIDTH, DETAIL_HEIGHT, PANEL_COLOR)
+      .setStrokeStyle(CARD_LINE, PANEL_LINE, DETAIL_LINE_ALPHA)
+      .setRounded(PANEL_RADIUS);
+    panel.setInteractive(); // клик по самой панели — не «мимо»
+    const icon = addText(scene, 0, -halfH + 82, isObtained ? achievement.icon : ACH_HIDDEN_SIGN, { fontSize: '72px' }).setOrigin(0.5);
+    icon.setAlpha(isObtained ? 1 : ACH_DIM_ALPHA);
+    const name = addText(scene, 0, -halfH + 152, isObtained ? t(achievement.name) : ACH_HIDDEN_NAME, {
+      fontSize: `${DETAIL_NAME_FONT}px`,
+      fontStyle: 'bold',
+      color: isObtained ? INK : DIM_INK,
+    }).setOrigin(0.5);
+    fitTextWidth(name, name.text, DETAIL_WIDTH - 2 * CARD_PAD - 36, DETAIL_NAME_FONT, DETAIL_NAME_FONT_MIN);
+    const line = scene.add.rectangle(0, -halfH + 182, DETAIL_WIDTH - 48, 2, PANEL_LINE, 0.2);
+    const description = addText(scene, 0, -halfH + 202, isObtained ? t(achievement.what) : t('achConditionHidden'), {
+      fontSize: '17px',
+      color: DIM_INK,
+      align: 'center',
+      wordWrap: { width: DETAIL_WIDTH - 80 },
+    }).setOrigin(0.5, 0);
+    const status = addText(scene, 0, halfH - 58, isObtained ? t('achEarned') : t('achNotEarned'), {
+      fontSize: '16px',
+      fontStyle: 'bold',
+      color: isObtained ? GREEN_TEXT : DIM_INK,
+    }).setOrigin(0.5);
+    const closeBox = scene.add
+      .rectangle(halfW - 30, -halfH + 30, 36, 36, PANEL_COLOR)
+      .setStrokeStyle(CARD_LINE, PANEL_LINE, 0.5)
+      .setRounded(PANEL_RADIUS);
+    closeBox.setInteractive({ useHandCursor: true });
+    closeBox.on('pointerdown', () => this.closeDetail());
+    const closeSign = addText(scene, halfW - 30, -halfH + 30, '✕', { fontSize: '20px', fontStyle: 'bold', color: INK }).setOrigin(0.5);
+    this.detailShade = shade;
+    this.detail = scene.add.container(WALL_PANEL.x, WALL_PANEL.y, [panel, line, icon, name, description, status, closeBox, closeSign]);
+    this.detail.setDepth(DETAIL_DEPTH).setScrollFactor(0);
   }
 
   /** «Как играть»: слева цель и порядок игры, справа клавиши. Цель забега — на записке над экраном (GOAL_NOTE). */

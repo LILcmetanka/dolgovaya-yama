@@ -191,6 +191,10 @@ const TEXTS = {
   achievementNews: { ru: '🏆 {0}', en: '🏆 {0}' }, // новость на стекле: только название, как просил автор
   // ТЕСТ: запись ачивок запрещена (progress.grantAchievement) — вместо молчания один раз за забег новость на стекле.
   achievementDevNotice: { ru: 'ТЕСТ: ачивки не пишутся', en: 'TEST: achievements are not saved' },
+  // Панель подробностей ачивки на планшете (wallScreen.ts): статус и то, что видно у неполученной вместо описания.
+  achEarned: { ru: 'ПОЛУЧЕНО', en: 'EARNED' },
+  achNotEarned: { ru: 'НЕ ПОЛУЧЕНО', en: 'NOT EARNED' },
+  achConditionHidden: { ru: 'Условие скрыто', en: 'Condition hidden' },
   achNoSmoke: { ru: 'Не кури', en: "Don't smoke" },
   achNoSmokeWhat: { ru: 'Впервые включил сигарету', en: 'You used a cigarette for the first time' },
   achProtectedShield: { ru: 'Защищён', en: 'Protected' },
