@@ -85,7 +85,6 @@ export abstract class CollectorScene extends SaveScene {
    * Фишек не хватает — сначала тревога и красные огни на GOOD_LUCK_TIME, потом последний шанс.
    */
   protected callCollector(isPaidEarly: boolean): void {
-    this.cancelChargeNow(); // Коллектор едет — замах снят
     // Забег уже кончен (победа по цели или KABOOM): Коллектору за долгом идти незачем.
     // Без этой строки он приезжал бы поверх экрана победы — его вызов стоит в таймере endOfSpins.
     if (this.isGameOver) return;
@@ -103,13 +102,11 @@ export abstract class CollectorScene extends SaveScene {
    */
   private reachOut(isPaidEarly: boolean): void {
     const enough = this.hasEnoughForDebt();
-    this.tooltip.hide(); // подсказка шкалы замаха не должна висеть над выехавшим банкоматом
-    this.panel.setChargeVisible(false); // банкомат встаёт на место шкалы замаха: пока он выехал, шкалу не видно
+    this.tooltip.hide(); // подсказки не должны висеть над выехавшим банкоматом
     this.sfx.play('hand'); // банкомат выезжает
     this.collector.reachOut(this.debt, enough, () => {
       if (!enough) {
-        // Банкомат уехал после GOOD LUCK — шкала замаха снова видна.
-        this.panel.setChargeVisible(true);
+        // Банкомат уехал после GOOD LUCK — начинается последний шанс.
         this.startLastChance();
         return;
       }
@@ -143,7 +140,6 @@ export abstract class CollectorScene extends SaveScene {
         });
       },
       () => {
-        this.panel.setChargeVisible(true); // банкомат уехал — шкала замаха снова на месте
         this.openShop();
       },
     );
@@ -198,8 +194,7 @@ export abstract class CollectorScene extends SaveScene {
   /**
    * Множители выигрыша амулетов, автомата и сделки «выигрыш паттернов +N%» — как в addToPot (RoundScene):
    * во сколько раз паттерн на кону больше своей цены. Кровавая прокрутка и предмет риска сюда не входят:
-   * их флаги к приходу Коллектора сняты. Замах рычага в формулу не входит тоже: он двигает только веса символов,
-   * выплаты не множит (DONTLIKE п. 8). Симулятор считает так же (full-run.mjs, collector).
+   * их флаги к приходу Коллектора сняты. Симулятор считает так же (full-run.mjs, collector).
    */
   private chanceWinFactor(): number {
     return winFactor(this.amuletIds(), this.bones) * machineWinFactor(this.machineId) * pactEffects(this.pacts, this.round).winMul;
@@ -534,8 +529,10 @@ export abstract class CollectorScene extends SaveScene {
    * прокрутки обнуляются (иначе крутились бы за экраном победы), а его колбэк готовности уже не включит магазин.
    */
   private startVictory(): void {
-    this.cancelChargeNow(); // победа — замах снят
     this.isGameOver = true;
+    // Экран конца забега ложится выше окна ачивки: пока он открыт, «Конец?» и «Это не конец...» ждут в очереди,
+    // а не тают под экраном. Довезёт их continueRun («ДАЛЬШЕ») или новая сцена после «Заново».
+    this.isEndScreenOpen = true;
     this.freeSpins = 0; // победа забег кончает: бесплатные прокрутки за экраном не крутятся
     this.wasShoppingAtVictory = this.suspendShop(); // панель магазина уезжает без нового раунда
     this.updateChipRecord(); // рекорд фиксируется по концу забега (тут, на «РЕКОРДЕ» и на KABOOM), не в каждом earn
@@ -568,6 +565,7 @@ export abstract class CollectorScene extends SaveScene {
     this.canRestartWithSpace = false; // Пробел снова крутит, а не начинает забег
     this.chipGoal = CHIP_RECORD;
     this.isGameOver = false;
+    this.isEndScreenOpen = false; // экран победы убран: очередь ачивок снова может идти к игроку
     this.screen.setCalmColor(this.calmLampColor());
     this.sfx.play('roundStart');
     this.refreshHud();
@@ -579,11 +577,15 @@ export abstract class CollectorScene extends SaveScene {
     }
     // Приход мог перескочить сразу обе ступени: 10 000 000 набрано ещё до «ДАЛЬШЕ» — «РЕКОРД» без нового дохода.
     this.checkChipGoal();
+    this.pumpAchievements(); // «ДАЛЬШЕ»: очередь, что ждала под экраном победы, доезжает до игрока
   }
 
   /** Конец забега: на экране автомата KABOOM, потом автомат взрывается, всё темнеет, и на нём — KABOOM, счёт, «ЗАНОВО». */
   private kaboom(): void {
     this.isGameOver = true;
+    // Экран DEATH тоже ляжет выше окна ачивки: выданное перед смертью ждёт в очереди и доедет в новом забеге
+    // (restartGame передаёт pendingAchievements), а не тает под экраном.
+    this.isEndScreenOpen = true;
     this.updateChipRecord(); // рекорд фиксируется по концу забега: KABOOM — тоже конец
     this.refreshHud();
     this.sfx.play('warning');

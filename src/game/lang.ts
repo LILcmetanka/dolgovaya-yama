@@ -81,11 +81,6 @@ const TEXTS = {
     ru: 'провал прощён: счёт на один долг назад. Запасы кончились — конец забега',
     en: 'the failure is forgiven: the score goes one debt back. No reserves left — the run ends',
   },
-  // Плашка у записки долга: есть ли ещё второе дыхание (DONTLIKE б.12). Со сделкой №9 запасов может быть больше одного —
-  // тогда на плашке число (secondWindHaveMany), при 1 и 0 — прежние две надписи.
-  secondWindHave: { ru: '🫁 ДЫХАНИЕ: ЕСТЬ', en: '🫁 SECOND WIND: ON' },
-  secondWindHaveMany: { ru: '🫁 ДЫХАНИЯ: {0}', en: '🫁 SECOND WINDS: {0}' },
-  secondWindSpent: { ru: '🫁 ДЫХАНИЕ: НЕТ', en: '🫁 SECOND WIND: OFF' },
   // Последний шанс, входная сетка уже перекрыла цель: долг закроется сам (DONTLIKE б.13).
   lcAlreadyWin: { ru: 'СЕТКА УЖЕ БЬЁТ ЦЕЛЬ', en: 'THE GRID ALREADY BEATS THE GOAL' },
   pause: { ru: 'ПАУЗА', en: 'PAUSE' }, // над знаком паузы
@@ -106,6 +101,7 @@ const TEXTS = {
   keyDrum: { ru: 'барабан', en: 'drum' },
   tabWho: { ru: 'КТО ЕСТЬ КТО', en: "WHO'S WHO" },
   tabItems: { ru: 'ПРЕДМЕТЫ', en: 'ITEMS' },
+  tabAchievements: { ru: 'АЧИВКИ', en: 'ACHIEVEMENTS' }, // вкладка планшета: все ачивки, полученные и нет
   tabEmpty: { ru: 'Пока ничего не встретил', en: 'Nothing met yet' },
   // Режим разработчика: раздел «?» на планшете (строка с кодом) и его вкладка «ТЕСТ».
   devTab: { ru: 'ТЕСТ', en: 'TEST' },
@@ -138,12 +134,6 @@ const TEXTS = {
   pactNoRoom: { ru: 'НЕТ МЕСТА ПОД АМУЛЕТ', en: 'NO ROOM FOR AN AMULET' }, // карта №13: сосуд занят — взять нельзя
   pactAlreadyTaken: { ru: 'ЭТО УЖЕ БРАЛИ', en: 'ALREADY TAKEN' }, // карта №9: запас дыхания один раз за забег
   shopClosedByPact: { ru: 'МАГАЗИН ЗАКРЫТ СДЕЛКОЙ', en: 'SHOP CLOSED BY THE DEAL' }, // вместо панели магазина
-  // Замах рычага (DONTLIKE п. 8): подсказка к шкале заряда.
-  chargeTitle: { ru: 'Замах', en: 'Charge' },
-  chargeWhat: {
-    ru: 'Держи рычаг — шкала растёт. Сильный замах: черепа чаще и крупные паттерны тоже, слабый — тихо и безопасно. Выплаты не меняются. Полная шкала за {0} с',
-    en: 'Hold the lever — the gauge fills. A strong pull means more skulls and bigger patterns, a weak one is quiet and safe. Payouts stay the same. Full gauge in {0} s',
-  },
   closedSlot: { ru: 'Закрытое место', en: 'Locked slot' },
   closedSlotHow: { ru: 'Открывается за фишки в магазине', en: 'Opens for chips in the shop' },
   shelfSlot: { ru: 'Место на полке', en: 'Shelf slot' },
@@ -152,16 +142,12 @@ const TEXTS = {
   closedSocketHow: { ru: 'Открывается за билеты в витрине', en: 'Opens for tickets in the showcase' },
   socket: { ru: 'Гнездо', en: 'Socket' },
   socketWhat: { ru: 'Ещё одно место для амулета', en: 'One more place for an amulet' },
-  // Активные амулеты (шаг 12а): у них одно общее гнездо справа от ряда пассивных, а эффект включает клик по значку.
-  activeSocketEmpty: { ru: 'Гнездо активного амулета', en: 'Active amulet socket' },
-  activeAmulet: { ru: 'АКТИВНЫЙ', en: 'ACTIVE' },
-  activeUsesLeft: { ru: 'зарядов: {0}', en: 'charges: {0}' },
-  activeClickToUse: { ru: 'нажми, чтобы включить', en: 'click to use' },
-  activeNoCharges: { ru: 'Зарядов нет — эффект вернётся в следующем раунде', en: 'No charges — the effect is back next round' },
-  activeAmuletPress: { ru: 'Включается нажатием на значок в янтарном гнезде', en: 'Click its icon in the amber socket to use it' },
-  sightNews: { ru: '🎯 +{0} прокрутки', en: '🎯 +{0} spins' },
-  activeSlotBusy: { ru: 'В активном гнезде уже стоит амулет', en: 'The active slot is taken' },
-  activeAmuletHow: { ru: 'Эффект активного амулета включает клик по значку', en: 'An active amulet works when you click its icon' },
+  // Дверца маленького автомата в магазине: пока закрыта, витрины не видно — клик по ней открывает.
+  miniDoor: { ru: 'Дверца витрины', en: 'Showcase door' },
+  miniDoorOpen: {
+    ru: 'Клик — открыть: за ней место на полке за фишки и гнездо за билеты',
+    en: 'Click to open: a shelf slot for chips and a socket for tickets behind it',
+  },
   ticket: { ru: 'Билет', en: 'Ticket' }, // без эмодзи 🎟: билет в игре — одна красная картинка (decor.ts)
   ticketWhat: { ru: 'На амулеты и гнёзда', en: 'Buys amulets and sockets' },
   // Билет за фишки — четвёртый ряд торгового автомата (шаг 13): цена — доля фишек на руках, и она растёт с покупками.
@@ -186,8 +172,8 @@ const TEXTS = {
   // Включённые предметы у экрана: четыре места, лишний предмет не включается, пока место не освободили кликом.
   effectsFull: { ru: 'Все 4 места заняты — снимите предмет у экрана', en: 'All 4 slots are taken — remove an item from the screen' },
   effectRemove: { ru: 'Нажмите, чтобы убрать', en: 'Click to remove' },
-  // Кнопка выхода в шапке панели магазина (ручка жалюзи внизу осталась вторым выходом).
-  shopLeave: { ru: 'ВЫХОД', en: 'EXIT' },
+  // Кнопка выхода в шапке панели магазина — единственный выход (ручки-язычка больше нет).
+  shopLeave: { ru: 'К СЛОТ-МАШИНЕ', en: 'TO THE SLOT MACHINE' },
   // Монитор справа: что делает каждый особый символ. {0}, {1} — числа из правил (их подставляет монитор).
   skullNote: { ru: 'Паттерн из черепов сжигает кон; сейчас {0}% клеток', en: 'A skull pattern burns the pot; {0}% of cells now' },
   ticketNote: { ru: '{0} на экране — билет', en: '{0} on screen — a ticket' },
@@ -205,6 +191,8 @@ const TEXTS = {
   // ---------- Ачивки (achievements.ts): подпись окна, названия и описания. Формулировки автора — в названиях. ----------
   achievementUnlocked: { ru: 'АЧИВКА', en: 'ACHIEVEMENT' },
   achievementNews: { ru: '🏆 {0}', en: '🏆 {0}' }, // новость на стекле: только название, как просил автор
+  // ТЕСТ: запись ачивок запрещена (progress.grantAchievement) — вместо молчания один раз за забег новость на стекле.
+  achievementDevNotice: { ru: 'ТЕСТ: ачивки не пишутся', en: 'TEST: achievements are not saved' },
   achNoSmoke: { ru: 'Не кури', en: "Don't smoke" },
   achNoSmokeWhat: { ru: 'Впервые включил сигарету', en: 'You used a cigarette for the first time' },
   achProtectedShield: { ru: 'Защищён', en: 'Protected' },
@@ -226,7 +214,7 @@ const TEXTS = {
   achDamnLock: { ru: 'Туда этот замок!', en: 'Damn this lock!' },
   achDamnLockWhat: { ru: 'Впервые включил молоток', en: 'You used the hammer for the first time' },
   achNoSkulls: { ru: 'Вы где черепа?', en: 'Any skulls here?' },
-  achNoSkullsWhat: { ru: 'Впервые включил фарт', en: 'You used luck for the first time' },
+  achNoSkullsWhat: { ru: 'Впервые включил фарт', en: 'You used the lucky spin for the first time' },
   achLuckyShuffle: { ru: 'Хоть бы повезло', en: 'Fingers crossed' },
   achLuckyShuffleWhat: { ru: 'Впервые включил перемешку', en: 'You used a shuffle for the first time' },
   achSwapJackpot: { ru: 'Это КиШ!', en: "That's a jackpot!" },
@@ -258,7 +246,7 @@ const TEXTS = {
   achFreebie: { ru: 'Халява', en: 'Freebie' },
   achFreebieWhat: { ru: 'Впервые включил свечку', en: 'You used a candle for the first time' },
   achWrongGame: { ru: 'Я играю не туда', en: 'Playing the wrong game' },
-  achWrongGameWhat: { ru: 'Сильный замах (заряд больше 70%) и «череп в кармане» одновременно', en: 'A strong pull (charge above 70%) and the skull-in-pocket amulet at the same time' },
+  achWrongGameWhat: { ru: 'Включён предмет «Риск» и «череп в кармане» одновременно', en: 'The Risk item is on and the skull-in-pocket amulet is in place' },
   achInfinity: { ru: 'Бесконечность', en: 'Infinity' },
   achInfinityWhat: { ru: 'Колокольчики и амулет «колокольчик» одновременно', en: 'Bells item and the bell amulet at the same time' },
   achSkeletonKing: { ru: 'Король скелетов', en: 'Skeleton King' },
@@ -274,9 +262,9 @@ const TEXTS = {
   achSmoker: { ru: 'Курильщик', en: 'Smoker' },
   achSmokerWhat: { ru: 'Три сигареты за один раунд', en: 'Three cigarettes in one round' },
   achLuckyOne: { ru: 'Везунчик', en: 'Lucky one' },
-  achLuckyOneWhat: { ru: 'Сильный замах (заряд больше 70%), «череп в кармане» и тройное «забрать» в выигрышном раунде', en: 'A strong pull (charge above 70%), skull-in-pocket and a triple take in a winning round' },
+  achLuckyOneWhat: { ru: 'Включён предмет «Риск», «череп в кармане» и тройное «забрать» в выигрышном раунде', en: 'The Risk item is on, skull-in-pocket is in place and a triple take lands in a winning round' },
   achNope: { ru: 'Неа', en: 'Nope' },
-  achNopeWhat: { ru: 'Сильный замах (заряд больше 70%) и предмет «фарт» одновременно', en: 'A strong pull (charge above 70%) and the luck item at the same time' },
+  achNopeWhat: { ru: 'Попробуй включить «Риск» вместе с «Фартом» — игра ответит «неа»', en: 'Try to turn Risk on together with Lucky spin - the game will say nope' },
   achFiftyFifty: { ru: '50 на 50', en: '50/50' },
   achFiftyFiftyWhat: { ru: 'Паттерн выиграл, когда доля черепов была 50% или выше', en: 'A pattern won when the skull share was 50% or higher' },
   achMyGold: { ru: 'Моё золото', en: 'My gold' },

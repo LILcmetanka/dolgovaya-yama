@@ -13,7 +13,6 @@ import { t } from '../lang';
 import {
   ITEM_SIZE,
   SHOP_CLOSED_Y,
-  SHOP_HANDLE,
   SHOP_HUD,
   SHOP_HUD_CHIPS_MAX_WIDTH,
   SHOP_HUD_CHIP_HEIGHT,
@@ -25,6 +24,7 @@ import {
   VENDING_GOOD_X,
   VENDING_PRICE_X,
   vendingRowY,
+  vendingShelfY,
 } from '../layout';
 import { addText, fitTextWidth, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT, SHOP_FLY_DEPTH, SHOP_PANEL_DEPTH } from '../theme';
 import { fitBoardNumber } from './panel';
@@ -41,11 +41,14 @@ const PRICE_FONT_SIZE = 19; // цена в ряду…
 const PRICE_MIN_FONT_SIZE = 13; // …длинная уменьшается, чтобы не вылезти за тёмную табличку и стекло…
 const PRICE_MAX_WIDTH = 77; // …а если и этого мало — ужимается по ширине: от подписи до края стекла витрины (табличка шире на 8)
 const DIM_ALPHA = 0.4; // предмет некуда положить — он тусклый
-// Предмет стоит в ряду ниже середины: виток спирали (decor.ts, drawVendingSpirals) проходит по его низу и перекрывает
-// его, как настоящая пружина держит товар. Ценники остаются на середине ряда.
-const GOOD_DROP = 13;
+// Предмет стоит в ряду на самой полке (goodY): его низ лежит на линии полки (vendingShelfY, тот же расчёт, что в
+// decor.ts, drawVendingMachine) — тогда виток спирали проходит по его низу и держит товар, как настоящая пружина.
+// Ценники остаются на середине ряда (vendingRowY).
 const EXIT_BORDER = 0xc9a227; // рамка кнопки выхода в шапке панели — золото, как у кнопок победы
 const EXIT_INK = '#fde047';
+const EXIT_FONT_SIZE = 20; // кегль надписи «К СЛОТ-МАШИНЕ ✕»…
+const EXIT_FONT_MIN = 13; // …длинная уменьшается, чтобы не вылезти за золотую рамку
+const EXIT_TEXT_PAD = 24; // поле внутри плашки: надпись шире этого — ужимается (fitTextWidth)
 // Анимации, мс.
 const SLIDE_TIME = 480; // панель съезжает сверху и уезжает обратно, как рольставня
 const PAY_CHIPS = 5; // столько фишек летит с табло в щель (для красоты: цена может быть любой)
@@ -66,6 +69,7 @@ export class Shop {
   private readonly scene: Phaser.Scene;
   private readonly shopLayer: Phaser.GameObjects.Container; // панель: её вещи и вещи AmuletCase, Drum, Cassette
   private readonly goods: Phaser.GameObjects.Image[] = []; // что лежит в ряду
+  private readonly goodHeights: number[] = []; // высота товара в его итоговом масштабе — чтобы посадить низ на полку
   private readonly priceChips: Phaser.GameObjects.Image[] = []; // ценник: фишка…
   private readonly priceTexts: Phaser.GameObjects.Text[] = []; // …и «× 20»
   private prices: (number | null)[] = []; // цена ряда; null — ряд пуст: купили или в пуле ничего не осталось (у ряда билетов цена есть всегда после refresh)
@@ -74,13 +78,14 @@ export class Shop {
   private readonly hudChipsText: Phaser.GameObjects.Text; // шапка панели: сколько фишек
   private readonly hudTicketsText: Phaser.GameObjects.Text; // шапка панели: сколько билетов
   private readonly hudTicketScale: number; // билет в полёте — такого размера, как значок в шапке
+  private exitLabel!: Phaser.GameObjects.Text; // надпись кнопки выхода: её переставляют при смене языка (relabel)
 
   /** Слой панели: в него кладут свои вещи AmuletCase, Drum и Cassette. */
   get layer(): Phaser.GameObjects.Container {
     return this.shopLayer;
   }
 
-  /** buy(row) — кликнули по ряду, leave — по ручке жалюзи или кнопке выхода: назад к автомату. */
+  /** buy(row) — кликнули по ряду, leave — по кнопке выхода в шапке: назад к автомату. */
   constructor(scene: Phaser.Scene, buy: (row: number) => void, leave: () => void, hint: Hint) {
     this.scene = scene;
     // Панель — первым: AmuletCase, Drum и Cassette создаются после Shop и кладут свои вещи в этот слой.
@@ -96,8 +101,10 @@ export class Shop {
     for (let row = 0; row < ROWS; row++) {
       const y = vendingRowY(row, ROWS);
       const isTicket = row === TICKET_ROW;
-      const good = scene.add.image(VENDING_GOOD_X, goodY(row), isTicket ? TICKET_TEXTURE : itemTexture(ITEMS[0])).setVisible(false);
+      const good = scene.add.image(VENDING_GOOD_X, y, isTicket ? TICKET_TEXTURE : itemTexture(ITEMS[0])).setVisible(false);
       good.setScale(isTicket ? TICKET_GOOD_WIDTH / good.width : GOOD_SCALE); // билет — размером с предмет в соседних рядах
+      this.goodHeights.push(good.displayHeight); // высота — уже в выставленном масштабе, а не в 1
+      good.setY(vendingShelfY(row, ROWS) - good.displayHeight / 2); // низ товара — на линии полки, как у билета
       good.setInteractive({ useHandCursor: true });
       attachHint(good, hint, () => this.hintFor(row), () => buy(row));
       this.goods.push(good);
@@ -121,38 +128,13 @@ export class Shop {
     this.hudTicketsText = addText(scene, SHOP_HUD.ticketsX, SHOP_HUD.y, '', LED_STYLE).setOrigin(0, 0.5);
     this.shopLayer.add([hudChip, hudTicket, this.hudChipsText, this.hudTicketsText]);
 
-    this.buildHandle(leave); // ручка-язычок жалюзи внизу панели…
-    this.buildExit(leave); // …и кнопка выхода в шапке, правее чемодана с амулетами
+    this.buildExit(leave); // кнопка выхода в шапке, правее чемодана с амулетами — единственный выход из магазина
   }
 
   /**
-   * Ручка-язычок жалюзи внизу панели: тёмная планка с двумя прорезями и маленькой стрелкой вверх. Клик — уход
-   * из магазина; зона нажатия — своя, потому что у Graphics нет размера для попадания.
-   */
-  private buildHandle(leave: () => void): void {
-    const { x, y, width, height } = SHOP_HANDLE;
-    const left = x - width / 2;
-    const top = y - height / 2;
-    const g = this.scene.add.graphics();
-    g.fillStyle(0x000000, 0.5);
-    g.fillRoundedRect(left + 3, top + 4, width, height, 6); // тень на панели
-    g.fillStyle(0x1c1108);
-    g.fillRoundedRect(left, top, width, height, 6); // планка язычка
-    g.lineStyle(2, 0x5b3a1e);
-    g.strokeRoundedRect(left + 2, top + 2, width - 4, height - 4, 5);
-    g.fillStyle(0x000000, 0.55);
-    g.fillRoundedRect(left + 16, top + 8, width - 32, 3, 2); // прорезь
-    g.fillRoundedRect(left + 16, top + 15, width - 32, 3, 2); // вторая прорезь
-    g.fillStyle(0xc9a227);
-    g.fillTriangle(x, top - 9, x - 7, top - 1, x + 7, top - 1); // стрелка вверх: панель уедет туда же
-    this.shopLayer.add(g);
-    this.shopLayer.add(this.buildLeaveZone(x, y, width, height + 12, leave));
-  }
-
-  /**
-   * Кнопка выхода в шапке панели — правее чемодана с амулетами: тёмная плашка в золотой рамке с надписью «ВЫХОД ✕».
-   * Кнопку видно сразу, и она не похожа на случайную линию в углу. Клик — уход из магазина; зона нажатия — своя,
-   * потому что у Graphics нет размера для попадания.
+   * Кнопка выхода в шапке панели — правее чемодана с амулетами: тёмная плашка в золотой рамке с надписью
+   * «К СЛОТ-МАШИНЕ ✕». Кнопку видно сразу, и она не похожа на случайную линию в углу. Клик — уход из магазина;
+   * зона нажатия — своя, потому что у Graphics нет размера для попадания.
    */
   private buildExit(leave: () => void): void {
     const { x, y, width, height } = SHOP_LEAVE;
@@ -166,9 +148,15 @@ export class Shop {
     g.lineStyle(3, EXIT_BORDER);
     g.strokeRoundedRect(left + 2, top + 2, width - 4, height - 4, 7); // золотая рамка — как у других кнопок игры
     this.shopLayer.add(g);
-    const label = addText(this.scene, x, y, `${t('shopLeave')} ✕`, { fontSize: '20px', fontStyle: 'bold', color: EXIT_INK }).setOrigin(0.5);
-    this.shopLayer.add(label);
+    this.exitLabel = addText(this.scene, x, y, '', { fontSize: `${EXIT_FONT_SIZE}px`, fontStyle: 'bold', color: EXIT_INK }).setOrigin(0.5);
+    fitTextWidth(this.exitLabel, `${t('shopLeave')} ✕`, width - EXIT_TEXT_PAD, EXIT_FONT_SIZE, EXIT_FONT_MIN);
+    this.shopLayer.add(this.exitLabel);
     this.shopLayer.add(this.buildLeaveZone(x, y, width, height, leave));
+  }
+
+  /** Сменился язык (L или RU/EN): надпись кнопки выхода — на новом, снова вписана в плашку. Origin и позиция те же. */
+  relabel(): void {
+    fitTextWidth(this.exitLabel, `${t('shopLeave')} ✕`, SHOP_LEAVE.width - EXIT_TEXT_PAD, EXIT_FONT_SIZE, EXIT_FONT_MIN);
   }
 
   /** Прозрачная зона нажатия с курсором-рукой: у Graphics своего размера нет, по нему не кликнуть. */
@@ -211,8 +199,13 @@ export class Shop {
   private showRow(row: number): void {
     const price = this.prices[row];
     const isEmpty = price === null && row !== TICKET_ROW; // билет остаётся, даже когда цена ещё не посчитана
-    this.goods[row].setPosition(VENDING_GOOD_X, goodY(row)).setAlpha(1).setVisible(!isEmpty);
+    this.goods[row].setPosition(VENDING_GOOD_X, this.goodY(row)).setAlpha(1).setVisible(!isEmpty);
     this.setPriceShown(row, price);
+  }
+
+  /** Где стоит предмет ряда row: центр на полку минус половина высоты — низ товара лежит на линии полки, как у билета. */
+  private goodY(row: number): number {
+    return vendingShelfY(row, ROWS) - this.goodHeights[row] / 2;
   }
 
   /** Значок ценника и «× 170» — только вместе: нет цены, нет и половины ценника (пустой значок читается как поломка). */
@@ -276,7 +269,7 @@ export class Shop {
     this.items[row] = item;
     this.prices[row] = price;
     const good = this.goods[row];
-    good.setTexture(itemTexture(item)).setPosition(VENDING_GOOD_X, goodY(row)).setAlpha(1).setVisible(true).setScale(0);
+    good.setTexture(itemTexture(item)).setPosition(VENDING_GOOD_X, this.goodY(row)).setAlpha(1).setVisible(true).setScale(0);
     this.setPriceShown(row, price);
     this.scene.tweens.add({ targets: good, scale: GOOD_SCALE, duration: REFILL_TIME, ease: 'Back.easeOut' });
   }
@@ -287,7 +280,7 @@ export class Shop {
    */
   sellTicket(): void {
     this.payChips();
-    this.flyTicket(VENDING_GOOD_X, goodY(TICKET_ROW));
+    this.flyTicket(VENDING_GOOD_X, this.goodY(TICKET_ROW));
   }
 
   /**
@@ -386,7 +379,3 @@ export class Shop {
   }
 }
 
-/** Где стоит предмет ряда row: середина ряда и GOOD_DROP вниз — тогда виток спирали идёт по его низу. */
-function goodY(row: number): number {
-  return vendingRowY(row, ROWS) + GOOD_DROP;
-}

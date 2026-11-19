@@ -3,7 +3,6 @@ import { freeSpinWeight } from './bonus';
 import type { SymbolLuck } from './dealerGame';
 import { diceWeight } from './evil';
 import { boostWeight, RISK_SKULL_FACTOR, type ItemEffects } from './items';
-import { bigChargeFactor, skullChargeFactor, CHARGE_BIG_PRICE } from './levers';
 import { machineSkullFactor, machineSymbolAllowed, type MachineId } from './machines';
 import { isDice, isSkull, SYMBOLS, weightsForRound, type SlotSymbol, type WeightOf } from './rules';
 
@@ -18,7 +17,6 @@ export interface WeightContext {
   machineId: MachineId;
   amulets: readonly AmuletId[];
   effects: ItemEffects;
-  charge: number; // замах рычага 0…1: двигает вес черепа и дорогих символов
   skullMul?: number; // поправка веса черепа от сделки Дилера (dealerGame.skullShareWeightMul); без неё — 1
   symbolLuck?: SymbolLuck; // сделка №11: выбранному символу +, остальным −; без неё веса обычные
 }
@@ -36,8 +34,8 @@ export function symbolLuckWeight(symbol: SlotSymbol, weight: number, luck: Symbo
 
 /**
  * Вес символа в этой прокрутке: обычный вес раунда, его меняют амулеты (огранка, череп в кармане), автомат,
- * бусты предметов (чеснок, вишни…), риск, фарт и замах рычага. isFree — бесплатная прокрутка: в ней
- * нет черепов, кубика, пауков, замков и крови.
+ * бусты предметов (чеснок, вишни…) и риск. isFree — бесплатная прокрутка: в ней нет черепов, кубика, пауков,
+ * замков и крови.
  */
 export function symbolWeightOf(symbol: SlotSymbol, base: WeightOf, ctx: WeightContext, isFree: boolean): number {
   // Автомат: у «Тихого» нет паука, замка, крови и клевера, у «Жадного» черепа тяжелее.
@@ -49,19 +47,12 @@ export function symbolWeightOf(symbol: SlotSymbol, base: WeightOf, ctx: WeightCo
   if (ctx.skullMul !== undefined && isSkull(symbol)) weight *= ctx.skullMul; // сделка Дилера: черепов больше
   if (ctx.effects.risk && isSkull(symbol)) weight *= RISK_SKULL_FACTOR; // риск: черепа втрое чаще
   if (ctx.effects.luckSpin && isSkull(symbol)) weight = 0; // фарт: на этой прокрутке черепов нет
-  // Замах рычага: сильный — черепа чаще и крупные символы тоже, слабый — тихо и безопасно.
-  // Выплаты заряд не меняет: двигаются только веса (DONTLIKE п. 8).
-  // Бесплатные прокрутки заряд не спрашивают вовсе: у них свои правила, и ослаблять их корону нельзя.
-  if (!isFree) {
-    if (isSkull(symbol)) weight *= skullChargeFactor(ctx.charge);
-    else if (symbol.price >= CHARGE_BIG_PRICE) weight *= bigChargeFactor(ctx.charge);
-  }
   return isFree ? freeSpinWeight(symbol, weight) : weight;
 }
 
 /**
  * Доля клеток-черепов в следующей платной прокрутке: черепа / все символы, кроме кубика. Считается по тем же весам,
- * что и прокрутка (symbolWeightOf), поэтому амулеты на черепа, автомат, предметы и замах с рычага уже внутри.
+ * что и прокрутка (symbolWeightOf), поэтому амулеты на черепа, автомат и предметы уже внутри.
  * Бесплатные прокрутки сюда не входят: черепов в них нет всегда.
  */
 export function skullShareOf(round: number, diceDrought: number, ctx: WeightContext): number {

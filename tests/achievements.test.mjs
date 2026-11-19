@@ -15,7 +15,6 @@ globalThis.localStorage = {
 store.set('dolgovaya-yama-devmode', '1');
 
 const { achievementsOf, earnedAchievements, isBloodSpill } = await import('../src/game/achievements.ts');
-const { isRiskyCharge } = await import('../src/game/levers.ts');
 const { disableDevMode } = await import('../src/game/devmode.ts');
 const { noEffects } = await import('../src/game/items.ts');
 const { grantAchievement, obtainedAchievements } = await import('../src/game/progress.ts');
@@ -24,7 +23,6 @@ const { skullShareOf } = await import('../src/game/skullShare.ts');
 /** Снимок забега для проверок: всё выключено, доля черепов базовая. */
 function state(overrides = {}) {
   return {
-    charge: 0, // замах рычага: 0 — тихая прокрутка, >= 0.7 — «риск»
     effects: noEffects(),
     amulets: [],
     amuletCounts: {},
@@ -32,7 +30,7 @@ function state(overrides = {}) {
     tickets: 0,
     earned: 0,
     multiplier: 1,
-    skullShare: skullShareOf(1, 0, { machineId: 'classic', amulets: [], effects: noEffects(), charge: 0.5 }),
+    skullShare: skullShareOf(1, 0, { machineId: 'classic', amulets: [], effects: noEffects() }),
     isFree: false,
     isWin: false,
     ...overrides,
@@ -87,18 +85,26 @@ test('grantAchievement не пишет в режиме разработчика,
   assert.deepEqual(JSON.parse(store.get('dolgovaya-yama-progress')).achievements, ['noSmoke'], 'записано в localStorage');
 });
 
-test('доля черепов от замаха: 18% в середине, сильный замах опаснее, слабый тише', () => {
-  const share = (round, amulets, charge) => skullShareOf(round, 0, { machineId: 'classic', amulets, effects: noEffects(), charge });
-  assert.ok(Math.abs(share(1, [], 0.5) - 0.18) < 0.005, '1-й раунд, середина шкалы — 18%');
-  assert.ok(share(13, ['skullPocket', 'skullPocket'], 1) > 0.4, '×2 и полный замах в 13-м — около 44%');
-  assert.ok(share(13, [], 0) < share(13, [], 1), 'слабый замах в 13-м безопаснее сильного');
-  assert.ok(share(1, [], 0) < share(1, [], 1), 'заряд двигает черепа вверх');
+test('доля черепов: растёт от раунда и амулетов, а не от рычага', () => {
+  const share = (round, amulets) => skullShareOf(round, 0, { machineId: 'classic', amulets, effects: noEffects() });
+  assert.ok(Math.abs(share(1, []) - 0.18) < 0.005, '1-й раунд — 18%');
+  assert.ok(share(13, ['skullPocket', 'skullPocket']) > 0.4, '×2 «черепа в кармане» в 13-м — около 44%');
+  assert.ok(share(13, []) > share(1, []), '13-й раунд опаснее первого');
 });
 
-test('«риск» — это высокий заряд: порог 0,7', () => {
-  assert.equal(isRiskyCharge(0.69), false, 'чуть ниже порога — не риск');
-  assert.equal(isRiskyCharge(0.7), true, 'ровно порог — риск');
-  assert.equal(isRiskyCharge(1), true, 'полный замах — риск');
-  assert.ok(earnedAchievements(state({ charge: 0.8, amulets: ['skullPocket'] })).includes('wrongGame'), 'заряд 0,8 + skullPocket — «Я играю не туда»');
-  assert.ok(!earnedAchievements(state({ charge: 0.2, amulets: ['skullPocket'] })).includes('wrongGame'), 'заряд 0,2 — тихая прокрутка, ачивки нет');
+test('«риск» — это включённый предмет «Риск»: три ачивки на нём и ни одной без него', () => {
+  const risky = (extra = {}) => ({ ...noEffects(), risk: true, ...extra });
+  const pocket = { amulets: ['skullPocket'], amuletCounts: { skullPocket: 1 } };
+
+  assert.ok(earnedAchievements(state({ ...pocket, effects: risky() })).includes('wrongGame'), 'риск + «череп в кармане» — «Я играю не туда»');
+  assert.ok(!earnedAchievements(state(pocket)).includes('wrongGame'), 'без риска — «Я играю не туда» нет');
+
+  // «Неа» теперь выдаёт сцена при отказе (conflictsWith), а не earnedAchievements: риск+фарт через неё не идёт.
+  assert.ok(!earnedAchievements(state({ effects: risky({ luckSpin: true }) })).includes('nope'), 'риск и фарт одновременно — «Неа» не через earnedAchievements');
+  assert.ok(!earnedAchievements(state({ effects: { ...noEffects(), luckSpin: true } })).includes('nope'), 'фарт без риска — не «Неа»');
+
+  const luckyOne = { ...pocket, effects: risky({ tripleTakes: 1 }), isWin: true };
+  assert.ok(earnedAchievements(state(luckyOne)).includes('luckyOne'), 'риск + череп в кармане + тройное «забрать» + выигрыш — «Везунчик»');
+  assert.ok(!earnedAchievements(state({ ...luckyOne, effects: { ...noEffects(), tripleTakes: 1 } })).includes('luckyOne'), 'без риска — не «Везунчик»');
+  assert.ok(!earnedAchievements(state({ ...luckyOne, isWin: false })).includes('luckyOne'), 'без выигранного паттерна — не «Везунчик»');
 });

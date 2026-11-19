@@ -2,7 +2,6 @@ import { MAX_SOCKETS, owns, type AmuletCounts, type AmuletId } from './amulets';
 import { CHIP_GOAL, CHIP_RECORD } from './gameConfig';
 import type { Item, ItemEffects, ItemId } from './items';
 import type { TextKey } from './lang';
-import { isRiskyCharge } from './levers';
 
 /**
  * Ачивки: без награды, только след в прогрессе и показ на экране (решение автора).
@@ -177,8 +176,7 @@ export function isBloodSpill(before: number, after: number, amulets: readonly Am
  * выдаются не здесь — их ловят свои места в сцене.
  */
 export interface AchievementState {
-  charge: number; // замах прошлой прокрутки 0…1: «риск» — это высокий заряд (isRiskyCharge)
-  effects: ItemEffects; // включённые предметы
+  effects: ItemEffects; // включённые предметы: «риск» — это включённый предмет «Риск»
   amulets: readonly AmuletId[]; // амулеты в гнёздах: их получение и комбинации
   amuletCounts: AmuletCounts; // их копии
   shelf: readonly (Item | null)[]; // полка: «Моё золото»
@@ -196,7 +194,7 @@ export function earnedAchievements(state: AchievementState): AchievementId[] {
   const has = (id: AmuletId): boolean => owns([...amulets], id);
   const boosts = state.effects.symbolBoost;
   const garlic = boosts.skull !== undefined; // череп легче вдвое — только чеснок
-  const risk = isRiskyCharge(state.charge); // сильный замах = «риск» для ачивок
+  const risk = state.effects.risk; // предмет «Риск» на этой прокрутке — это и есть «рискованная» игра
   const earned: AchievementId[] = [];
 
   // Простые: амулет получен впервые (в этом забеге он уже стоит в гнезде). Список — уникальные гнёзда,
@@ -219,9 +217,9 @@ export function earnedAchievements(state: AchievementState): AchievementId[] {
   if (garlic && (has('cherryPit') || has('bell') || has('cut'))) earned.push('whereAreSkulls');
   if (garlic && boosts.diamond !== undefined && has('cut')) earned.push('skullsAreSoLastCentury');
   if (has('insurance') && has('interest')) earned.push('bank');
-  if (risk && state.effects.luckSpin) earned.push('nope');
+  // «Неа» сюда не входит: её выдаёт сцена при отказе включить «Риск» вместе с «Фартом» (RoundScene.useItem).
   if (risk && has('skullPocket') && state.effects.tripleTakes > 0 && state.isWin) earned.push('luckyOne');
-  // «50 на 50» — доля черепов с плашки (с амулетами, автоматом, предметами и замахом), а не базовая доля раунда.
+  // «50 на 50» — доля черепов с плашки (с амулетами, автоматом и предметами), а не базовая доля раунда.
   if (state.isWin && !state.isFree && state.skullShare >= ACHIEVEMENT_SKULL_SHARE) earned.push('fiftyFifty');
   const first = state.shelf[0];
   // «Моё золото»: все слоты полки забиты одним и тем же предметом. С одним слотом это было бы слишком просто.

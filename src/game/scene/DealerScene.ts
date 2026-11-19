@@ -1,4 +1,4 @@
-import { addCopy, isActive, randomAmuletOffer } from '../amulets';
+import { addCopy, randomAmuletOffer } from '../amulets';
 import { see, WHO_DEALER } from '../codex';
 import {
   CHEAP_SHOP_DEBT_MUL,
@@ -137,16 +137,15 @@ export abstract class DealerScene extends RoundScene {
   /**
    * №13: можно ли взять карту «бесплатный случайный амулет» — нужен свободный сосуд и хоть один кандидат
    * (randomAmuletOffer уважает maxCopies). Нет — карта не берётся, как отказ Дилера.
-   * Активные амулеты карта не даёт: у них своё гнездо и своя покупка в витрине (шаг 12а).
    */
   private freeAmuletCandidate(): boolean {
     if (this.amulets.length >= this.sockets) return false;
-    return randomAmuletOffer(this.amuletIds(), (amulet) => !isActive(amulet)).length > 0;
+    return randomAmuletOffer(this.amuletIds()).length > 0;
   }
 
   /** №13: случайный амулет из пула (maxCopies) — сразу в свободное гнездо, без билетов. Копия — в гнездо своего амулета. */
   private gainFreeAmulet(): void {
-    const [amulet] = randomAmuletOffer(this.amuletIds(), (candidate) => !isActive(candidate));
+    const [amulet] = randomAmuletOffer(this.amuletIds());
     if (!amulet) return;
     if (!this.amulets.some((owned) => owned.id === amulet.id)) this.amulets.push(amulet); // гнездо занято сразу
     addCopy(this.amuletCounts, amulet.id);

@@ -516,7 +516,7 @@ export class SlotScreen {
     this.flashLamps(symbol.isEvil ? LAMP_RED : LAMP_GOLD, NEWS_TIME);
   }
 
-  /** Новость о фазе: на стекле красное «ФАЗА 2» — в верхней половине, под ним место для знаков (их ставит MachinePanel). */
+  /** Новость о фазе: на стекле красное «ФАЗА N» — по центру стекла. */
   announcePhase(number: number): void {
     this.newsOnGlass(`${t('phase')} ${number}`, RED_TEXT, PHASE_FONT_SIZE, PHASE_TITLE_Y);
   }

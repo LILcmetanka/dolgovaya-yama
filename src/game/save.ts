@@ -38,7 +38,6 @@ export interface RunSave {
   sockets: number;
   amulets: Amulet[]; // уникальные амулеты по гнёздам
   amuletCounts: AmuletCounts; // сколько копий каждого амулета (шаг 62б: копии не занимают гнёзда)
-  activeUses?: number; // сколько зарядов активного амулета осталось в раунде; в старых записях поля нет — полный заряд
   bones: number;
   machineId?: MachineId; // какой автомат стоял на записи; в старых записях поля нет — остаётся текущий
   pacts?: Pact[]; // сделки Дилера с их сроком (dealerGame.Pact); в старых записях поля нет — считаем, что сделок нет
@@ -81,17 +80,6 @@ export function debtNextMulOf(record: { debtNextMul?: unknown }): number {
 
 /** Сколько «вторых дыханий» у забега без сделок Дилера: одно, как было до счётчика (DONTLIKE б.12). */
 export const SECOND_WIND_START = 1;
-
-/**
- * Сколько зарядов активного амулета осталось на записи. Поля нет (старая кассета) или оно битое — full: полный заряд
- * этого амулета (его считает сцена по amuletCounts). Дробное вниз, минус — 0, а больше full не бывает:
- * испорченное или подкрученное поле не даёт лишних нажатий.
- */
-export function activeUsesOf(record: { activeUses?: unknown }, full: number): number {
-  const uses = record.activeUses;
-  if (typeof uses !== 'number' || !Number.isFinite(uses)) return full;
-  return Math.min(full, Math.max(0, Math.floor(uses)));
-}
 
 /**
  * Сколько «вторых дыханий» осталось по записи. Новые плёнки пишут счётчик (secondWindLeft), старые — флаг

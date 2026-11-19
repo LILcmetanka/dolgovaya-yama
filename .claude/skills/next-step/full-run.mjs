@@ -34,11 +34,7 @@
 // ShopScene — витрины по закрытым долгам, предметы, амулеты с гнёздами, барабан;
 // SaveScene — кассета (запись и откат); DealerScene — сделки Дилера; CollectorScene — расплата и последний шанс
 // (последний шанс живёт в last-chance-sim.mjs). Правила и числа — из rules, patterns, items, amulets, evil,
-// bonus, phases, levers, machines, drum, dealerGame, save; копий чисел в симуляторе нет.
-// Активные амулеты (шаг 12б) — тоже как в игре: в начале раунда заряд полный, бот жмёт значок сразу
-// (amulets.canPressActive решает, можно ли, amulets.pressActiveAmulet — что даёт), «Оберег» сдвигает долю
-// черепов до конца раунда, «Прицел» добавляет прокрутки.
-//
+// bonus, phases, machines, drum, dealerGame, save; копий чисел в симуляторе нет.
 // Политика игрока (BASE_STRATEGY) — это не правила игры, а выбор за игрока: «забрать», когда кон добирает долг
 // или набирает долю долга; риск, молот, свеча и фарт — по своим порогам; бусты символов, перемешка и подмена —
 // пока на долг не хватает; Дилер — сделка с приоритетом «шаг ×2 → раунд без черепов → билеты», иначе отказ; покупки в магазине по порядку «кассета →
@@ -115,7 +111,6 @@ const M = await import(SRC + 'machines.ts');
 const D = await import(SRC + 'dealerGame.ts');
 const SK = await import(SRC + 'skullShare.ts'); // вес символа со сделкой №11 — тот же код, что в сцене
 const DR = await import(SRC + 'drum.ts');
-const L = await import(SRC + 'levers.ts');
 const S = await import(SRC + 'save.ts');
 // Цель забега (решение автора): 1 000 000 набранных = победа, 10 000 000 — отметка рекорда. Числа — из gameConfig.ts,
 // своей копии здесь нет; в симуляторе победа кончает забег так же, как CollectorScene.startVictory.
@@ -126,8 +121,7 @@ const RECORD = C.CHIP_RECORD;
 const CHASE_RECORD = process.env.SIM_CHASE_RECORD === '1';
 
 // Сила амулетов (шаг 7: забег с этим амулетом с первого раунда) — по ней игрок покупает. Это оценка игрока, не число игры.
-// Активные (шаг 12б): «Прицел» даёт прокрутки каждый раунд, «Оберег» тише держит черепа — обе ниже топовых пассивных.
-const AMULET_POWER = { bones: 5.39, boost: 5.11, interest: 5.09, insurance: 5.02, sight: 4.92, cut: 4.88, cherryPit: 4.69, vest: 4.66, greed: 4.61, charm: 4.5, piggy: 4.43, skullPocket: 4.41, bell: 4.08 };
+const AMULET_POWER = { bones: 5.39, boost: 5.11, interest: 5.09, insurance: 5.02, cut: 4.88, cherryPit: 4.69, vest: 4.66, greed: 4.61, piggy: 4.43, skullPocket: 4.41, bell: 4.08 };
 const ITEM_ORDER = ['garlic', 'triple', 'cigarette', 'shield', 'cherries', 'bells', 'diamonds', 'luck', 'shuffle', 'swap', 'risk', 'hammer', 'candle', 'luckSpin'];
 // Модель времени: сколько секунд занимает действие на экране. Числа не из игры — это оценка, для «минут забега».
 // lastChance — весь эпизод: GOOD LUCK, чистая прокрутка, два действия, чемодан; secondWind — пауза перед магазином.
@@ -242,9 +236,6 @@ export const BASE_STRATEGY = {
   recSpins: 4, // 'danger' — записать, когда осталось столько прокруток или меньше, а на долг не хватает
   play: 'burn', // 'burn' — откат между прокрутками, когда черепа сожгли кон ≥ burnShare; 'none' — кассету только записывать
   burnShare: 0.5,
-  // Замах рычага (DONTLIKE п. 8): заряд 0…1 у каждой платной прокрутки. SIM_CHARGE задаёт его из окружения,
-  // по умолчанию середина шкалы — веса как без замаха.
-  charge: chargeFromEnv(),
   // Деньги: отдавать долг раньше конца раунда ('none' | 'ticket' — только когда за это дают билет, earlyPayTickets).
   payEarly: 'none',
   // Автомат: игрок его не выбирает. Шанс, что в начале раунда он сменится сам (SIM_SWAP_CHANCE), — из machines.ts.
@@ -252,17 +243,6 @@ export const BASE_STRATEGY = {
   // Серия: false — как в коде (переходит в следующий раунд), true — второй набор чисел (сгорает на конце раунда).
   streakReset: false,
 };
-
-/** Заряд замаха из окружения: SIM_CHARGE=0…1 (по умолчанию 0,5 — веса такие же, как без замаха). */
-function chargeFromEnv() {
-  const raw = process.env.SIM_CHARGE;
-  if (raw === undefined) return 0.5;
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value < 0 || value > 1) console.warn(`SIM_CHARGE должен быть 0…1, получено «${raw}» — беру 0,5`);
-  return Number.isFinite(value) && value >= 0 && value <= 1 ? value : 0.5;
-}
-/** Заряд этого прогона — печатается в отчёте. */
-const CHARGE = chargeFromEnv();
 
 /** Цена кассеты — как в игре (save.ts: 2, 3, 4… по купленным). econ оставлен для старых файлов рядом (tape45-sim). */
 export function defaultEcon() {
@@ -288,12 +268,8 @@ function newRun() {
     round: 1, debt: R.debtForRound(1), balance: 0, tickets: 0, spinsLeft: R.SPINS_PER_ROUND, pot: 0, streak: 0,
     slots: I.START_SLOTS, shelf: new Array(I.START_SLOTS).fill(null), effects: I.noEffects(), sockets: A.START_SOCKETS,
     amulets: [], amuletCounts: {}, bones: 0, roundShields: 0,
-    // Активный амулет (шаг 12б): гнездо одно, заряд тратится нажатием и возвращается в начале раунда;
-    // сдвиг доли черепов от «Оберега» живёт до конца раунда.
-    activeUses: 0, amuletSkullDelta: 0,
     machineId: 'classic', // BaseScene: забег начинается с классического
     diceDrought: 0, isBloodNext: false, luckyClovers: 0, freeSpins: 0, phase: PH.PHASES[0], rustyColumn: null, lastGrid: null,
-    charge: 0.5, // заряд замаха следующей платной прокрутки (DONTLIKE п. 8): ставится в playRound
     // Цель забега (решение автора 2026-11-14): earned — все приходы фишек за забег (BaseScene.earn), не баланс.
     // peakBalance — самый большой баланс за забег; millionRound/millionSeconds — когда earned перевалил CHIP_GOAL.
     earned: 0, peakBalance: 0, millionRound: null, millionSeconds: null,
@@ -309,11 +285,11 @@ function newRun() {
 }
 
 
-/** Веса символов следующей прокрутки: автомат, амулеты, предметы, риск/фарт, фаза и замах (как skullShare.ts). */
+/** Веса символов следующей прокрутки: автомат, амулеты, предметы, риск/фарт и фаза (как skullShare.ts). */
 function weightOf(s, isFree) {
   const raw = rawWeightOf(s, isFree);
-  // Доля черепов: + у одних сделок, − у «тише черепа», плюс сдвиг «Оберега» 🧿 этого раунда (RoundScene.weightContext).
-  const delta = D.pactEffects(s.pacts, s.round).skullShareDelta + s.amuletSkullDelta;
+  // Доля черепов: + у одних сделок, − у «тише черепа» (RoundScene.weightContext).
+  const delta = D.pactEffects(s.pacts, s.round).skullShareDelta;
   if (delta === 0 || !Number.isFinite(delta) || isFree) return raw;
   // Долю черепов считаем по тем же весам, что и прокрутку (как RoundScene.weightContext), и берём тот же
   // множитель веса черепа из dealerGame: числа сделки в симуляторе не повторяются.
@@ -329,7 +305,7 @@ function weightOf(s, isFree) {
   return (symbol) => (R.isSkull(symbol) ? raw(symbol) * mul : raw(symbol));
 }
 
-/** Вес символа без поправки сделки на долю черепов: автомат, амулеты, предметы, риск/фарт, фаза и замах. */
+/** Вес символа без поправки сделки на долю черепов: автомат, амулеты, предметы, риск/фарт и фаза. */
 function rawWeightOf(s, isFree) {
   const id = s.machineId;
   const base = R.weightsForRound(s.round, E.diceWeight(s.diceDrought));
@@ -349,11 +325,6 @@ function rawWeightOf(s, isFree) {
     if (luck !== null) weight = SK.symbolLuckWeight(symbol, weight, luck); // сделка №11: выбранный символ ± веса
     if (s.effects.risk && R.isSkull(symbol)) weight *= I.RISK_SKULL_FACTOR; // риск: черепа втрое чаще
     if (s.effects.luckSpin && R.isSkull(symbol)) weight = 0; // фарт: на этой прокрутке черепов нет
-    // Замах рычага: сильный — черепа и крупные символы чаще, слабый — тише. Выплаты не меняет (DONTLIKE п. 8).
-    if (!isFree) {
-      if (R.isSkull(symbol)) weight *= L.skullChargeFactor(s.charge);
-      else if (symbol.price >= L.CHARGE_BIG_PRICE) weight *= L.bigChargeFactor(s.charge);
-    }
     // До замечания 19 фаза 2 множила вес черепа (phase2SkullFactor = 1,2). SIM_PHASE_SKULL=1.2 возвращает это.
     if (R.isSkull(symbol) && s.phase.number >= 2) weight *= LEGACY_PHASE_SKULL;
     return isFree ? B.freeSpinWeight(symbol, weight) : weight;
@@ -406,7 +377,7 @@ function spendTickets(s, g, count) {
   return true;
 }
 
-const FINITE = ['round', 'debt', 'balance', 'earned', 'peakBalance', 'tickets', 'spinsLeft', 'pot', 'streak', 'luckyClovers', 'freeSpins', 'activeUses', 'amuletSkullDelta'];
+const FINITE = ['round', 'debt', 'balance', 'earned', 'peakBalance', 'tickets', 'spinsLeft', 'pot', 'streak', 'luckyClovers', 'freeSpins'];
 
 /**
  * Общая проверка состояния. Зовётся после раунда, прокрутки, магазина и отката.
@@ -474,24 +445,6 @@ function payPot(s, g, isRoundEnd = false) {
   return amount;
 }
 
-/**
- * Нажатие активного амулета — те же правила, что RoundScene.useActiveAmulet: можно ли нажимать, решает
- * amulets.canPressActive (нет амулета, пассивный, «Прицел» у потолка прокруток — отказ без списания заряда),
- * что даёт нажатие — amulets.pressActiveAmulet (списывает заряд, эффект включается). Копий чисел и правил
- * в симуляторе нет.
- */
-function pressActiveAmulet(s, g) {
-  const amulet = A.activeAmuletOf(s.amuletCounts);
-  if (!A.canPressActive(amulet, s.spinsLeft, R.MAX_SPINS_PER_ROUND)) return;
-  const use = A.pressActiveAmulet(amulet, s.activeUses);
-  if (!use.used) return;
-  s.activeUses = use.chargesLeft;
-  s.amuletSkullDelta += use.skullShareDelta; // «Оберег»: черепа реже до конца раунда
-  if (use.spinsBonus > 0) s.spinsLeft = R.spinsAfterBonus(s.spinsLeft, use.spinsBonus); // «Прицел»: прокрутки раунда
-  g.amuletPresses += 1;
-  g.pressesById[amulet.id] = (g.pressesById[amulet.id] ?? 0) + 1;
-}
-
 /** Новый раунд. Серию НЕ трогаем: в коде она переходит в следующий раунд (BaseScene → RoundScene.startRound). */
 function startRound(s, st, g) {
   const owned = ids(s);
@@ -508,13 +461,6 @@ function startRound(s, st, g) {
   // Сделка «−1 прокрутка в раунде»: после амулетов и фазы, но не меньше одной (RoundScene.startRound).
   s.spinsLeft = Math.max(MIN_ROUND_SPINS, planSpins + D.pactEffects(s.pacts, s.round).spinsDelta);
   s.roundShields = A.vestShields(owned);
-  // Активный амулет: в начале раунда заряд снова полный, сдвиг «Оберега» от прошлого раунда снят (RoundScene.startRound).
-  s.amuletSkullDelta = 0;
-  const active = A.activeAmuletOf(s.amuletCounts);
-  s.activeUses = active ? A.activeUses(active) : 0;
-  // Бот жмёт значок сразу, как только раунд начался: «Прицел» добавляет прокрутки на весь раунд, «Оберег» держит
-  // черепа тише все прокрутки — позже эффект работал бы короче.
-  pressActiveAmulet(s, g);
   s.isBloodNext = false; // кровь не переходит в новый раунд
   s.insuranceSaves = 0; // страховка снова готова: сработок на раунд — по числу копий
   s.bankKeptThisRound = false; // сделка №10: «первый череп не жжёт кон» — снова первый
@@ -709,7 +655,7 @@ function roll(s, st, g, isFree) {
   g.spins += 1;
   g.roundSpins += 1; // сумма прокруток за раунд (для проверки «потолок не ограничивает сумму»)
   if (!isFree) g.paidSpins += 1;
-  const calm = false; // спокойного режима больше нет: заряд только двигает веса
+  const calm = false; // спокойного режима больше нет: рычаг только крутит, веса не двигает
   if (!isFree) g.normalSpins += 1;
   const mult = multiplier(s);
   const w = weightOf(s, isFree);
@@ -758,7 +704,7 @@ function roll(s, st, g, isFree) {
   if (!calm) collectBonuses(s, g, grid, result);
   s.lastGrid = grid;
   rustAfterSpin(s);
-  // Риск, молот и фарт — на одну прокрутку; в спокойной заряды ждут обычной.
+  // Риск, молот и фарт — на одну прокрутку; в спокойной прокрутке флаги ждут обычной.
   if (!calm) {
     s.effects.risk = false;
     s.effects.hammer = false;
@@ -836,7 +782,7 @@ function runSave(s) {
     round: s.round, spinsLeft: s.spinsLeft, pot: s.pot, streak: s.streak, isBloodNext: s.isBloodNext,
     luckyClovers: s.luckyClovers, roundShields: s.roundShields, debt: s.debt, balance: s.balance, tickets: s.tickets,
     slots: s.slots, shelf: s.shelf, effects: s.effects, sockets: s.sockets, amulets: s.amulets,
-    amuletCounts: s.amuletCounts, bones: s.bones, machineId: s.machineId, activeUses: s.activeUses,
+    amuletCounts: s.amuletCounts, bones: s.bones, machineId: s.machineId,
     pacts: s.pacts, debtNextMul: s.debtNextMul, diceDrought: s.diceDrought, secondWindLeft: s.secondWindLeft, breathTaken: s.breathTaken, insuranceSaves: s.insuranceSaves,
     // Цель забега тоже на плёнке (RunSave.earned): откат возвращает и набранное, и пик табло, и момент победы.
     earned: s.earned, peakBalance: s.peakBalance, millionRound: s.millionRound, millionSeconds: s.millionSeconds,
@@ -881,10 +827,6 @@ function rewind(s, g) {
   back.breathTaken = saved.breathTaken || s.breathTaken; // карта №9 одна на забег, откат её не забывает
   // Откат не пополняет страховку: сработки этого раунда и с плёнки берём по большей (как SaveScene.loadTape).
   back.insuranceSaves = Math.max(saved.round === s.round ? s.insuranceSaves : 0, saved.insuranceSaves ?? 0);
-  // Заряд активного амулета откат не пополняет — берём меньшее из текущего и плёнки (SaveScene.insertTape).
-  back.activeUses = Math.min(s.activeUses, S.activeUsesOf(saved, s.activeUses));
-  // Сдвиг «Оберега» — состояние раунда, а не плёнки: после перезапуска сцены его нет (RoundScene.resetState).
-  back.amuletSkullDelta = 0;
   g.tape = 'forSale'; g.record = null; g.time += SECONDS.rewind; g.rewinds += 1;
   Object.assign(s, back);
   Object.assign(g, g.recordCounters ?? {}); // счётчики прокруток — как на записи
@@ -934,7 +876,6 @@ function playRound(s, st, g) {
       }
     }
     s.spinsLeft -= 1;
-    s.charge = st.charge; // замах этой платной прокрутки (DONTLIKE п. 8)
     if (g.roundPaid === 0) { g.firstSpinMult += multiplier(s); g.firstSpinRounds += 1; } // диагностика переноса серии
     g.roundPaid += 1;
     if (s.spinsLeft < 0) { guard(g, 'spinsLeft < 0'); return s; }
@@ -1010,7 +951,7 @@ function openShop(s, st, g, econ) {
   if (st.tape === 'first') buyTape();
   // Билеты за фишки (шаг 13): четвёртый ряд торгового автомата — билет стоит долю фишек на руках (items.ticketForChips),
   // и каждый следующий за забег дороже. Бот покупает их только с умыслом: в витрине есть амулет, который он всё равно
-  // взял бы (тот же порядок AMULET_POWER и те же проверки копий, гнезда и активного гнезда, что в цикле ниже),
+  // взял бы (тот же порядок AMULET_POWER и те же проверки копий и гнезда, что в цикле ниже),
   // а билетов на него не хватает. Покупка — по одному, не больше потолка игры items.TICKETS_PER_SHOP за магазин
   // (SIM_TICKETS_PER_SHOP замеряет другой потолок, 0 — без потолка), и только пока после неё фишек остаётся не меньше
   // резерва (reserve()): билет — размен фишек на амулет, а не доход.
@@ -1021,7 +962,6 @@ function openShop(s, st, g, econ) {
       const base = A.amuletPrice(amulet, shopMul);
       // №5: каждая следующая копия страховки вдвое дороже, пока сделка жива (как в цикле ниже).
       const price = fullInsurance && amulet.id === 'insurance' ? A.insuranceCopyPrice(base, A.countOf(s.amuletCounts, 'insurance')) : base;
-      if (A.isActive(amulet)) return A.activeAmuletOf(s.amuletCounts) === null ? price : null; // гнездо активного одно
       const socket = s.amulets.findIndex((a) => a.id === amulet.id);
       if (socket < 0 && s.amulets.length >= s.sockets) {
         const sp = A.socketPrice(s.sockets, shopMul);
@@ -1045,7 +985,6 @@ function openShop(s, st, g, econ) {
     }
   }
   // Амулеты по силе; копия не требует свободного гнезда (шаг 62б), новому амулету — гнездо (отдельная покупка за билеты).
-  // Активный (шаг 12б) встаёт в своё янтарное гнездо: пассивные гнёзда и докупка гнезда ему не нужны, но гнездо одно.
   if (closed >= 1) {
     for (const amulet of [...amuletOffer].sort((a, b) => AMULET_POWER[b.id] - AMULET_POWER[a.id])) {
       if (A.countOf(s.amuletCounts, amulet.id) >= amulet.maxCopies) continue;
@@ -1053,14 +992,6 @@ function openShop(s, st, g, econ) {
       // №5: каждая следующая копия страховки вдвое дороже, пока сделка жива.
       const price = fullInsurance && amulet.id === 'insurance' ? A.insuranceCopyPrice(base, A.countOf(s.amuletCounts, 'insurance')) : base;
       if (price > s.tickets) continue;
-      if (A.isActive(amulet)) {
-        if (A.activeAmuletOf(s.amuletCounts) !== null) continue; // гнездо активного занято — второй не встанет (ShopScene.buyAmulet)
-        spendTickets(s, g, price);
-        A.addCopy(s.amuletCounts, amulet.id);
-        g.activesBought += 1;
-        g.amuletsBought += 1;
-        continue;
-      }
       const socket = s.amulets.findIndex((a) => a.id === amulet.id); // гнездо этого амулета; −1 — такого ещё нет
       if (socket < 0 && s.amulets.length >= s.sockets) {
         const sp = A.socketPrice(s.sockets, shopMul);
@@ -1203,12 +1134,11 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon()) {
     lastChances: 0, survived: 0, secondWind: 0, dead: 0, instantWins: 0, firstActionWins: 0, firstWinLost: 0, lcActions: 0, lcBuys: 0, lcPaid: 0, attempts: 0, // последний шанс (шаг 68б) и докупка (шаг 14)
     freeSpinsGiven: 0, freeInRound: 0, freeMax: 0, crownEvents: 0, guardStops: 0, // бесплатные прокрутки: счётчик предохранителя, за раунд, максимум за раунд, срабатывания предохранителя
     shuffleUsed: 0, swapUsed: 0, // перемешка и подмена (шаг 63б): сколько раз применили
-    normalSpins: 0, spins: 0, paidSpins: 0, // прокрутки: платные (заряд один на забег) и всего
+    normalSpins: 0, spins: 0, paidSpins: 0, // прокрутки: платные и всего
     roundSpins: 0, maxRoundSpins: 0, roundsOverCap: 0, // прокруток в раунде: максимум и сколько раундов перевалило за потолок
     shops: 0, machineSwaps: 0, // автомат: сколько раз сменился сам в начале раунда
     amuletsBought: 0, socketsBought: 0, itemsBought: 0, slotsBought: 0, drumSpins: 0, paidEarly: 0,
     ticketsBought: 0, // билеты за фишки (шаг 13): сколько куплено за забег — от него растёт цена следующего
-    activesBought: 0, amuletPresses: 0, pressesById: {}, // активные амулеты (шаг 12б): куплено и сколько раз нажато
     itemSlotsDenied: 0, // сколько раз предмет не включился: все 4 места в столбике заняты
     roundPaid: 0,
     firstSpinMult: 0, firstSpinRounds: 0, // средний множитель на первой платной прокрутке раунда (перенос серии)
@@ -1330,9 +1260,6 @@ export function summarizeRuns(runs) {
     maxRoundSpins: mean((r) => r.maxRoundSpins), overCap: mean((r) => r.roundsOverCap / Math.max(r.attempts, 1)), // доля раундов, где прокруток больше MAX_SPINS_PER_ROUND
     machineSwaps: mean((r) => r.machineSwaps),
     itemSlotsDenied: mean((r) => r.itemSlotsDenied), amulets: mean((r) => r.amuletsBought), sockets: mean((r) => r.socketsBought),
-    // Активные амулеты (шаг 12б): сколько куплено за забег и сколько раз нажато, по видам.
-    activesBought: mean((r) => r.activesBought), amuletPresses: mean((r) => r.amuletPresses),
-    pressesById: Object.fromEntries(A.AMULETS.filter(A.isActive).map((amulet) => [amulet.id, mean((r) => r.pressesById[amulet.id] ?? 0)])),
     items: mean((r) => r.itemsBought), slots: mean((r) => r.slotsBought), drumSpins: mean((r) => r.drumSpins),
     ticketsBought: mean((r) => r.ticketsBought), // билеты за фишки (шаг 13) — сколько куплено за забег
     paidEarly: mean((r) => r.paidEarly),
@@ -1401,7 +1328,7 @@ export function report(name, x) {
   console.log(`${''.padEnd(44)} последний шанс: шансов ${f(x.lastChances)} за забег (не было у ${pct(x.noChance)}), спасено ${pct(x.rescue)} (${f(x.survived)} из ${f(x.lastChances)}; среднее по забегам ${pct(x.rescuePerRun)}), мгновенных ${pct(x.instantShare)}, цель мед ×${f(x.goalMedian, 1)} (полная нехватка ×${f(x.goalFullMedian, 1)}, у потолка ×10 — ${pct(x.goalAtCap)}), цель побита после 1-го действия ${pct(x.firstActionWins / Math.max(x.lastChances, 1e-9))} (в т.ч. позже снесена ${pct(x.firstWinLost / Math.max(x.lastChances, 1e-9))}), второе дыхание ${f(x.secondWind)} (макс ${x.secondWindMax}), KABOOM ${f(x.dead)}, действий на шанс ${f(x.lcActions / Math.max(x.lastChances, 1e-9), 1)}, доля цели ${f(SHARE, 2)}`);
   // Докупка действия (шаг 14): сколько куплено и почём, и спасаются ли такие шансы чаще обычных.
   console.log(`${''.padEnd(44)} докупка действия: ${f(x.lcBuys)} за забег (заплачено ${chips(x.lcPaid)} фишек), шансов с докупкой ${x.buyChances} (${pct(x.buyChanceShare)}), спасено с докупкой ${pct(x.buyRescue)} / без ${pct(x.noBuyRescue)} | докупок ${BUY_RULES.max}, доли ${f(BUY_RULES.start, 2)}/${f(BUY_RULES.step, 2)}/${f(BUY_RULES.maxShare, 2)}${BUY_ON ? '' : ', выключена'}${BUY_GOAL_FROZEN ? ', цель заморожена' : ''}`);
-  console.log(`${''.padEnd(44)} билеты: за долг ${f(x.ticketIncome.debt)}, ранняя оплата ${f(x.ticketIncome.early)}, 🎟×3 ${f(x.ticketIncome.scatter)}, джекпот ${f(x.ticketIncome.jackpot)}, барабан ${f(x.ticketIncome.drum)}, сделка ${f(x.ticketIncome.pact)} | сделок взято ${f(x.pactsTaken)}, отказов ${f(x.pactsRefused)}, магазинов закрыто сделкой ${f(x.shopsClosed)} | по видам (за забег): ${PACT_SHORT.map(([id, name]) => `${name} ${f(x.pactsById[id])}`).join(', ')} | вторых забираний ${f(x.doubleTakes)}, амулетов по сделке ${f(x.amuletsFree)} | автомат: смен ${f(x.machineSwaps, 0)} | куплено: амулетов ${f(x.amulets)}, гнёзд ${f(x.sockets)}, предметов ${f(x.items)}, мест ${f(x.slots)}, прокруток барабана ${f(x.drumSpins)}, ранних оплат ${f(x.paidEarly)} | отказов по местам ${f(x.itemSlotsDenied)} | билетов куплено ${f(x.ticketsBought)} за забег | активных куплено ${f(x.activesBought)}, нажатий ${f(x.amuletPresses)} (${A.AMULETS.filter(A.isActive).map((amulet) => `${amulet.id} ${f(x.pressesById[amulet.id])}`).join(', ')}) | фриспины до ${f(x.freeMax, 1)} за раунд, предохранитель ${B.FREE_SPINS_GUARD} срезал ${f(x.guardStops)} раз (у ${pct(x.guardRuns)} забегов) | заряд замаха ${f(CHARGE, 2)}`);
+  console.log(`${''.padEnd(44)} билеты: за долг ${f(x.ticketIncome.debt)}, ранняя оплата ${f(x.ticketIncome.early)}, 🎟×3 ${f(x.ticketIncome.scatter)}, джекпот ${f(x.ticketIncome.jackpot)}, барабан ${f(x.ticketIncome.drum)}, сделка ${f(x.ticketIncome.pact)} | сделок взято ${f(x.pactsTaken)}, отказов ${f(x.pactsRefused)}, магазинов закрыто сделкой ${f(x.shopsClosed)} | по видам (за забег): ${PACT_SHORT.map(([id, name]) => `${name} ${f(x.pactsById[id])}`).join(', ')} | вторых забираний ${f(x.doubleTakes)}, амулетов по сделке ${f(x.amuletsFree)} | автомат: смен ${f(x.machineSwaps, 0)} | куплено: амулетов ${f(x.amulets)}, гнёзд ${f(x.sockets)}, предметов ${f(x.items)}, мест ${f(x.slots)}, прокруток барабана ${f(x.drumSpins)}, ранних оплат ${f(x.paidEarly)} | отказов по местам ${f(x.itemSlotsDenied)} | билетов куплено ${f(x.ticketsBought)} за забег | фриспины до ${f(x.freeMax, 1)} за раунд, предохранитель ${B.FREE_SPINS_GUARD} срезал ${f(x.guardStops)} раз (у ${pct(x.guardRuns)} забегов)`);
   // Строка цели: в SIM_CHASE_RECORD=1 к ней добавляется вторая ступень — 10 000 000 и кто до неё дошёл.
   const recordLine = CHASE_RECORD
     ? ` | рекорд ${chips(RECORD)}: взяли ${pct(x.recordShare)} (${x.recordRuns} из ${x.runs}), у дошедших: раунд мед ${f(x.recordRoundMedian, 0)}, минут мед ${f(x.recordMinutesMedian, 1)}`

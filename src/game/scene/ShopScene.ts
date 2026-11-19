@@ -1,4 +1,4 @@
-import { activeAmuletOf, activeUses, addCopy, amuletPrice, countOf, insuranceCopyPrice, isActive, randomAmuletOffer, socketPrice, type Amulet } from '../amulets';
+import { addCopy, amuletPrice, countOf, insuranceCopyPrice, randomAmuletOffer, socketPrice, type Amulet } from '../amulets';
 import { amuletKey, itemKey, see, WHO_COLLECTOR } from '../codex';
 import { pactDebt, pactEffects } from '../dealerGame';
 import { canWin, DRUM_SECTORS, drumChips, drumPrice, prizeItem, randomSector, type DrumPrize } from '../drum';
@@ -13,7 +13,7 @@ import { TICKET_ROW } from '../parts/shop';
 import { DealerScene } from './DealerScene';
 
 const PRIZE_POPUP_RISE = 20; // «+N» за фишки из барабана всплывает чуть выше сектора
-const AMULET_DENY_HINT_TIME = 1500; // сколько висит надпись «в активном гнезде уже амулет», мс
+const AMULET_DENY_HINT_TIME = 1500; // сколько висит подсказка отказа, мс
 
 /** Звук приза барабана: билет шелестит, фишки стучат, предмет и место на полке — как предмет. */
 function prizeSound(prize: DrumPrize): SoundName {
@@ -33,7 +33,7 @@ export abstract class ShopScene extends DealerScene {
   private isLeavingShop = false;
   // Сколько билетов за фишки уже куплено в этом магазине: выше items.TICKETS_PER_SHOP не продают, ряд гаснет.
   private ticketsBoughtHere = 0;
-  // Подсказка «в активном гнезде уже амулет» висит AMULET_DENY_HINT_TIME; новый отказ снимает прошлый таймер.
+  // Подсказка отказа висит AMULET_DENY_HINT_TIME; новый отказ снимает прошлый таймер.
   private amuletDenyHint: Phaser.Time.TimerEvent | null = null;
 
   /** Новый забег: в магазине ещё ничего не покупали — счётчик захода не переезжает через restart и откат кассеты. */
@@ -46,7 +46,6 @@ export abstract class ShopScene extends DealerScene {
    * Долг отдан (или пропущен): на записке следующий долг (записка переворачивается), сверху съезжает панель магазина.
    */
   protected openShop(): void {
-    this.cancelChargeNow(); // магазин — замах снят
     // Сделка «магазин закрыт 2 раунда» (dealerGame.pactEffects): панель не выезжает вовсе, покупок нет.
     if (pactEffects(this.pacts, this.round).shopClosed) {
       this.skipClosedShop();
@@ -267,8 +266,8 @@ export abstract class ShopScene extends DealerScene {
   }
 
   /**
-   * Купить амулет за билеты: он летит из витрины в гнездо. Новый пассивный — в свободное гнездо, копия уже стоящего —
-   * в его гнездо. Активный — в отдельное гнездо справа от ряда: оно одно, второй активный не покупается (шаг 12а).
+   * Купить амулет за билеты: он летит из витрины в гнездо. Новый — в свободное гнездо, копия уже стоящего —
+   * в его гнездо.
    */
   private buyAmulet(place: number): void {
     const amulet = this.amuletOffer[place];
@@ -278,20 +277,8 @@ export abstract class ShopScene extends DealerScene {
       this.amuletCase.deny(place); // копий уже под потолок — ценник трясётся
       return;
     }
-    const active = isActive(amulet);
-    if (active && activeAmuletOf(this.amuletCounts) !== null) {
-      this.sfx.play('deny');
-      this.amuletCase.deny(place); // активное гнездо одно и уже занято — ценник трясётся
-      this.tooltip.show(t('activeSlotBusy'), '');
-      this.amuletDenyHint?.remove(); // прошлый таймер не должен погасить новую подсказку раньше срока
-      this.amuletDenyHint = this.time.delayedCall(AMULET_DENY_HINT_TIME, () => {
-        this.amuletDenyHint = null;
-        this.tooltip.hide();
-      });
-      return;
-    }
     const socket = this.amulets.findIndex((owned) => owned.id === amulet.id); // гнездо этого амулета; −1 — такого ещё нет
-    if (!active && socket < 0 && this.amulets.length >= this.sockets) {
+    if (socket < 0 && this.amulets.length >= this.sockets) {
       this.sfx.play('deny');
       this.amuletCase.deny(place); // амулет новый, а свободного гнезда нет — ценник трясётся
       return;
@@ -304,20 +291,17 @@ export abstract class ShopScene extends DealerScene {
     }
     this.tickets -= price;
     this.amuletOffer[place] = null;
-    const isNew = active || socket < 0; // активный всегда новый: копий у него не бывает
+    const isNew = socket < 0;
     let index = socket;
-    if (!active && isNew) {
+    if (isNew) {
       index = this.amulets.length;
       this.amulets.push(amulet); // гнездо занято сразу: второй быстрый клик его уже не получит
     }
     addCopy(this.amuletCounts, amulet.id);
     const count = countOf(this.amuletCounts, amulet.id); // сколько копий станет после этой покупки
-    const uses = activeUses(amulet);
-    if (active) this.activeUses = uses; // заряд активного — в этом раунде, метку обновит putActive
     this.amuletCase.sell(place, (x, y) => {
       // Гнездо за панелью: амулет гаснет, пройдя первые ~200 px к нему, — будто уходит за жалюзи, а не летит через витрину.
-      if (active) this.amuletRack.putActive(amulet, uses, x, y);
-      else if (isNew) this.amuletRack.putAmulet(index, amulet, count, x, y); // анимация — только когда амулет долетел
+      if (isNew) this.amuletRack.putAmulet(index, amulet, count, x, y); // анимация — только когда амулет долетел
       else this.amuletRack.putCopy(index, amulet, count, x, y);
       this.showBones();
     });
@@ -412,10 +396,8 @@ export abstract class ShopScene extends DealerScene {
     // Третий аргумент — цена билета: ряд билетов в торговом автомате живёт по фишкам на руках и покупкам за забег.
     this.shop.refresh(this.balance, this.shelf.includes(null), ticketForChips(this.balance, this.ticketsBought, this.shopDiscount()));
     // Амулет в витрине готов, если есть свободное гнездо (для нового) или он уже стоит (копию докупаем в то же гнездо).
-    // Активный готов, только пока его гнездо свободно: гнездо одно.
     const amuletReady = this.amuletOffer.map((amulet) => {
       if (amulet === null) return false;
-      if (isActive(amulet)) return activeAmuletOf(this.amuletCounts) === null;
       return this.amulets.length < this.sockets || countOf(this.amuletCounts, amulet.id) > 0;
     });
     this.amuletCase.refresh(this.tickets, amuletReady);
@@ -442,6 +424,7 @@ export abstract class ShopScene extends DealerScene {
     this.isShopOpen = false;
     this.isLeavingShop = true;
     this.tooltip.hide();
+    this.miniShop.clear(); // дверца маленького автомата закрывается и на выходе, а не только на входе
     this.sfx.play('turn');
     this.shop.close(() => {
       // Победа могла перехватить выход, пока панель ехала (suspendShop): тогда раунд начнёт «ДАЛЬШЕ».
@@ -462,6 +445,7 @@ export abstract class ShopScene extends DealerScene {
     this.isShopOpen = false;
     this.isShopping = false;
     this.tooltip.hide();
+    this.miniShop.clear(); // дверца маленького автомата закрывается и на прерванном победой выходе тоже
     this.shop.close(() => {});
     return true;
   }

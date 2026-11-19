@@ -23,18 +23,15 @@ import {
   DISPLAY,
   GLASS,
   LEVER_MOUNT,
-  CHARGE_ANCHOR,
   MULTIPLIER_WINDOW,
   PHASE_SIGNS_Y,
   SKULL_SCREEN,
   SPIN_LAMPS_Y,
 } from '../layout';
 import { t } from '../lang';
-import { clampCharge, CHARGE_FULL_TIME, RISK_CHARGE } from '../levers';
 import { SPINS_PER_ROUND } from '../rules';
 import {
   addText,
-  GOLD_TEXT,
   LAMP_GOLD,
   LAMP_OFF,
   LAMP_RED,
@@ -77,12 +74,13 @@ const PHASE_SIGN_SMALL_STEP = 44; // …и стоят теснее
 const PHASE_SIGNS_HOME_Y = MULTIPLIER_WINDOW.y + MULTIPLIER_WINDOW.height / 2 + 13; // под окошком множителя
 const PHASE_SIGN_HOME_X = MULTIPLIER_WINDOW.x + PHASE_SIGN_SMALL_STEP / 2; // чуть правее середины окошка
 const PHASE_SIGNS: { text: string; style: Phaser.Types.GameObjects.Text.TextStyle }[] = [];
-// Строка доли клеток-черепов — теперь на своём экранчике слева от сетки (SKULL_SCREEN, layout.ts): значок 💀 сверху,
+// Строка доли клеток-черепов — на своём экранчике справа, над гнёздами включённых предметов (SKULL_SCREEN, layout.ts): значок 💀 сверху,
 // процент под ним. Экранчик узкий, поэтому в две строки. Долю считает сцена, здесь только показ.
 // Подсказку вешаем на пустую зону во весь экранчик: текст меняется, и мерить его ширину для наведения не надо.
-const SHARE_FONT_SIZE = '15px';
-const SHARE_ICON_Y = SKULL_SCREEN.y - 14; // 💀 — в верхней половине экранчика…
-const SHARE_PERCENT_Y = SKULL_SCREEN.y + 13; // …процент — в нижней
+const SHARE_ICON_SIZE = '12px'; // 💀 — мельче процента, чтобы влезал в узкое окно
+const SHARE_FONT_SIZE = '13px'; // процент: «96%» моноширинным ≈ 23-24 px, по ~8 px поля с каждой стороны от 40
+const SHARE_ICON_Y = SKULL_SCREEN.y - 9; // 💀 — в верхней половине экранчика (центром 196 при окне 184…226)…
+const SHARE_PERCENT_Y = SKULL_SCREEN.y + 9; // …процент — в нижней (центром 214)
 const SHARE_WARN = 0.27; // с такой доли клеток-черепов процент красный — предупреждение
 const SHARE_HINT_WIDTH = SKULL_SCREEN.width; // подсказка — по всему экранчику
 const SHARE_HINT_HEIGHT = SKULL_SCREEN.height;
@@ -100,21 +98,6 @@ const LEVER_CALL_RADIUS = 34; // кольцо вокруг шарика, пок�
 const LEVER_CALL_GROW = 1.25; // кольцо расходится до такого размера и гаснет
 const LEVER_CALL_TIME = 900; // один «вздох» кольца, мс
 const LEVER_BALL_GROW = 0.15; // внизу шарик ближе к игроку — на столько крупнее (на каждую единицу укорочения штанги)
-// Шкала замаха у рычага (DONTLIKE п. 8): рамка на месте прежнего переключателя режимов и полоска внутри.
-const CHARGE_FRAME = { width: 108, height: 114 }; // рамка шкалы (там же, где раньше стоял переключатель режимов)
-const CHARGE_TRACK = { width: 20, height: 78 }; // жёлоб шкалы
-const CHARGE_FILL_INSET = 4; // зазор между жёлобом и заливкой
-const CHARGE_FILL = 0x1c1917; // тёмная заливка рамки — как у кнопок в настройках
-const CHARGE_BRONZE = 0xb45309; // бронзовая окантовка автомата
-const CHARGE_TRACK_COLOR = 0x0b0f19; // жёлоб — почти чёрный
-const CHARGE_TEXT_Y = 42; // процент под шкалой
-const CHARGE_FONT_SIZE = '13px';
-const CHARGE_LOW = 0x4ade80; // слабый замах — зелёный
-const CHARGE_MID = 0xfde047; // середина — жёлтый
-const CHARGE_HIGH = 0xef4444; // сильный — красный
-const CHARGE_MID_AT = 0.5; // с какого заряда заливка жёлтая
-const CHARGE_HIGH_AT = RISK_CHARGE; // и с какого — красная: ровно порог «риска», чтобы игрок видел его цветом
-const CHARGE_LOCK_TIME = 260; // на отпускании шкала коротко вспыхивает, мс
 
 /** Число на табло: шрифт BOARD_FONT_SIZE, а длинное число — мельче, чтобы не вылезло шире maxWidth. Тем же набирают шапку панели магазина. */
 export function fitBoardNumber(text: Phaser.GameObjects.Text, value: number, maxWidth: number): void {
@@ -140,19 +123,15 @@ export class MachinePanel {
   private readonly ticketsText: Phaser.GameObjects.Text; // табло: сколько у тебя билетов
   private readonly ticketScale: number; // билет на табло во столько раз больше своей картинки — туда долетают билеты
   private readonly multiplierText: Phaser.GameObjects.Text; // окошко множителя серии
-  private readonly skullShareText: Phaser.GameObjects.Text; // процент доли клеток-черепов на экранчике слева от сетки
+  private readonly skullShareText: Phaser.GameObjects.Text; // процент доли клеток-черепов на экранчике справа, над гнёздами
   private readonly spinLamps: Phaser.GameObjects.Arc[] = []; // лампочки прокруток: одна на прокрутку
   private freeLamps: Phaser.GameObjects.Image[] = []; // бесплатные прокрутки за короны — короны в конце ряда лампочек
   private readonly leverRod: Phaser.GameObjects.Image; // штанга рычага, низ — точка вращения
   private readonly leverBall: Phaser.GameObjects.Image; // шарик на конце штанги
   private leverCall: Phaser.GameObjects.Arc | null = null; // кольцо вокруг шарика: рычаг зовёт, пока не крутили
   private phaseSigns: Phaser.GameObjects.Text[] = []; // знаки фазы 2 под окошком множителя; в фазе 1 их нет
-  private chargeFrame!: Phaser.GameObjects.Rectangle; // рамка шкалы замаха у рычага
-  private chargeTrack!: Phaser.GameObjects.Rectangle; // жёлоб шкалы
-  private chargeFill!: Phaser.GameObjects.Rectangle; // заливка: высота = заряд
-  private chargeText!: Phaser.GameObjects.Text; // процент заряда под шкалой
 
-  /** pressLever — нажали рычаг (сцена начинает замах; Пробел и Enter она ловит сама). */
+  /** pressLever — нажали рычаг: сцена сразу крутит (Пробел и Enter она ловит сама). */
   constructor(scene: Phaser.Scene, pressLever: () => void, hint: Hint) {
     this.scene = scene;
     this.hint = hint;
@@ -174,8 +153,8 @@ export class MachinePanel {
     this.addSpinLamps(SPINS_PER_ROUND);
     // Окошко множителя серии: «×3» — с таким множителем пойдёт следующая прокрутка.
     this.multiplierText = addText(scene, MULTIPLIER_WINDOW.x, MULTIPLIER_WINDOW.y, '', LED_STYLE).setOrigin(0.5);
-    // Доля клеток-черепов — всегда на виду на экранчике слева от сетки: 💀 сверху, процент под ним.
-    addText(scene, SKULL_SCREEN.x, SHARE_ICON_Y, '💀', { fontSize: SHARE_FONT_SIZE }).setOrigin(0.5);
+    // Доля клеток-черепов — всегда на виду на экранчике справа, над гнёздами предметов: 💀 сверху, процент под ним.
+    addText(scene, SKULL_SCREEN.x, SHARE_ICON_Y, '💀', { fontSize: SHARE_ICON_SIZE }).setOrigin(0.5);
     this.skullShareText = addText(scene, SKULL_SCREEN.x, SHARE_PERCENT_Y, '', { fontSize: SHARE_FONT_SIZE }).setOrigin(0.5);
     // Зона подсказки — пустая Zone: у неё нет картинки, но она ловит наведение (у прозрачного прямоугольника — нет).
     const shareZone = scene.add.zone(SKULL_SCREEN.x, SKULL_SCREEN.y, SHARE_HINT_WIDTH, SHARE_HINT_HEIGHT);
@@ -190,53 +169,6 @@ export class MachinePanel {
       part.setInteractive({ useHandCursor: true });
       part.on('pointerdown', pressLever);
     }
-
-    // Шкала замаха — рядом с рычагом, там же, где раньше стояли плашки режимов.
-    this.addChargeBar(hint);
-  }
-
-  /**
-   * Шкала замаха: рамка у рычага, внутри жёлоб и заливка снизу вверх. Пока рычаг держат — заливка растёт
-   * от 0 до 100% (сцена зовёт showCharge каждый кадр), на отпускании коротко вспыхивает и остаётся на заряде
-   * прошлой прокрутки. Цвет: зелёный → жёлтый → красный. Подписи нет — процент и цвет понятны без языка.
-   */
-  private addChargeBar(hint: Hint): void {
-    this.chargeFrame = this.scene.add
-      .rectangle(CHARGE_ANCHOR.x, CHARGE_ANCHOR.y, CHARGE_FRAME.width, CHARGE_FRAME.height, CHARGE_FILL, 0.9)
-      .setStrokeStyle(2, CHARGE_BRONZE)
-      .setRounded(8);
-    this.chargeTrack = this.scene.add
-      .rectangle(CHARGE_ANCHOR.x, CHARGE_ANCHOR.y - 8, CHARGE_TRACK.width, CHARGE_TRACK.height, CHARGE_TRACK_COLOR)
-      .setStrokeStyle(0)
-      .setRounded(6);
-    this.chargeFill = this.scene.add.rectangle(CHARGE_ANCHOR.x, CHARGE_ANCHOR.y - 8, CHARGE_TRACK.width - 2 * CHARGE_FILL_INSET, 1, CHARGE_LOW).setOrigin(0.5, 1).setRounded(4);
-    this.chargeText = addText(this.scene, CHARGE_ANCHOR.x, CHARGE_ANCHOR.y + CHARGE_TEXT_Y, '0%', {
-      fontSize: CHARGE_FONT_SIZE,
-      fontStyle: 'bold',
-      color: GOLD_TEXT,
-    }).setOrigin(0.5);
-    attachHint(this.chargeFrame, hint, () => [t('chargeTitle'), t('chargeWhat', (CHARGE_FULL_TIME / 1000).toFixed(1))]);
-    this.showCharge(0);
-  }
-
-  /** Заряд на шкале: value 0…1. Высота заливки, её цвет и процент. locked — короткая вспышка на отпускании. */
-  showCharge(value: number, locked = false): void {
-    const charge = clampCharge(value); // NaN и мусор — нейтральная середина, а не NaN-высота
-    const height = Math.max(1, (CHARGE_TRACK.height - 2 * CHARGE_FILL_INSET) * charge);
-    const color = charge >= CHARGE_HIGH_AT ? CHARGE_HIGH : charge >= CHARGE_MID_AT ? CHARGE_MID : CHARGE_LOW;
-    this.chargeFill.setSize(CHARGE_TRACK.width - 2 * CHARGE_FILL_INSET, height).setFillStyle(color);
-    this.chargeText.setText(`${Math.round(charge * 100)}%`);
-    if (!locked) return;
-    this.scene.tweens.killTweensOf(this.chargeFrame);
-    this.scene.tweens.add({ targets: this.chargeFrame, scale: { from: 1, to: 1.08 }, duration: CHARGE_LOCK_TIME / 2, yoyo: true });
-  }
-
-  /** Спрятать шкалу: банкомат Коллектора выезжает как раз на её место. */
-  setChargeVisible(visible: boolean): void {
-    this.chargeFrame.setVisible(visible);
-    this.chargeTrack.setVisible(visible);
-    this.chargeFill.setVisible(visible);
-    this.chargeText.setVisible(visible);
   }
 
   /** Ещё count лампочек прокруток в конец ряда; весь ряд снова по центру. pop — новые появляются с подскоком. */

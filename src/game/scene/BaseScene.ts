@@ -1,13 +1,12 @@
 import Phaser from 'phaser';
 import { achievementById, earnedAchievements, type AchievementId, type AchievementState } from '../achievements';
-import { activeAmuletOf, amuletIdsFrom, activeUses as usesPerRound, multiplierStep, START_SOCKETS, type Amulet, type AmuletCounts, type AmuletId } from '../amulets';
+import { amuletIdsFrom, multiplierStep, START_SOCKETS, type Amulet, type AmuletCounts, type AmuletId } from '../amulets';
 import { resetCodex } from '../codex';
 import { isDevMode } from '../devmode';
 import type { Pact } from '../dealerGame';
 import { CHIP_GOAL } from '../gameConfig';
 import { garlicOn, noEffects, START_SLOTS, type Item, type ItemEffects, type ShopItem } from '../items';
 import { formatChips, t } from '../lang';
-import { cancelCharge, lastCharge, startCharge, type ChargeSource } from '../levers';
 import { PHASES, type Phase } from '../phases';
 import type { MachineId } from '../machines';
 import type { Pattern } from '../patterns';
@@ -121,7 +120,6 @@ export abstract class BaseScene extends Phaser.Scene {
   protected sockets = 0; // сколько гнёзд для амулетов открыто
   protected amulets: Amulet[] = []; // амулеты в гнёздах, по порядку гнёзд (каждый — уникальный, дубли — счётчиком ниже)
   protected amuletCounts: AmuletCounts = {}; // сколько копий каждого амулета (шаг 62б: копии не занимают гнёзда)
-  protected activeUses = 0; // зарядов активного амулета в этом раунде (гнездо одно; 0 — амулета нет)
   protected amuletOffer: (Amulet | null)[] = []; // что лежит в витрине амулетов; купленное — null
   protected drumSpins = 0; // сколько раз крутил барабан в этом магазине — каждая следующая прокрутка дороже
   protected ticketsBought = 0; // сколько билетов куплено за фишки за забег — с каждым следующий билет дороже (шаг 13)
@@ -138,15 +136,15 @@ export abstract class BaseScene extends Phaser.Scene {
   protected luckyClovers = 0; // сколько клеверов висит на сетке: следующая прокрутка — с паттерном, и чем их больше, тем сильнее
   protected freeSpins = 0; // сколько бесплатных прокруток за короны ещё впереди — они крутятся сами
   protected freeSpinsAwarded = 0; // сколько бесплатных прокруток выдали за раунд — технический предохранитель FREE_SPINS_GUARD, игроку не виден
-  protected devUsedThisRun = false; // забег трогали во вкладке «ТЕСТ» (devmode): рекорд фишек из него не пишем
+  protected devUsedThisRun = false; // забег трогали во вкладке «ТЕСТ» (devmode): рекорд фишек и ачивки из него не пишем
   protected cigarettesThisRound = 0; // сколько сигарет включили в этом раунде — для «Курильщика»
   private achievementQueue: AchievementId[] = []; // ачивки, которые ещё не показали: выпало несколько — идут по очереди
   private achievementShown: AchievementId | null = null; // какая ачивка сейчас на экране (её тоже нельзя потерять при рестарте)
   private isAchievementShown = false; // окно ачивки занято: следующая ждёт своей очереди
+  protected isEndScreenOpen = false; // экран конца забега (победа, рекорд, смерть) на экране: окно ачивки ждёт, пока его закроют
+  private isDevNoticeShown = false; // новость «ТЕСТ: ачивки не пишутся» уже была в этом забеге: второй раз не спамим
+  private isDevNoticePending = false; // её отложили (магазин, планшет, пауза, концовка): на стекле сейчас не видно
   protected isFreeSpinNow = false; // идёт бесплатная прокрутка за короны: черепов в ней нет, «50 на 50» за неё не даём
-  // Замах рычага: держат ли его сейчас и чем начали (клавишей или мышью). Отпускание «чужого» источника не крутит.
-  protected isCharging = false;
-  protected chargeSource: ChargeSource | null = null;
   protected phase: Phase = PHASES[0]; // какая фаза сейчас (phases.ts) — по числу закрытых долгов
   protected tapeState: TapeState = 'forSale'; // кассета: продаётся, чистая (в REC) или записана (в PLAY)
   protected tapesBought = 0; // сколько кассет куплено за забег — от этого цена; откат этого числа не откатывает
@@ -199,33 +197,6 @@ export abstract class BaseScene extends Phaser.Scene {
   protected achievements!: AchievementWindow; // окно полученной ачивки по центру сетки
   protected reveal: Reveal | null = null; // тьма первого забега; null — обучение пройдено или его нет
 
-  /** Начали замах: шкала с нуля, дальше её двигает update() сцены. Источник запоминаем — по нему и отпускаем. */
-  protected startCharging(source: ChargeSource): void {
-    this.isCharging = true;
-    this.chargeSource = source;
-    startCharge();
-    this.panel?.showCharge(0);
-  }
-
-  /**
-   * Забыть замах: удержание снято, модуль заряда обнулён. Панель не трогаем — так можно звать из loadTape,
-   * где старый планшет уже уничтожен, а новый ещё не создан.
-   */
-  protected clearCharge(): void {
-    this.isCharging = false;
-    this.chargeSource = null;
-    cancelCharge();
-  }
-
-  /**
-   * Отменить замах без прокрутки: пауза, планшет, магазин, Коллектор, конец раунда, победа, откат кассетой, «забрать».
-   * Гасит удержание и шкалу; отпускание после этого ничего не крутит (endCharge видит isCharging = false).
-   */
-  protected cancelChargeNow(): void {
-    this.clearCharge();
-    this.panel?.showCharge(0);
-  }
-
   /** Начало забега: первый долг, пустое табло, 2 места на полке, ничего не включено, автомат обычный. */
   protected resetState(): void {
     this.round = 1;
@@ -241,6 +212,9 @@ export abstract class BaseScene extends Phaser.Scene {
     this.achievementQueue = [];
     this.achievementShown = null;
     this.isAchievementShown = false;
+    this.isEndScreenOpen = false;
+    this.isDevNoticeShown = false; // новый забег: про запрет ачивок в ТЕСТ скажем снова, если он всё ещё включён
+    this.isDevNoticePending = false;
     this.tickets = 0;
     this.spinsLeft = SPINS_PER_ROUND;
     this.pot = 0;
@@ -253,7 +227,6 @@ export abstract class BaseScene extends Phaser.Scene {
     this.sockets = START_SOCKETS; // гнёзда есть с первого раунда: открываются долгами, а не забегами
     this.amulets = [];
     this.amuletCounts = {};
-    this.activeUses = 0; // новый забег — активных амулетов нет
     this.amuletOffer = [];
     this.drumSpins = 0;
     this.ticketsBought = 0; // новый забег — билеты снова по 40% банка
@@ -267,7 +240,6 @@ export abstract class BaseScene extends Phaser.Scene {
     this.luckyClovers = 0;
     this.freeSpins = 0;
     this.freeSpinsAwarded = 0;
-    this.clearCharge(); // новый забег — замах с нуля, удержание не переезжает
     this.phase = PHASES[0];
     this.tapeState = 'forSale';
     this.tapesBought = 0;
@@ -301,7 +273,6 @@ export abstract class BaseScene extends Phaser.Scene {
     this.panel.showMultiplier(this.multiplier());
     this.panel.showSpinsLeft(this.spinsLeft);
     this.panel.showFreeSpins(this.freeSpins);
-    this.panel.showCharge(lastCharge()); // шкала замаха: в покое — заряд прошлой прокрутки
     this.collector.showGoal(this.earned, this.chipGoal); // цель забега — на записке над экраном на стене
     // В последнем шансе цели в окошке нет: её показывает полоса последнего шанса, а «забрать» там нечего.
     this.payout.setGoal(null);
@@ -309,9 +280,10 @@ export abstract class BaseScene extends Phaser.Scene {
     this.payout.setEnabled(this.canAct());
     this.collector.showPayable(this.canPayEarly());
     this.collector.showProgress(this.debt, this.balance, this.pot);
-    this.collector.showSecondWind(this.secondWindLeft); // плашка у записки: сколько провалов ещё простят (DONTLIKE б.12)
     this.cassette.showUsable(this.canRecord() || this.canRewind());
     this.monitor.setEnabled(this.canAct() || this.isAtMonitor); // к монитору — между прокрутками, от него — всегда
+    // Отложенная новость про ТЕСТ: как только стекло снова на виду (магазин уехал, планшет закрыт, пауза снята), её показываем.
+    this.flushDevNotice();
     const tension = this.tension();
     this.sfx.setTension(tension);
     this.atmosphere.setTension(tension);
@@ -369,10 +341,39 @@ export abstract class BaseScene extends Phaser.Scene {
    * по центру экрана автомата. Прогресс пишется навсегда и переживает «Заново».
    * Режим разработчика выдачу гасит: и сам grantAchievement, и флаг devUsedThisRun — иначе можно накрутить
    * амулетов и фишек с включённым ТЕСТ, нажать «ВЫЙТИ» и получить пачку ачивок на следующем refreshHud.
+   * Но молча — нельзя: автор жаловался, что «выполнял, а ничего не показывалось», поэтому один раз за забег
+   * на стекле выходит новость «ТЕСТ: ачивки не пишутся» (showDevNotice).
    */
   protected unlockAchievement(id: AchievementId): void {
-    if (this.devUsedThisRun || !grantAchievement(id)) return; // забег трогали в ТЕСТ или ачивка уже была
+    if (isDevMode() || this.devUsedThisRun) {
+      this.showDevNotice(); // ТЕСТ: не пишем и не показываем, но игрок должен знать почему
+      return;
+    }
+    if (!grantAchievement(id)) return; // ачивка уже была
     this.showAchievement(id);
+  }
+
+  /**
+   * Новость «ТЕСТ: ачивки не пишутся» — одна на забег. Если сейчас стекла не видно (магазин, планшет, пауза,
+   * экран конца забега), новость не пропадает: её держит isDevNoticePending, а flushDevNotice покажет, когда
+   * стекло снова на виду (его зовёт каждый refreshHud).
+   */
+  private showDevNotice(): void {
+    if (this.isDevNoticeShown) return; // в этом забеге уже говорили — не спамим на каждую проверку ачивок
+    this.isDevNoticePending = true;
+    this.flushDevNotice();
+  }
+
+  /** Показать отложенную новость про ТЕСТ, если её ещё не показывали и стекло сейчас на виду. */
+  private flushDevNotice(): void {
+    if (!this.isDevNoticePending || this.isDevNoticeShown) return;
+    // Магазин закрывает стекло панелью, планшет ложится поверх (OVERLAY_DEPTH), пауза и концовка — ещё выше:
+    // новость там не прочитать. Ждём следующего refreshHud — он придёт, когда экран уберут.
+    if (this.isShopOpen || this.isAtMonitor || this.isPaused || this.isEndScreenOpen) return;
+    this.isDevNoticePending = false;
+    this.isDevNoticeShown = true;
+    this.screen.announceNews(t('achievementDevNotice'));
+    this.sfx.play('news', 0.3);
   }
 
   /**
@@ -387,16 +388,22 @@ export abstract class BaseScene extends Phaser.Scene {
 
   /**
    * Очередь показа: одну за раз, ничего не теряя. Зовётся после создания окна, из showAchievement и по концу показа.
-   * Пока окно занято, следующая ждёт; пока окна нет — ждут все.
+   * Пока окно занято, следующая ждёт; пока окна нет — ждут все. Пока открыт экран конца забега (победа, рекорд,
+   * смерть) — тоже ждут: он на GAME_OVER_DEPTH выше окна, и ачивка под ним была бы не видна (автор жаловался,
+   * что «Конец?» и «Это не конец...» терялись). Так же ждут планшет (isAtMonitor, глубина 20) и пауза (isPaused,
+   * 30): окно на 13 лежало бы под ними, а таймер 2.5 с шёл бы зря. Очередь довозит continueRun («ДАЛЬШЕ»),
+   * lookBack (закрытие планшета), resumeGame (снятие паузы) или новая сцена после «Заново».
    */
   protected pumpAchievements(): void {
-    if (this.isAchievementShown || !this.achievements) return;
+    if (this.isAchievementShown || !this.achievements || this.isEndScreenOpen || this.isAtMonitor || this.isPaused) return;
     const id = this.achievementQueue.shift();
     if (id === undefined) return;
     this.isAchievementShown = true;
     this.achievementShown = id;
     const achievement = achievementById(id);
-    this.screen.announceNews(t('achievementNews', t(achievement.name))); // на стекле — только название (как просил автор)
+    // В магазине панель лежит над стеклом автомата: новость на стекле читалась бы поверх панели, где её не ждут.
+    // Там остаётся только окно ачивки — оно выше панели магазина (13 против 9).
+    if (!this.isShopOpen) this.screen.announceNews(t('achievementNews', t(achievement.name))); // на стекле — только название (как просил автор)
     this.sfx.play('news', 0.4);
     this.achievements.show(achievement, () => {
       this.isAchievementShown = false;
@@ -431,7 +438,6 @@ export abstract class BaseScene extends Phaser.Scene {
   /** Что видит проверка ачивок: поля забега. Режим — с ручки (он липкий), а не с текущей прокрутки. */
   private achievementState(isWin: boolean): AchievementState {
     return {
-      charge: lastCharge(), // замах прошлой прокрутки: сильный — это «риск» для ачивок
       effects: this.itemEffects,
       // Уникальные гнёзда, а не amuletIds(): тот разворачивает копии, и «ЗАНЯТО!» срабатывало бы на трёх амулетах
       // с двумя копиями каждого. Копии отдельно — в amuletCounts (для «Дубликата»).
@@ -447,15 +453,15 @@ export abstract class BaseScene extends Phaser.Scene {
     };
   }
 
-  /** Всё, от чего зависит вес символа в прокрутке: автомат, амулеты, предметы и заряд замаха. */
-  protected weightContext(charge = lastCharge()): WeightContext {
-    return { machineId: this.machineId, amulets: this.amuletIds(), effects: this.itemEffects, charge };
+  /** Всё, от чего зависит вес символа в прокрутке: автомат, амулеты и предметы. */
+  protected weightContext(): WeightContext {
+    return { machineId: this.machineId, amulets: this.amuletIds(), effects: this.itemEffects };
   }
 
   /**
    * Доля клеток-черепов в следующей платной прокрутке — то же число, что игрок видит на плашке «💀 N%»
    * (RoundScene.skullShareNext рисует его). Считает общий модуль skullShare.ts: в долю входят амулеты на черепа,
-   * автомат, предметы (чеснок, фарт) и режим с рычага. По этой же доле выдаётся ачивка «50 на 50».
+   * автомат и предметы. По этой же доле выдаётся ачивка «50 на 50».
    */
   protected currentSkullShare(): number {
     return skullShareOf(this.round, this.diceDrought, this.weightContext());
@@ -507,12 +513,6 @@ export abstract class BaseScene extends Phaser.Scene {
   /** Какие амулеты стоят в гнёздах (с учётом копий) — их правила действуют. */
   protected amuletIds(): AmuletId[] {
     return amuletIdsFrom(this.amuletCounts);
-  }
-
-  /** Заряды активного амулета в начале раунда: полный заряд, если он куплен, иначе 0 (эффекты — шаг 12б). */
-  protected activeCharges(): number {
-    const amulet = activeAmuletOf(this.amuletCounts);
-    return amulet ? usesPerRound(amulet) : 0;
   }
 
   /**
@@ -568,7 +568,6 @@ export abstract class BaseScene extends Phaser.Scene {
    */
   protected restartGame(): void {
     resetCodex(); // новый забег: встреченное забыто
-    this.clearCharge(); // и замах: шкала снова с нуля
     // Недопоказанные ачивки едут в новую сцену: прогресс уже записан, окно и новость должны дойти до игрока.
     this.scene.restart({ achievements: this.pendingAchievements() });
   }
@@ -604,13 +603,9 @@ export abstract class BaseScene extends Phaser.Scene {
     const reveal = this.reveal;
     if (!reveal) return;
     markTutorialDone(); // сразу: сцена может перезапуститься посреди фейда
-    // Пока тьма не погасла, она ещё на экране: ссылку не отпускаем (подсказки под ней запрещены),
-    // а шкалу замаха включаем, когда её уже нет.
+    // Пока тьма не погасла, она ещё на экране: ссылку не отпускаем (подсказки под ней запрещены).
     reveal.finish(() => {
       this.reveal = null;
-      // Тьма погасла — шкала замаха снова видна. Но если за это время выехал банкомат Коллектора
-      // (он встаёт на её место), шкала вернётся, когда банкомат уедет.
-      if (!this.collector.isAtmOut) this.panel.setChargeVisible(true); // шкала замаха возвращается на место
     });
   }
 

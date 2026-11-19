@@ -339,7 +339,7 @@ test('связка №11 «выбранный символ»: выбор на с
 
   // Через общий вес символа: у выбранного на 2 больше, у остальных на 0,5 меньше.
   const base = R.weightsForRound(TAKEN);
-  const ctx = { machineId: 'classic', amulets: [], effects: I.noEffects(), charge: 0.5, symbolLuck: effects.symbolLuck };
+  const ctx = { machineId: 'classic', amulets: [], effects: I.noEffects(), symbolLuck: effects.symbolLuck };
   assert.equal(SK.symbolWeightOf(seven, base, ctx, false), base(seven) + D.SYMBOL_LUCK_PLUS, 'вес выбранного в прокрутке');
   assert.equal(SK.symbolWeightOf(lemon, base, ctx, false), base(lemon) - D.SYMBOL_LUCK_MINUS, 'вес остальных в прокрутке');
 });
@@ -488,16 +488,8 @@ test('связка №13 «бесплатный амулет / −2 места �
   assert.equal(I.effectSlotLimit(-99), 0, 'большой минус — ноль мест');
   // Кандидаты на бесплатный амулет: пул уважает maxCopies; всё набрано — брать нечего, карта не берётся.
   const all = A.AMULETS.flatMap((amulet) => new Array(amulet.maxCopies).fill(amulet.id));
-  const passiveAll = A.AMULETS.filter((amulet) => !A.isActive(amulet)).flatMap((amulet) => new Array(amulet.maxCopies).fill(amulet.id));
   assert.equal(A.randomAmuletOffer(all).length, 0, 'все копии набраны — кандидатов нет');
   assert.ok(A.randomAmuletOffer([]).length > 0, 'пустой забег — кандидаты есть');
-  // Все пассивные набраны, активных нет — остаются активные: их гнездо свободно, кандидат есть.
-  assert.ok(A.randomAmuletOffer(passiveAll).length > 0, 'пассивные набраны — активный ещё покупается');
-  const activeOnly = A.randomAmuletOffer(passiveAll);
-  assert.ok(activeOnly.length > 0 && activeOnly.every((amulet) => A.isActive(amulet)), 'в оффере только активные: пассивные набраны');
-  // Активное гнездо одно: у игрока уже есть активный — второй активный в оффер не попадает (шаг 12а).
-  const noActive = A.randomAmuletOffer(['charm']);
-  assert.ok(noActive.length > 0 && noActive.every((amulet) => !A.isActive(amulet)), 'активный уже есть — второй не предлагают');
 });
 
 test('связка №15 «забрать дважды 3 раунда / второе забирание теряет 20%»', () => {

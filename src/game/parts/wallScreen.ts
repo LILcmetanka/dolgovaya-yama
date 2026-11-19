@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { ACHIEVEMENTS } from '../achievements';
 import { CROWNS_FOR_FREE_SPINS, FREE_SPINS } from '../bonus';
 import {
   amuletTexture,
@@ -15,7 +16,7 @@ import {
   WALL_TV_GLOW,
   WALL_TV_TEXTURE,
 } from '../decor';
-import { AMULETS, isActive, type AmuletId } from '../amulets';
+import { AMULETS, type AmuletId } from '../amulets';
 import { amuletKey, isSeen, itemKey, machineKey, WHO_COLLECTOR, WHO_DEALER } from '../codex';
 import { disableDevMode, DEV_CHIPS, DEV_TICKETS, isDevMode, tryEnableDevMode } from '../devmode';
 import { MACHINES, type MachineId } from '../machines';
@@ -23,8 +24,9 @@ import { BLOOD_WIN, SPIDER_BITE } from '../evil';
 import { ITEMS, type ItemId } from '../items';
 import { formatChips, t, type TextKey } from '../lang';
 import { AMULET_SIZE, ITEM_SIZE, VIEW_CENTER_X, VIEW_WIDTH, WALL_PANEL, WALL_TV } from '../layout';
+import { hasAchievement } from '../progress';
 import { isPaying, isUnlocked, skullShare, symbolsUnlockedAt, SYMBOLS, TICKET_SCATTER, type SlotSymbol } from '../rules';
-import { addText, GREEN_TEXT, GOLD_TEXT, LAMP_GOLD, RED_TEXT } from '../theme';
+import { addText, fitTextWidth, GREEN_TEXT, GOLD_TEXT, LAMP_GOLD, RED_TEXT } from '../theme';
 
 const TV_DIM_ALPHA = 0.35; // в покое на стекле тусклый «?»
 const TV_QUESTION_SIZE = 44; // его размер
@@ -42,7 +44,11 @@ const SHADE_ALPHA = 0.8;
 const PANEL_COLOR = 0x03161c; // тот же кинескоп, что у картинки символов
 const PANEL_LINE = 0x67e8f9;
 const INK = '#cffafe';
-const TAB_WIDTH = 196; // было 218: в шапке рядом с ⚙ теперь ещё раздел «?»/«ТЕСТ», и всё влезает без наложений
+const TAB_WIDTH = 156; // было 218, потом 196: в шапке рядом с ⚙ теперь ещё раздел «?»/«ТЕСТ» и вкладка «Ачивки».
+// Пять вкладок с отступами (5·156 + 4·8 = 812) оставляют справа место для ⚙, «?» и крестика — без наложений.
+const TAB_FONT = 20; // кегль подписи вкладки
+const TAB_FONT_MIN = 13; // уже не мельче: длинное «КТО ЕСТЬ КТО»/«ACHIEVEMENTS» ужимается до этого и потом масштабом
+const TAB_LABEL_WIDTH = TAB_WIDTH - 14; // поля по 7 с каждой стороны: подпись не наезжает на рамку плашки
 const TAB_HEIGHT = 48;
 const TAB_ACTIVE = 0x0e4a58; // подсветка открытой вкладки
 const GEAR_SIZE = 48; // ⚙ в шапке — кнопка того же размера, что ✕
@@ -76,6 +82,19 @@ const DEV_NAME_WIDTH = 380; // шире название не бывает: да
 const DEV_ADD = { width: 40, height: 24 }; // кнопка «+1» у каждого предмета и амулета
 const DEV_ADD_LABEL = '+1';
 const DEV_NAME_FONT = '15px';
+// Вкладка «Ачивки»: все 44 ачивки сеткой в два столбца, по 11 рядов на страницу — 22 на страницу, две страницы.
+// Ряд — значок и название. Полученные — обычным светлым, любая неполученная (секретная или нет) — «???»
+// с притушенным значком-вопросом: название выдало бы, что ещё можно получить в игре.
+const ACH_COLUMNS = 2;
+const ACH_ROW_HEIGHT = 46; // 11 рядов = 506: в панель между шапкой и нижней рамкой (514) влезает
+const ACH_ICON = 28;
+const ACH_ICON_GAP = 16; // от значка до названия
+const ACH_NAME_WIDTH = ROW_WIDTH - ACH_ICON - ACH_ICON_GAP - 6; // шире названия не бывает: fitTextWidth ужимает
+const ACH_NAME_FONT = 20;
+const ACH_NAME_FONT_MIN = 14;
+const ACH_DIM_ALPHA = 0.4; // неполученные: серые и вполсилы, значок тоже притушен
+const ACH_HIDDEN_SIGN = '❓';
+const ACH_HIDDEN_NAME = '???';
 // Строка с кодом — одна, как просил автор: набранное видно в ней, Enter или «ОК» проверяют код.
 const DEV_INPUT = { width: 460, height: 52 };
 const DEV_INPUT_FONT = '26px';
@@ -103,11 +122,12 @@ interface Row {
   description: string;
 }
 
-type Tab = 'symbols' | 'items' | 'who' | 'howTo' | 'dev';
-const TABS: { id: Tab; label: 'tabSymbols' | 'tabItems' | 'tabWho' | 'tabHowTo' }[] = [
+type Tab = 'symbols' | 'items' | 'who' | 'howTo' | 'achievements' | 'dev';
+const TABS: { id: Tab; label: 'tabSymbols' | 'tabItems' | 'tabWho' | 'tabHowTo' | 'tabAchievements' }[] = [
   { id: 'symbols', label: 'tabSymbols' },
   { id: 'items', label: 'tabItems' },
   { id: 'who', label: 'tabWho' },
+  { id: 'achievements', label: 'tabAchievements' },
   { id: 'howTo', label: 'tabHowTo' },
 ];
 
@@ -173,7 +193,8 @@ function symbolNote(symbol: SlotSymbol, round: number): string {
 /**
  * Экран на стене справа от автомата: маленький, как телевизор. В покое на стекле тусклый «?», а когда в автомат вошли новые
  * символы — зелёное «NEW» мигает, пока экран не откроют. Клик по нему (→ ловит сцена) открывает большой экран поверх игры с вкладками:
- * «Символы» (цены и что делает каждый; новые — в золотой рамке), «Предметы», «Кто есть кто», «Как играть» (долг, порядок, клавиши).
+ * «Символы» (цены и что делает каждый; новые — в золотой рамке), «Предметы», «Кто есть кто», «Ачивки» (только
+ * полученные; любые неполученные — «???») и «Как играть» (долг, порядок, клавиши).
  * Цель забега — на записке над экраном на стене (GOAL_NOTE, Collector).
  * В шапке справа от вкладок — ⚙: настройки (громкость и язык) открываются отсюда. Рядом с ним — маленький раздел
  * «?»: строка с кодом (hookster) включает режим разработчика, и раздел становится вкладкой «ТЕСТ» (devmode.ts).
@@ -259,10 +280,15 @@ export class WallScreen {
 
   /** Сменился язык: надписи — на новом. */
   relabel(): void {
-    this.tabButtons.forEach((button, index) => button.text.setText(t(TABS[index].label)));
+    this.tabButtons.forEach((button, index) => this.fitTabLabel(button.text, TABS[index].label));
     this.devTab.text.setText(this.devTabLabel());
     this.redrawSymbols();
     if (this.isOpen) this.showTab(this.tab);
+  }
+
+  /** Подпись вкладки по её плашке: длинное слово сначала теряет кегль, а если и так не влезло — ужимается масштабом. */
+  private fitTabLabel(text: Phaser.GameObjects.Text, label: TextKey): void {
+    fitTextWidth(text, t(label), TAB_LABEL_WIDTH, TAB_FONT, TAB_FONT_MIN);
   }
 
   /**
@@ -333,7 +359,8 @@ export class WallScreen {
       const box = scene.add.rectangle(x, tabY, TAB_WIDTH, TAB_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.5);
       box.setInteractive({ useHandCursor: true });
       box.on('pointerdown', () => this.showTab(tab.id));
-      const text = addText(scene, x, tabY, t(tab.label), { fontSize: '20px', fontStyle: 'bold', color: INK }).setOrigin(0.5);
+      const text = addText(scene, x, tabY, '', { fontSize: `${TAB_FONT}px`, fontStyle: 'bold', color: INK }).setOrigin(0.5);
+      this.fitTabLabel(text, tab.label); // «КТО ЕСТЬ КТО» и «ACHIEVEMENTS» ужимаются по плашке, а не лезут на соседнюю
       this.tabButtons.push({ box, text });
       this.overlay.push(box, text);
     });
@@ -391,6 +418,7 @@ export class WallScreen {
     if (tab === 'symbols') this.buildSymbols(left, top);
     else if (tab === 'items') this.buildItems(left, top);
     else if (tab === 'who') this.buildWho(left, top);
+    else if (tab === 'achievements') this.buildAchievements(left, top);
     else if (tab === 'howTo') this.buildHowTo(left, top);
     else this.buildDev(left, top);
   }
@@ -422,10 +450,8 @@ export class WallScreen {
         .map((item) => ({ texture: itemTexture(item), name: t(item.name), description: t(item.description) })),
       ...AMULETS.filter((amulet) => isSeen(amuletKey(amulet.id))).map((amulet) => ({
         texture: amuletTexture(amulet),
-        // Активный помечен в названии: он работает не сам, а по клику, и стоит в отдельном гнезде (шаг 12а);
-        // к описанию — строка про нажатие, иначе список врал бы: описание читается как «работает всегда».
-        name: isActive(amulet) ? `${t(amulet.name)} · ${t('activeAmulet')}` : t(amulet.name),
-        description: isActive(amulet) ? `${t(amulet.description)} · ${t('activeAmuletPress')}` : t(amulet.description),
+        name: t(amulet.name),
+        description: t(amulet.description),
       })),
     ];
     this.buildRows(left, top, rows, hidden);
@@ -497,6 +523,46 @@ export class WallScreen {
         this.content.add([box, label]);
       }
     }
+    if (this.pages > 1) {
+      // «‹ 1/2 ›» — под крестиком, над первым рядом: там пусто на любой вкладке со строками.
+      const counter = addText(scene, left + SYMBOLS_WIDTH, top - 7, `‹ ${this.page + 1}/${this.pages} ›`, { fontSize: '16px', color: DIM_INK }).setOrigin(1, 0.5);
+      counter.setInteractive({ useHandCursor: true });
+      counter.on('pointerdown', () => this.nextPage());
+      this.content.add(counter);
+    }
+  }
+
+  /**
+   * «Ачивки»: все ачивки игры (ACHIEVEMENTS, 44) сеткой в два столбца. Полученные — светлые и с цветным значком,
+   * любая неполученная — «???» с притушенным «❓»: и название, и значок выдали бы, что ещё можно получить.
+   * Состояние — из прогресса (hasAchievement), не из группы: в ТЕСТ-режиме он не пишется, поэтому вкладка
+   * честно показывает записанное. Поле group на показ не влияет.
+   * 44 пункта в панель не влезают: сколько рядов влезет по высоте, столько и на странице, остальные — по клику на панель
+   * или на счётчик «‹ 1/2 ›» (у achievements 22 на страницу, значит две).
+   */
+  private buildAchievements(left: number, top: number): void {
+    const scene = this.scene;
+    const bottom = WALL_PANEL.y + WALL_PANEL.height / 2 - PAD; // рамка панели: ниже неё ряды не ставим
+    const rowsPerPage = Math.max(1, Math.floor((bottom - top) / ACH_ROW_HEIGHT));
+    const perPage = rowsPerPage * ACH_COLUMNS;
+    this.pages = Math.max(1, Math.ceil(ACHIEVEMENTS.length / perPage));
+    if (this.page >= this.pages) this.page = 0;
+    const first = this.page * perPage;
+    ACHIEVEMENTS.slice(first, first + perPage).forEach((achievement, index) => {
+      const column = Math.floor(index / rowsPerPage);
+      const row = index % rowsPerPage;
+      const x = left + column * ROW_WIDTH;
+      const y = top + row * ACH_ROW_HEIGHT + ACH_ROW_HEIGHT / 2;
+      const isObtained = hasAchievement(achievement.id); // только записанное в прогресс: в ТЕСТ он не пишется
+      const isHidden = !isObtained; // неполученная любой группы — «❓ ???», без названия
+      const icon = addText(scene, x + ACH_ICON / 2 + 4, y, isHidden ? ACH_HIDDEN_SIGN : achievement.icon, { fontSize: `${ACH_ICON}px` }).setOrigin(0.5);
+      icon.setAlpha(isObtained ? 1 : ACH_DIM_ALPHA);
+      const name = addText(scene, x + ACH_ICON + ACH_ICON_GAP, y, '', { fontSize: `${ACH_NAME_FONT}px`, fontStyle: 'bold', color: isObtained ? INK : DIM_INK }).setOrigin(0, 0.5);
+      name.setAlpha(isObtained ? 1 : ACH_DIM_ALPHA);
+      // Длинные названия («Пачка скелетов в кармане», «A pack of skeletons in the pocket») ужимаются по ширине столбца.
+      fitTextWidth(name, isHidden ? ACH_HIDDEN_NAME : t(achievement.name), ACH_NAME_WIDTH, ACH_NAME_FONT, ACH_NAME_FONT_MIN);
+      this.content.add([icon, name]);
+    });
     if (this.pages > 1) {
       // «‹ 1/2 ›» — под крестиком, над первым рядом: там пусто на любой вкладке со строками.
       const counter = addText(scene, left + SYMBOLS_WIDTH, top - 7, `‹ ${this.page + 1}/${this.pages} ›`, { fontSize: '16px', color: DIM_INK }).setOrigin(1, 0.5);

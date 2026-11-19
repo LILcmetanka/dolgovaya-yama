@@ -1,15 +1,12 @@
 import {
-  activeAmuletOf,
   amuletPatternWin,
   amuletsOnWin,
   bellSpins,
   BONES_BONUS,
-  canPressActive,
   earlyPayTickets,
   insuranceRefund,
   owns,
   piggyCoins,
-  pressActiveAmulet,
   spinsPerRound,
   vestShields,
   winFactor,
@@ -37,7 +34,6 @@ import {
   type SlotEffectId,
 } from '../items';
 import { t } from '../lang';
-import { lastCharge } from '../levers';
 import { machineAtRoundStart, machineWinFactor } from '../machines';
 import { phaseAt } from '../phases';
 import { skullShareOf, symbolWeightOf, type WeightContext } from '../skullShare';
@@ -109,8 +105,6 @@ export abstract class RoundScene extends MachineScene {
   // Сетка, которая ждёт решения в окне перемешки и подмены (шаг 63б): итог ещё не посчитан. null — окно закрыто.
   private pendingReroll: { grid: Grid; weightOf: WeightOf; multiplier: number } | null = null;
   private rerollTimer?: Phaser.Time.TimerEvent; // через REROLL_WINDOW_TIME окно закроется само — пропуск
-  // Заряд текущей прокрутки (замах рычага 0…1), снимается в roll(); бесплатные прокрутки идут с нулём.
-  private spinCharge = 0;
   /** Раунд закрыт ранней оплатой: Коллектор забирает долг сам (и после «ДАЛЬШЕ» с экрана победы — тоже). */
   protected isPaidEarly = false;
   // Сделка №15 «забрать дважды»: в одной прокрутке после обычного «забрать» можно забрать ещё раз.
@@ -118,9 +112,6 @@ export abstract class RoundScene extends MachineScene {
   private tookExtraThisSpin = false; // второе «забрать» уже потрачено (больше двух за прокрутку нельзя)
   private lastTakeAmount = 0; // сколько дало первое забирание: от него считается второе
   private bankKeptThisRound = false; // сделка №10: первый череп в этом раунде кон уже не сжёг
-  // «Оберег» 🧿: сдвиг доли черепов до конца раунда. Живёт в раунде, а не в сделках Дилера: нажатие амулета
-  // — не сделка. Тот же механизм, что у сделки «тише черепа» (weightContext → skullShareWeightMul).
-  private amuletSkullDelta = 0;
 
   /** Новый забег: прокруток ещё не было, окно перемешки не висит, сделок Дилера нет. */
   protected resetState(): void {
@@ -128,21 +119,18 @@ export abstract class RoundScene extends MachineScene {
     this.spinsThisRun = 0;
     this.pendingReroll = null;
     this.rerollTimer = undefined;
-    this.spinCharge = 0;
     this.isPaidEarly = false;
     this.tookThisSpin = false;
     this.tookExtraThisSpin = false;
     this.lastTakeAmount = 0;
     this.bankKeptThisRound = false;
-    this.amuletSkullDelta = 0;
   }
 
   // ---------- Прокрутка ----------
 
-  /** Прокрутка (отпустили рычаг): charge — замах 0…1, от него зависят веса черепов и крупных символов. */
-  protected spin(charge: number): void {
+  /** Прокрутка: одно нажатие рычага (или Пробел, Enter) — одна прокрутка. Нельзя, пока canAct() против. */
+  protected spin(): void {
     if (!this.canAct()) return;
-    this.spinCharge = charge;
     this.spinsThisRun += 1;
     this.forgetTakeThisSpin();
     if (this.spinsThisRun === REVEAL_NOTE_SPIN) this.openRevealNote(); // записка впервые видна не с начала
@@ -181,7 +169,6 @@ export abstract class RoundScene extends MachineScene {
     this.sfx.play('roll', 0.1);
     this.isSpinning = true;
     this.isFreeSpinNow = isFree; // ачивкам важно: черепов в бесплатной прокрутке нет, «50 на 50» за неё не дают
-    if (isFree) this.spinCharge = 0; // бесплатные прокрутки идут без замаха: черепов в них нет всегда
     const multiplier = this.multiplier(); // множитель запоминаем до прокрутки
     this.screen.clearHighlights();
     this.refreshHud();
@@ -210,12 +197,12 @@ export abstract class RoundScene extends MachineScene {
    * множитель веса черепа выводим из доли, которую видит игрок (dealerGame.skullShareWeightMul), поэтому прокрутка
    * и плашка «💀 N%» показывают одно число.
    */
-  protected override weightContext(charge = lastCharge()): WeightContext {
-    const base = super.weightContext(charge);
+  protected override weightContext(): WeightContext {
+    const base = super.weightContext();
     const effects = pactEffects(this.pacts, this.round);
     const withLuck: WeightContext = effects.symbolLuck ? { ...base, symbolLuck: effects.symbolLuck } : base;
-    // Сделки Дилера и «Оберег» 🧿 складываются: обе двигают долю черепов, каждая по-своему (может выйти и минус).
-    const delta = effects.skullShareDelta + this.amuletSkullDelta;
+    // Сделки Дилера двигают долю черепов каждая по-своему (может выйти и минус).
+    const delta = effects.skullShareDelta;
     if (delta === 0 || !Number.isFinite(delta)) return withLuck;
     const mul = skullShareWeightMul(skullShareOf(this.round, this.diceDrought, withLuck), delta);
     return mul === 1 ? withLuck : { ...withLuck, skullMul: mul };
@@ -239,19 +226,18 @@ export abstract class RoundScene extends MachineScene {
 
   /**
    * Вес символа в этой прокрутке: обычный вес раунда, его меняют амулеты (огранка, череп в кармане), автомат,
-   * бусты предметов (чеснок, вишни…), риск, фарт и замах рычага. Долю черепов фаза не множит (замечание 19):
+   * бусты предметов (чеснок, вишни…) и риск. Долю черепов фаза не множит (замечание 19):
    * она растёт по раундам в rules.ts, а фаза 2 даёт лишнюю прокрутку (startRound).
    * В бесплатной прокрутке нет черепов, кубика, пауков, замков и крови.
    */
   private symbolWeight(symbol: SlotSymbol, base: WeightOf, isFree: boolean): number {
     // Сами правила веса — в skullShare.ts: по ним же считается доля на плашке «💀 N%» и ачивка «50 на 50».
-    return symbolWeightOf(symbol, base, this.weightContext(this.spinCharge), isFree);
+    return symbolWeightOf(symbol, base, this.weightContext(), isFree);
   }
 
   /**
    * Доля клеток-черепов в следующей платной прокрутке — для экранчика доли черепов на корпусе. Считаем по тем же весам, что и
-   * сама прокрутка (symbolWeight), поэтому чеснок, риск, фарт, амулеты, автомат и замах уже внутри — копий
-   * чисел нет. Заряд берём прошлой прокрутки (levers.lastCharge): строка про то, что будет при таком же замахе.
+   * сама прокрутка (symbolWeight), поэтому чеснок, риск, фарт, амулеты и автомат уже внутри — копий чисел нет.
    * Кубик в долю не входит — так её задаёт weightsForRound (skullShare), и так игрок видит её в мониторе и на корпусе.
    * Бесплатные прокрутки сюда не попадают: черепов в них нет всегда, а строка — про обычную прокрутку.
    */
@@ -309,17 +295,18 @@ export abstract class RoundScene extends MachineScene {
     }
     this.collectBonuses(grid, result);
     this.rustAfterSpin(grid); // ржавый автомат: столбец может заржаветь к следующей прокрутке
+    // Ачивки этой прокрутки проверяем до того, как гаснут риск, молот и фарт: они работали на неё, и «Неа»,
+    // «Везунчик» и «Я играю не туда» должны их видеть (после сброса флагов эти ачивки не выпадали бы никогда).
+    // «50 на 50» тоже получает долю именно этой прокрутки — ту, с которой она крутилась.
+    this.checkAchievements(result.kind === 'win');
     // Риск, молот и фарт действуют на одну прокрутку — она прошла, гаснут.
     this.itemEffects.risk = false;
     this.itemEffects.hammer = false;
     this.itemEffects.luckSpin = false;
     // Перемешка и подмена здесь не гаснут: окно выбора их уже погасило (applyShuffle/applySwap), а пропуск
-    // оставляет заряд на следующую платную прокрутку — до конца раунда его снимет clearRoundEffects.
+    // оставляет предмет заряженным на следующую платную прокрутку — до конца раунда его снимет clearRoundEffects.
     this.showItemEffects();
     this.refreshHud();
-    // Ачивки этой прокрутки: «50 на 50» (паттерн выиграл при максимальной доле черепов) и «Везунчик» —
-    // им нужно знать, что паттерн выиграл именно сейчас, поэтому флаг идёт в проверку.
-    this.checkAchievements(result.kind === 'win');
     if (cellsOf(grid, 'dice').length > 0) {
       this.diceDrought = 0;
       this.sfx.play('dice');
@@ -593,7 +580,6 @@ export abstract class RoundScene extends MachineScene {
   protected take(): void {
     if (!this.canAct()) return;
     if (this.pot > 0) {
-      this.cancelChargeNow(); // забираешь кон — замах снят, отпускание клавиши после этого не крутит
       this.payout.press();
       this.sfx.play('take');
       this.payPot();
@@ -602,7 +588,6 @@ export abstract class RoundScene extends MachineScene {
     }
     const extra = this.extraTake();
     if (extra === 0) return;
-    this.cancelChargeNow();
     this.payout.press();
     this.sfx.play('take');
     this.takeExtra(extra);
@@ -615,7 +600,7 @@ export abstract class RoundScene extends MachineScene {
     return pactDoubleTake(pactEffects(this.pacts, this.round).doubleTake, this.lastTakeAmount);
   }
 
-  /** Второе «забрать» в этой прокрутке ещё доступно — по нему Enter берёт, а не замахивается (GameScene.onEnter). */
+  /** Второе «забрать» в этой прокрутке ещё доступно — по нему Enter берёт, а не крутит (GameScene.onEnter). */
   protected canTakeAgain(): boolean {
     return this.canAct() && this.extraTake() > 0;
   }
@@ -691,8 +676,15 @@ export abstract class RoundScene extends MachineScene {
     const item = this.shelf[slot];
     if (!item) return;
     if (!this.canAct()) return;
-    // Нельзя: такой предмет уже действует, риск с фартом несовместимы, а сигарета у потолка прокруток пропала бы впустую.
-    if (isItemOn(item.id, this.itemEffects) || conflictsWith(item.id, this.itemEffects) || (item.id === 'cigarette' && this.spinsLeft >= MAX_SPINS_PER_ROUND)) {
+    // Нельзя: риск с фартом несовместимы — попытка включить один при другом и есть «Неа».
+    if (conflictsWith(item.id, this.itemEffects)) {
+      this.sfx.play('deny');
+      this.itemShelf.deny(slot);
+      this.unlockAchievement('nope');
+      return;
+    }
+    // Нельзя: такой предмет уже действует, а сигарета у потолка прокруток пропала бы впустую.
+    if (isItemOn(item.id, this.itemEffects) || (item.id === 'cigarette' && this.spinsLeft >= MAX_SPINS_PER_ROUND)) {
       this.sfx.play('deny');
       this.itemShelf.deny(slot);
       return;
@@ -718,60 +710,6 @@ export abstract class RoundScene extends MachineScene {
           ? { x: CENTER_X, y: GRID_Y }
           : effectPosition(item.id, this.itemEffects);
     this.itemShelf.takeItem(slot, target.x, target.y, () => this.showItemEffects());
-    this.refreshHud();
-  }
-
-  // ---------- Активные амулеты (шаг 12б) ----------
-
-  /**
-   * Нажали значок активного амулета: заряд тратится, эффект включается до конца раунда. Только между прокрутками
-   * и только если заряд есть — иначе значок трясётся и заряд остаётся. Прокрутку нажатие не тратит и множитель
-   * серии не трогает: это не «забрать» и не прокрутка.
-   * «Оберег» 🧿 держит черепа тише до конца раунда (тот же сдвиг доли, что у сделки «тише черепа»),
-   * «Прицел» 🎯 сразу добавляет прокрутки раунда (обычные, не фриспины).
-   */
-  protected useActiveAmulet(): void {
-    if (!this.canAct()) {
-      this.sfx.play('deny');
-      this.amuletRack.denyActive();
-      return;
-    }
-    const amulet = activeAmuletOf(this.amuletCounts);
-    if (!amulet) return;
-    // «Прицел» у потолка прокруток пропал бы впустую — отказ, как у сигареты (useItem): заряд остаётся.
-    // Частичная прибавка «Прицела» (+1 вместо +2 при spinsLeft = MAX_SPINS_PER_ROUND - 1) — принятое поведение, как у сигареты.
-    if (!canPressActive(amulet, this.spinsLeft, MAX_SPINS_PER_ROUND)) {
-      this.sfx.play('deny');
-      this.amuletRack.denyActive();
-      return;
-    }
-    const use = pressActiveAmulet(amulet, this.activeUses);
-    if (!use.used) {
-      this.sfx.play('deny');
-      this.amuletRack.denyActive();
-      this.tooltip.show(t('activeNoCharges'), '');
-      return;
-    }
-    this.tooltip.hide();
-    this.activeUses = use.chargesLeft;
-    this.amuletRack.setActiveUses(this.activeUses);
-    this.amuletRack.trigger(amulet.id);
-    this.sfx.play('item');
-    // «Оберег»: сдвиг доли черепов до конца раунда — его подхватит weightContext следующей прокрутки.
-    if (use.skullShareDelta !== 0) {
-      this.amuletSkullDelta += use.skullShareDelta;
-      this.effects.popup(amulet.sign, GOLD_TEXT);
-    }
-    // «Прицел»: прокрутки раунда, как колокольчик или сигарета — через потолок раунда.
-    if (use.spinsBonus > 0) {
-      const extra = spinsAfterBonus(this.spinsLeft, use.spinsBonus) - this.spinsLeft;
-      this.spinsLeft += extra;
-      if (extra > 0) {
-        this.effects.popupAt(CENTER_X, SPIN_LAMPS_Y - 20, t('sightNews', extra), GOLD_TEXT);
-        this.panel.winkSpinLamps(this.spinsLeft);
-        this.sfx.play('coin');
-      }
-    }
     this.refreshHud();
   }
 
@@ -889,9 +827,6 @@ export abstract class RoundScene extends MachineScene {
     this.freeSpinsAwarded = 0;
     clearRoundEffects(this.itemEffects); // бусты и флаги прошлого раунда не переходят в новый
     this.insuranceSaves = 0; // страховка снова готова: сработок на новый раунд — по числу копий
-    this.activeUses = this.activeCharges(); // активный амулет снова полон: заряд прошлого раунда не переходит
-    this.amuletRack.setActiveUses(this.activeUses);
-    this.amuletSkullDelta = 0; // «Оберег» живёт раунд: в новом черепа снова как обычно, пока его не нажмут
     this.bankKeptThisRound = false; // сделка №10: «первый череп не жжёт кон» — снова первый
     this.tookThisSpin = false; // сделка №15: в новом раунде «забрать» ещё не было
     this.tookExtraThisSpin = false;
@@ -962,7 +897,6 @@ export abstract class RoundScene extends MachineScene {
    * Флаг ранней оплаты помним: победа может задержать Коллектора, и после «ДАЛЬШЕ» он должен приехать тем же путём.
    */
   private endOfSpins(isPaidEarly = false): void {
-    this.cancelChargeNow(); // раунд кончился — замах снят (если его держали)
     this.isPaidEarly = isPaidEarly;
     this.closeRound();
     this.time.delayedCall(COLLECT_DELAY, () => this.callCollector(isPaidEarly));
@@ -974,7 +908,6 @@ export abstract class RoundScene extends MachineScene {
    * Потом гаснут чеснок, бусты, флаги, кровь, удача клевера и ржавчина.
    */
   protected closeRound(): void {
-    this.cancelChargeNow(); // конец раунда — замах снят
     this.isRoundOver = true;
     this.isBloodNext = false; // кровь не переходит в следующий раунд
     this.luckyClovers = 0; // и удача клевера

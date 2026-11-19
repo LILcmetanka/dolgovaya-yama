@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { ACHIEVEMENT_FADE, ACHIEVEMENT_TIME, type Achievement } from '../achievements';
 import { t } from '../lang';
 import { CENTER_X, GRID_Y } from '../layout';
-import { addText, GOLD_TEXT, POPUP_DEPTH } from '../theme';
+import { addText, GOLD_TEXT, REVEAL_DEPTH } from '../theme';
 
 // Окно ачивки: тёмная панель с золотой рамкой, как у прочих окон игры. Числа — в единицах раскладки.
 const PANEL_WIDTH = 580;
@@ -24,6 +24,10 @@ const TITLE_FONT = '24px'; // кегль подобран так, чтобы д�
 const TITLE_GAP = 6; // между названием и описанием
 const APPEAR_TIME = 180; // окно проявляется и подрастает, мс
 const APPEAR_SCALE = 0.88; // с какого масштаба растёт
+// Слой: выше тьмы обучения (REVEAL_DEPTH, 12) и вспышки KABOOM (11), иначе в первом забеге окно висит под тьмой
+// и таймер 2.5 с истекает зря. Ниже планшета (20), подсказки (25) и экранов паузы и конца забега (30): они
+// остаются поверх, поэтому показ окна откладывается, пока планшет открыт или игра на паузе (BaseScene.pumpAchievements).
+const WINDOW_DEPTH = REVEAL_DEPTH + 1;
 
 /**
  * Окно полученной ачивки на экране автомата: по центру сетки, иконка крупно, название, под ним описание.
@@ -58,7 +62,7 @@ export class AchievementWindow {
     this.what = addText(scene, TEXT_LEFT, 0, '', { fontSize: '18px', color: '#e2e8f0', wordWrap: { width: TEXT_WIDTH }, maxLines: 2 }).setOrigin(0, 0);
     // Один контейнер: его двигаем и гасим целиком. Слой — над сеткой и панелью магазина, под подсказкой и экраном конца забега.
     this.container = scene.add.container(CENTER_X, GRID_Y, [scrim, panel, caption, this.icon, this.title, this.what]);
-    this.container.setDepth(POPUP_DEPTH + 1).setVisible(false);
+    this.container.setDepth(WINDOW_DEPTH).setVisible(false);
   }
 
   /**

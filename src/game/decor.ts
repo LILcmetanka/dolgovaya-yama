@@ -3,8 +3,6 @@ import type { Amulet, Rarity } from './amulets';
 import type { MachineSpec } from './machines';
 import type { Item } from './items';
 import {
-  ACTIVE_SOCKET_X,
-  ACTIVE_SOCKET_Y,
   BELLY,
   BODY,
   CENTER_X,
@@ -83,7 +81,7 @@ export const DOOR_CODE_WIDTH = 50; // окошко колёсиков кода �
 export const DOOR_CODE_HEIGHT = 24;
 export const TICKET_TEXTURE = 'ticket'; // красный билет — вторая валюта
 export const SOCKET_CAP_TEXTURE = 'socket-cap'; // заглушка закрытого гнезда для амулета
-export const ACTIVE_SOCKET_CAP_TEXTURE = 'active-socket-cap'; // заглушка пустого гнезда активного амулета
+export const MINI_SOCKET_TEXTURE = 'mini-socket'; // гнездо амулета в маленьком автомате магазина: хром и тёмная лунка
 export const CRACK_TEXTURE = 'screen-crack'; // дыра и трещины на экране автомата после взрыва
 export const CRACK_SIZE = 150; // сторона картинки с трещинами
 export const DEALER_FELT_TEXTURE = 'dealer-felt'; // сукно Дилера поверх экрана: на него ложатся карты-сделки
@@ -118,9 +116,8 @@ const SLAT_SHADE_STEPS = 5; // тень под швом рисуется сто�
 const SLAT_SHADE_STEP = 10; // …по столько px каждая…
 const SLAT_SHADE_ALPHA = 0.05; // …и в начале такой плотности: к середине ламели сходит на нет
 const TRIM_INSET = 8; // окантовка — на столько внутри края лицевой части, со всех сторон одинаково
-const CHROME = 0x94a3b8;
-const CHROME_LIGHT = 0xe2e8f0;
-const ACTIVE_SOCKET_RING = 0xf59e0b; // янтарная оправа гнезда активного амулета: его не путают с пассивными
+export const CHROME = 0x94a3b8;
+export const CHROME_LIGHT = 0xe2e8f0;
 const SCREEN_GLASS = 0x020617; // почти чёрное стекло под сеткой
 /** Фишка казино: красная с белыми насечками по краю. */
 const CHIP_SIZE = 28; // фишка анфас, px
@@ -251,7 +248,7 @@ function bakeMachineBody(scene: Phaser.Scene): void {
   drawInset(g, BELLY, 0x000000, 0x7c2d12, BELLY_SHADE); // полупрозрачная: под ней тело корпуса, панель — того же цвета
   drawInset(g, MULTIPLIER_WINDOW, 0x050505, TRIM_COLOR);
   drawInset(g, PAYOUT_WINDOW, 0x050505, TRIM_COLOR);
-  drawInset(g, SKULL_SCREEN, 0x050505, TRIM_COLOR); // экранчик доли черепов — та же оправа, что у окна выплаты
+  drawInset(g, SKULL_SCREEN, 0x050505, TRIM_COLOR, 1, false); // экранчик доли черепов — та же оправа, что у окна выплаты, но без блика
   drawSockets(g);
   bake(g, MACHINE_TEXTURE, 960, 640);
 }
@@ -266,13 +263,6 @@ function drawSockets(g: Phaser.GameObjects.Graphics): void {
     g.fillStyle(0x0b0f19);
     g.fillCircle(x, SOCKET_Y, SOCKET_RADIUS - 4); // лунка
   }
-  // Гнездо активного амулета — отдельное: янтарная оправа, чтобы его не путали с рядом пассивных.
-  g.fillStyle(0x000000, 0.4);
-  g.fillCircle(ACTIVE_SOCKET_X + 2, ACTIVE_SOCKET_Y + 3, SOCKET_RADIUS); // тень
-  g.fillStyle(ACTIVE_SOCKET_RING);
-  g.fillCircle(ACTIVE_SOCKET_X, ACTIVE_SOCKET_Y, SOCKET_RADIUS);
-  g.fillStyle(0x0b0f19);
-  g.fillCircle(ACTIVE_SOCKET_X, ACTIVE_SOCKET_Y, SOCKET_RADIUS - 4); // лунка
 }
 
 /** Левый верхний угол прямоугольника. */
@@ -301,13 +291,14 @@ function drawBodyTrim(g: Phaser.GameObjects.Graphics, body: Box): void {
   g.strokeRoundedRect(left + TRIM_INSET, top + TRIM_INSET, body.width - 2 * TRIM_INSET, body.height - 2 * TRIM_INSET, 24);
 }
 
-/** Утопленная панель: заливка (fillAlpha — её непрозрачность), рамка и узкий блик сверху. */
-function drawInset(g: Phaser.GameObjects.Graphics, box: Box, fill: number, border: number, fillAlpha = 1): void {
+/** Утопленная панель: заливка (fillAlpha — её непрозрачность), рамка и узкий блик сверху (highlight = false — без блика). */
+function drawInset(g: Phaser.GameObjects.Graphics, box: Box, fill: number, border: number, fillAlpha = 1, highlight = true): void {
   const { left, top } = topLeft(box);
   g.fillStyle(fill, fillAlpha);
   g.fillRoundedRect(left, top, box.width, box.height, 10);
   g.lineStyle(3, border);
   g.strokeRoundedRect(left, top, box.width, box.height, 10);
+  if (!highlight) return;
   g.fillStyle(0xffffff, 0.05);
   g.fillRoundedRect(left + 6, top + 4, box.width - 12, box.height * 0.3, 6);
 }
@@ -510,7 +501,7 @@ export function createNoteGlowTexture(scene: Phaser.Scene, width: number, height
   texture.refresh(); // передать нарисованное в видеокарту
 }
 
-/** Фишка анфас (на табло, в окошке выплаты и в брызгах) — на canvas, чтобы нарисовать «1». */
+/** Фишка анфас (на табло, в окошке выплаты и в брызгах) — на canvas: нужен градиент и обводка. */
 export function createChipTextures(scene: Phaser.Scene): void {
   if (scene.textures.exists(CHIP_TEXTURE)) return;
   const texture = createSharpCanvas(scene, CHIP_TEXTURE, CHIP_SIZE, CHIP_SIZE);
@@ -522,7 +513,7 @@ export function createChipTextures(scene: Phaser.Scene): void {
 
 /**
  * Фишка анфас на canvas, как настоящая казино-фишка: красный корпус с лёгким объёмом, кремовые вставки по ободу,
- * внутри тёмный диск с двойным кольцом и «1» с обводкой, сверху блик. Рисуется для любого size (от значка на мониторе до большой).
+ * внутри тёмный диск с двойным кольцом, сверху блик. Рисуется для любого size (от значка на мониторе до большой).
  */
 function drawChip(ctx: CanvasRenderingContext2D, size: number): void {
   const center = size / 2;
@@ -569,16 +560,6 @@ function drawChip(ctx: CanvasRenderingContext2D, size: number): void {
   ctx.beginPath();
   ctx.arc(center, center, 0.5 * center, 0, Math.PI * 2);
   ctx.stroke();
-  // «1» с тёмной обводкой.
-  ctx.font = `bold ${Math.round(size * 0.46)}px ${FONT}`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = Math.max(1, 5 * unit);
-  ctx.strokeStyle = CHIP_EDGE;
-  ctx.strokeText('1', center, center + unit);
-  ctx.fillStyle = CHIP_CREAM;
-  ctx.fillText('1', center, center + unit);
   // Блик сверху слева.
   ctx.beginPath();
   ctx.arc(center, center, center - 2.5 * unit, 0, Math.PI * 2);
@@ -830,15 +811,16 @@ function drawItem(ctx: CanvasRenderingContext2D, item: Item, size: number): void
 export function createEffectSlotTexture(scene: Phaser.Scene, size: number): void {
   if (scene.textures.exists(EFFECT_SLOT_TEXTURE)) return;
   const g = scene.add.graphics();
-  const plate = size - 5; // сама плитка чуть меньше текстуры: тень уходит вниз-вправо
+  const plate = size - 6; // сама плитка чуть меньше текстуры: по центру картинки, центр 23 при size = 46
+  const inset = 3; // отступ плитки от края текстуры
   g.fillStyle(0x000000, 0.45);
-  g.fillRoundedRect(3, 4, plate, plate, 10); // тень на корпусе
+  g.fillRoundedRect(inset + 2, inset + 3, plate, plate, 10); // тень уходит вниз-вправо и остаётся внутри текстуры
   g.fillStyle(TRIM_COLOR);
-  g.fillRoundedRect(0, 0, plate, plate, 10); // бронзовая рамка — как окантовка автомата
+  g.fillRoundedRect(inset, inset, plate, plate, 10); // бронзовая рамка — как окантовка автомата, ровно по центру текстуры
   g.fillStyle(0x1c1917);
-  g.fillRoundedRect(3, 3, plate - 6, plate - 6, 8); // ниша
+  g.fillRoundedRect(inset + 3, inset + 3, plate - 6, plate - 6, 8); // ниша
   g.fillStyle(0x0b0f19);
-  g.fillRoundedRect(6, 6, plate - 12, plate - 12, 6); // глубина: к центру ещё темнее
+  g.fillRoundedRect(inset + 6, inset + 6, plate - 12, plate - 12, 6); // глубина: к центру ещё темнее
   bake(g, EFFECT_SLOT_TEXTURE, size, size);
 }
 
@@ -1585,18 +1567,20 @@ export function createSocketCapTexture(scene: Phaser.Scene, radius: number): voi
   bake(g, SOCKET_CAP_TEXTURE, size, size);
 }
 
-/** Заглушка пустого гнезда активного амулета: янтарный диск с тёмной щелью — сразу видно, что гнездо другое. */
-export function createActiveSocketCapTexture(scene: Phaser.Scene, radius: number): void {
-  if (scene.textures.exists(ACTIVE_SOCKET_CAP_TEXTURE)) return;
+/** Гнездо амулета в маленьком автомате магазина: то же, что на корпусе (хром и тёмная лунка), только крупнее. */
+export function createMiniSocketTexture(scene: Phaser.Scene, radius: number): void {
+  if (scene.textures.exists(MINI_SOCKET_TEXTURE)) return;
   const size = radius * 2;
   const g = scene.add.graphics();
-  g.fillStyle(0x92400e);
-  g.fillCircle(radius, radius, radius - 3);
-  g.fillStyle(ACTIVE_SOCKET_RING);
-  g.fillCircle(radius, radius - 1, radius - 6);
-  g.fillStyle(0x451a03);
-  g.fillRect(radius - 8, radius - 2, 16, 4); // щель под значок
-  bake(g, ACTIVE_SOCKET_CAP_TEXTURE, size, size);
+  g.fillStyle(0x000000, 0.4);
+  g.fillCircle(radius + 2, radius + 3, radius); // тень на полке
+  g.fillStyle(CHROME);
+  g.fillCircle(radius, radius, radius); // хромированное кольцо
+  g.fillStyle(0x0b0f19);
+  g.fillCircle(radius, radius, radius - 5); // лунка
+  g.lineStyle(2, 0x475569);
+  g.strokeCircle(radius, radius, radius - 5);
+  bake(g, MINI_SOCKET_TEXTURE, size, size);
 }
 
 // Трещины от взрыва: лучи из дыры (угол, длина, излом) и обрывки колец между ними. Числа постоянные — картинка всегда одна.

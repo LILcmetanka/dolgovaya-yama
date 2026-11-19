@@ -5,7 +5,7 @@
  *
  * Что проверяет: холст 16:9 на всё окно боком (844×390) и стоя (390×844), определитель телефона
  * (hover: none + pointer: coarse), значки ⚙ и «во весь экран» только на телефоне, «поверни телефон»,
- * касания (⚙ — пауза, замах рычага, переключение языка, долгое нажатие — подсказка) и что под тёмным
+ * касания (⚙ — пауза, рычаг — прокрутка с одного касания, переключение языка, долгое нажатие — подсказка) и что под тёмным
  * экраном «поверни телефон» игра не нажимается. Порт 8767 — свой, dev-сервер на 5173 не трогаем.
  */
 import { spawn } from 'node:child_process';
@@ -92,7 +92,7 @@ try {
   const spinsAfter = await val('window.__g.spinsLeft');
   check(spinsAfter === spinsBefore - 1, `прокрутка в телефонном окне: прокруток ${spinsBefore} → ${spinsAfter}`);
 
-  // Замах рычага касанием: держим — шкала растёт, отпускаем — прокрутка (плашек режимов больше нет, DONTLIKE п. 8).
+  // Рычаг касанием: одно касание — одна прокрутка, держать нечего (замаха и шкалы больше нет).
   for (let i = 0; i < 20 && !(await val('window.__g.canAct()')); i++) await sleep(300);
   const ball = JSON.parse(await val(`(() => {
     const o = window.__g.panel.leverBall, b = o.getBounds();
@@ -102,14 +102,17 @@ try {
   const lever = await pagePoint(ball.x, ball.y);
   const spinsHeld = await val('window.__g.spinsLeft');
   await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: lever.x, y: lever.y, radiusX: 6, radiusY: 6, force: 1, id: 1 }] });
-  await sleep(600);
-  const charging = await val('window.__g.isCharging');
+  await sleep(400);
+  const spinsTouched = await val('window.__g.spinsLeft');
+  const spinStarted = await val('window.__g.isSpinning');
   await shot('p-charge.png');
   await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await sleep(800);
   const spinsReleased = await val('window.__g.spinsLeft');
-  check(charging === true, 'касание рычага держит замах (шкала растёт)');
-  check(spinsReleased === spinsHeld - 1, `отпустил палец — прокрутка с замахом: прокруток ${spinsHeld} → ${spinsReleased}`);
+  check(spinStarted === true && spinsTouched === spinsHeld - 1, `касание рычага сразу крутит: прокруток ${spinsHeld} → ${spinsTouched}`);
+  check(spinsReleased === spinsHeld - 1, `отпустил палец — второй прокрутки нет: прокруток ${spinsHeld} → ${spinsReleased}`);
+  check(await val(`window.__g.panel.chargeFrame === undefined && typeof window.__g.panel.showCharge === 'undefined'`) === true,
+    'шкалы замаха на панели нет (chargeFrame и showCharge отсутствуют)');
   await sleep(3000);
   await shot('p-after-spin.png');
 
