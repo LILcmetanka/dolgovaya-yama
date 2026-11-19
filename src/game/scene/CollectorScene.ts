@@ -58,6 +58,7 @@ export abstract class CollectorScene extends SaveScene {
   private isFreezeMode = false; // кнопка «лёд» включена: клик по столбцу морозит, а не перекручивает
   private isLastChanceWinPending = false; // входная сетка уже бьёт цель: полоса показана, через мгновение долг закроется
   private wasShoppingAtVictory = false; // победа застала магазин на экране: «ДАЛЬШЕ» доиграет его выход
+  private victoryReached = false; // цель уже взята (порог сверен и пройден): падение баланса ниже chipGoal её не отменяет
   private endScreenCleanup: (() => void) | null = null; // уборка экрана победы: её зовёт «ДАЛЬШЕ»
 
   /** Новый забег: последний шанс не идёт, заморозки нет. */
@@ -72,6 +73,7 @@ export abstract class CollectorScene extends SaveScene {
     this.isFreezeMode = false;
     this.isLastChanceWinPending = false;
     this.wasShoppingAtVictory = false;
+    this.victoryReached = false; // новый забег — цель снова не взята
     this.endScreenCleanup = null;
   }
 
@@ -484,29 +486,36 @@ export abstract class CollectorScene extends SaveScene {
   // ---------- Конец забега ----------
 
   /**
-   * Цель забега взята — набрано chipGoal: 1 000 000, а после «ДАЛЬШЕ» — 10 000 000 (CHIP_RECORD). Зовётся из earn(),
-   * то есть посреди действия: забрали кон, страховка вернула часть сгоревшего, капнули проценты, выпали фишки барабана.
+   * Цель забега взята — на руках chipGoal: 1 000 000, а после «ДАЛЬШЕ» — 10 000 000 (CHIP_RECORD). Решение автора
+   * (19.11): цель считается по фишкам НА РУКАХ (balance), а не по обороту (earned). Зовётся из earn(), то есть
+   * посреди действия: забрали кон, страховка вернула часть сгоревшего, капнули проценты, выпали фишки барабана.
    * Поэтому победа начинается не сразу: ждём VICTORY_SETTLE_TIME, чтобы анимация доиграла (вращение, оплата в банкомат,
    * колесо), и пробуем снова, пока сцена занята. Иначе isGameOver встал бы посреди прокрутки, и её итог пришёл бы уже
-   * на экран победы. Отложенность ничего не теряет: earned только растёт, проверка повторится через тот же шаг.
+   * на экран победы. Порог сверяется ОДИН раз: прошли его — victoryReached, и дальше ни отложенный колбэк, ни ветка
+   * «сцена занята» баланс не проверяют. Иначе оплата долга или магазин успели бы списать фишки за время ожидания,
+   * и заработанная победа тихо отменилась бы.
    * Пока победа ждёт (isVictoryPending), ввод закрыт (BaseScene.canAct): кассета не откатит забег, новая прокрутка
    * не начнётся.
    */
   protected override checkChipGoal(): void {
-    if (this.earned < this.chipGoal || this.isGameOver || this.isVictoryPending) return;
+    if (!this.victoryReached) {
+      if (this.balance < this.chipGoal) return;
+      this.victoryReached = true; // цель взята: ниже chipGoal баланс уже не опустит победу
+    }
+    if (this.isGameOver || this.isVictoryPending) return;
     this.isVictoryPending = true;
     this.time.delayedCall(VICTORY_SETTLE_TIME, () => {
       this.isVictoryPending = false;
-      if (this.isGameOver || this.earned < this.chipGoal) return;
+      if (this.isGameOver) return;
       if (this.isBusyForVictory()) {
-        this.checkChipGoal(); // действие ещё идёт — следующий заход через тот же шаг
+        this.checkChipGoal(); // действие ещё идёт — ждём дальше; порог не сверяем, победа уже заработана
         return;
       }
       this.startVictory();
     });
   }
 
-  /** Сцена занята действием — победа подождёт его конца: спин, окно перемешки, Дилер, банкомат, последний шанс. */
+  /** Сцена занята действием — победа подождёт его конца: спин, решение по перемешке, Дилер, банкомат, последний шанс. */
   private isBusyForVictory(): boolean {
     return (
       this.isSpinning ||
@@ -564,6 +573,7 @@ export abstract class CollectorScene extends SaveScene {
     cleanup?.();
     this.canRestartWithSpace = false; // Пробел снова крутит, а не начинает забег
     this.chipGoal = CHIP_RECORD;
+    this.victoryReached = false; // новая ступень — своя проверка: иначе взятый миллион сразу закрыл бы и 10 000 000
     this.isGameOver = false;
     this.isEndScreenOpen = false; // экран победы убран: очередь ачивок снова может идти к игроку
     this.screen.setCalmColor(this.calmLampColor());

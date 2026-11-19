@@ -26,7 +26,6 @@ import { MiniShop } from './parts/miniShop';
 import { MachinePanel } from './parts/panel';
 import { PauseScreen } from './parts/pauseScreen';
 import { PayoutWindow } from './parts/payoutWindow';
-import { RerollMenu } from './parts/rerollMenu';
 import { Reveal } from './parts/reveal';
 import { addRotateHint } from './parts/rotateHint';
 import { SettingsPanel } from './parts/settingsPanel';
@@ -100,10 +99,9 @@ export class GameScene extends CollectorScene {
       (slot) => this.useItem(slot),
       (id) => this.discardEffect(id),
       () => this.canAct(),
+      (item) => this.canUseItem(item),
       this.tooltip,
     );
-    // Окно перемешки и подмены — после полки: текстуры предметов уже созданы (createItemTextures в ItemShelf).
-    this.rerollMenu = new RerollMenu(this, (id) => this.chooseReroll(id), () => this.skipReroll(), this.tooltip);
     // Полоса последнего шанса — после полки: иконки перемешки и подмены уже нарисованы (createItemTextures).
     this.lastChanceBar = new LastChanceBar(this, (action) => this.onLastChanceButton(action), this.tooltip);
     this.amuletRack = new AmuletRack(this, this.sockets, this.tooltip);
@@ -258,7 +256,7 @@ export class GameScene extends CollectorScene {
     this.pauseScreen.relabel();
     this.monitor.relabel();
     this.shop.relabel(); // кнопка выхода из магазина: надпись на новом языке
-    this.rerollMenu.relabel(); // окно перемешки: заголовок по текущему режиму
+    this.relabelReroll(); // висит решение по перемешке — новость на стекле заново на новом языке
     if (!this.isPaused) this.collector.flipNote(this.debt);
   }
 
@@ -272,7 +270,7 @@ export class GameScene extends CollectorScene {
 
   /** Открыть большой экран со вкладками (символы, паттерны, как играть). Только между прокрутками: пока он открыт, крутить нельзя. */
   private lookAtMonitor(): void {
-    if (!this.canAct()) return;
+    if (!this.canAct() && !this.isRerolling) return; // во время обязательного выбора планшет открыть можно: он игру не двигает
     if (this.reveal?.isActive) return; // тьма первого забега закрывает экран — телевизор не открываем
     this.isAtMonitor = true;
     this.seeOwned();
@@ -449,13 +447,12 @@ export class GameScene extends CollectorScene {
   }
 
   /**
-   * Пробел: на паузе — продолжить, в окне перемешки — пропустить его, у монитора — назад к автомату,
-   * в магазине — назад к автомату, в игре — прокрутить, после проигрыша — «заново» (через 0,8 с).
-   * В последнем шансе пробел ничего не делает: там действуют клавиши 1–5 и мышь (onLastChanceKey).
+   * Пробел: на паузе — продолжить, у монитора — назад к автомату, в магазине — назад к автомату, в игре — прокрутить,
+   * после проигрыша — «заново» (через 0,8 с). Если висит обязательное решение по перемешке, spin() не крутит,
+   * а напоминает надписью на стекле. В последнем шансе пробел ничего не делает: там действуют клавиши 1–5 и мышь.
    */
   private onSpace(): void {
     if (this.isPaused) this.resumeGame();
-    else if (this.isRerolling) this.skipReroll(); // окно открыто: ни прокрутки, ни «забрать» — только пропуск
     else if (this.isAtMonitor) this.lookBack();
     else if (this.isShopping) this.leaveShop();
     // Сделка №15: кон уже забран, но второе забирание ещё доступно — Пробел берёт его, а не крутит.
@@ -465,12 +462,11 @@ export class GameScene extends CollectorScene {
   }
 
   /**
-   * Enter: на паузе — продолжить, в окне перемешки — пропустить его, банкомат выехал — отдать долг,
-   * у Дилера — отказаться от сделки, иначе — забрать кон. В последнем шансе кона нет: сцена его не берёт (canAct()).
+   * Enter: на паузе — продолжить, банкомат выехал — отдать долг, у Дилера — отказаться от сделки, иначе — забрать кон.
+   * В последнем шансе кона нет: сцена его не берёт (canAct()).
    */
   private onEnter(): void {
     if (this.isPaused) this.resumeGame();
-    else if (this.isRerolling) this.skipReroll();
     else if (this.isAwaitingPayment) this.payDebt();
     else if (this.isDealing) this.refusePacts();
     // Кон на кону — Enter забирает; пусто — крутит, как пробел. Сделка №15: второе «забрать» тоже по Enter.

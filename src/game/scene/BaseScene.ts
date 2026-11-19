@@ -33,7 +33,6 @@ import type { MachineBadge } from '../parts/machineBadge';
 import type { MiniShop } from '../parts/miniShop';
 import type { MachinePanel } from '../parts/panel';
 import type { PayoutWindow } from '../parts/payoutWindow';
-import type { RerollMenu } from '../parts/rerollMenu';
 import type { Reveal } from '../parts/reveal';
 import type { Shop } from '../parts/shop';
 import type { SlotScreen } from '../parts/slotScreen';
@@ -46,7 +45,7 @@ const ANGRY_TENSION = 0.25; // фаза 2: столько тревоги доб�
 // Записка светится (долг можно отдать раньше) только на последних прокрутках: если она горит сразу, её нажимают
 // и не докручивают раунд себе в плюс (практика 3). Отдать раньше (D или клик) можно и до этого.
 const PAY_EARLY_GLOW_SPINS = 3;
-// Пороги по пути к цели: на них на стекле новость «НАБРАНО N · M% ЦЕЛИ» (1 000 000 — уже победа, не новость).
+// Пороги по пути к цели: на них на стекле новость «НАБРАНО N» (1 000 000 — уже победа, не новость).
 const CHIP_MILESTONES = [100_000, 500_000];
 
 /** Рекорд из localStorage. Если хранилище недоступно — 0, игра работает и так. */
@@ -105,7 +104,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected debt = 0; // долг этого раунда
   protected debtNextMul = 1; // сделка №12: следующий долг дороже во столько раз (сразу сбрасывается в 1)
   protected balance = 0; // фишки на табло — твои; из них в конце раунда отдаётся долг
-  protected earned = 0; // сколько игра отдала за забег (все приходы на табло): цель забега — chipGoal
+  protected earned = 0; // сколько игра отдала за забег (все приходы на табло): оборот и рекорд; цель же — по balance
   protected chipGoal = CHIP_GOAL; // порог, к которому идёт забег: 1 000 000, а после «ДАЛЬШЕ» — 10 000 000 (CHIP_RECORD)
   protected chipRecord = 0; // лучший earned на конец забега (localStorage): экран победы и рекорда
   protected tickets = 0; // билеты 🎟 на табло — на амулеты и гнёзда
@@ -151,7 +150,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected tapeRecord: RunSave | null = null; // что записано на кассету: забег в начале раунда
   protected patternSet: string[] = []; // какие паттерны открыты в этом забеге: только их схемы видно на стекле
   protected isSpinning = false; // сетка крутится — ввод игнорируется
-  protected isRerolling = false; // окно перемешки и подмены открыто: сетку ещё не посчитали, кроме выбора ничего нельзя
+  protected isRerolling = false; // обязательное решение по перемешке и подмене висит: сетку не посчитали, ввод заперт
   protected isRoundOver = false; // прокрутки кончились — расплата и магазин, крутить и забирать нельзя
   protected isShopping = false; // панель магазина опущена — можно покупать (пока крутится барабан — нельзя)
   protected isShopOpen = false; // панель магазина вообще на экране (и когда покупки закрыты: крутится барабан)
@@ -179,7 +178,6 @@ export abstract class BaseScene extends Phaser.Scene {
   protected collector!: Collector; // записка с долгом, банкомат и экран DEATH
   protected chipCase!: ChipCase; // чемодан с фишками: выжил в последнем шансе — долг оплачен
   protected itemShelf!: ItemShelf; // полка с предметами и включённые предметы у экрана
-  protected rerollMenu!: RerollMenu; // окно перемешки и подмены на месте окошка выплаты
   protected amuletRack!: AmuletRack; // гнёзда с амулетами на верхушке корпуса
   protected shop!: Shop; // панель магазина: жалюзи с торговым автоматом, витриной амулетов, барабаном и кассетой
   protected miniShop!: MiniShop; // маленький автомат на панели: место на полке за фишки и гнездо за билеты
@@ -273,7 +271,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.panel.showMultiplier(this.multiplier());
     this.panel.showSpinsLeft(this.spinsLeft);
     this.panel.showFreeSpins(this.freeSpins);
-    this.collector.showGoal(this.earned, this.chipGoal); // цель забега — на записке над экраном на стене
+    this.collector.showGoal(this.balance, this.chipGoal); // цель забега — от фишек НА РУКАХ, не от оборота (решение автора 19.11)
     // В последнем шансе цели в окошке нет: её показывает полоса последнего шанса, а «забрать» там нечего.
     this.payout.setGoal(null);
     this.payout.showPot(this.pot, this.debt);
@@ -281,7 +279,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.collector.showPayable(this.canPayEarly());
     this.collector.showProgress(this.debt, this.balance, this.pot);
     this.cassette.showUsable(this.canRecord() || this.canRewind());
-    this.monitor.setEnabled(this.canAct() || this.isAtMonitor); // к монитору — между прокрутками, от него — всегда
+    this.monitor.setEnabled(this.canAct() || this.isAtMonitor || this.isRerolling); // планшет — и во время обязательного выбора: он игру не двигает
     // Отложенная новость про ТЕСТ: как только стекло снова на виду (магазин уехал, планшет закрыт, пауза снята), её показываем.
     this.flushDevNotice();
     const tension = this.tension();
@@ -323,8 +321,8 @@ export abstract class BaseScene extends Phaser.Scene {
     const crossed = CHIP_MILESTONES.filter((milestone) => before < milestone && this.earned >= milestone);
     const milestone = crossed.at(-1);
     if (milestone === undefined) return;
-    const percent = Math.round((milestone / this.chipGoal) * 100);
-    this.screen.announceNews(t('chipsMilestone', formatChips(milestone), percent));
+    // Без процента от цели: число про оборот (earned), а цель и процент считаются от баланса — мешать их нельзя.
+    this.screen.announceNews(t('chipsMilestone', formatChips(milestone)));
     this.sfx.play('news', 0.3);
   }
 
@@ -517,7 +515,8 @@ export abstract class BaseScene extends Phaser.Scene {
 
   /**
    * Можно ли сейчас крутить, забирать и включать предметы. Пока впереди бесплатные прокрутки — нельзя: они крутятся сами.
-   * Пока цель взята, но победа ждёт конца действия (isVictoryPending) — тоже нельзя: иначе кассета успела бы
+   * Пока висит обязательное решение по перемешке или подмене (isRerolling) — тоже нельзя: сначала столбец или клетка.
+   * Пока цель взята, но победа ждёт конца действия (isVictoryPending) — нельзя: иначе кассета успела бы
    * откатить забег, а новая прокрутка начаться за экраном победы.
    */
   protected canAct(): boolean {
@@ -544,8 +543,8 @@ export abstract class BaseScene extends Phaser.Scene {
   /**
    * Светится ли записка (долг можно отдать раньше конца раунда): фишек на табло хватает, раунд идёт (не расплата и не магазин,
    * не Дилер, не перемотка, не конец забега) и прокруток осталось мало — PAY_EARLY_GLOW_SPINS. Пока крутится, записка светится, но клик подождёт.
-   * Открытое окно перемешки и подмены записку гасит: долг отдать нечем, пока сетку не посчитали (canAct() тут не годится —
-   * он гасит записку и на бесплатных прокрутках).
+   * Открытое решение по перемешке и подмене записку гасит: пока сетку не посчитали, долг отдавать нечем (canAct() тут
+   * не годится — он гасит записку и на бесплатных прокрутках).
    */
   protected canPayEarly(): boolean {
     const isRoundGoing = !this.isRoundOver && !this.isDealing && !this.isGameOver && !this.isRewinding && !this.isRerolling;

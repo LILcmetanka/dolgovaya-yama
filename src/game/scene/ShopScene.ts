@@ -130,10 +130,9 @@ export abstract class ShopScene extends DealerScene {
     return insuranceCopyPrice(price, countOf(this.amuletCounts, 'insurance'));
   }
 
-  /** В магазине показали предметы и амулеты (и Коллектор уже приходил): всё это теперь на экране на стене; впервые — там мигает «NEW». */
+  /** В магазине показали предметы и амулеты (и Коллектор уже приходил): всё это теперь на экране на стене. NEW не поднимаем — он только за новые символы барабана. */
   private seeInShop(...keys: string[][]): void {
-    const isNew = [WHO_COLLECTOR, ...keys.flat()].map(see).some(Boolean); // see — для каждого ключа, поэтому без короткого замыкания
-    if (isNew) this.monitor.notify('new');
+    for (const key of [WHO_COLLECTOR, ...keys.flat()]) see(key); // see — для каждого ключа: от него зависят вкладки «Предметы» и «Кто есть кто»
   }
 
   /** Купить ряд торгового автомата row: предмет — на свободное место полки, ряд билетов — билет за фишки. */

@@ -543,6 +543,11 @@ export class SlotScreen {
     this.newsOnGlass(text, GOLD_TEXT, SCORE_NEWS_FONT_SIZE);
   }
 
+  /** Снять новость со стекла сразу: игрок сделал ход, надпись-вопрос больше не висит. */
+  clearNews(): void {
+    this.removeNews();
+  }
+
   /** Пришёл новый автомат: на стекле его значок и название, например «💰 ЖАДНЫЙ». */
   announceMachine(machine: MachineSpec): void {
     // У классического автомата значка нет — новость без картинки.

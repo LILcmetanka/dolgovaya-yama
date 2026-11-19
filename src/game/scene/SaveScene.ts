@@ -55,6 +55,7 @@ export abstract class SaveScene extends ShopScene {
   /** Клик по кассете на видеомагнитофоне или 9 вне магазина: чистая — записать, записанная — откатиться. */
   protected useTape(): void {
     if (this.isGameOver) return;
+    // Пока висит решение по перемешке, canRecord/canRewind закрыты (canAct): кассета только трясётся, забег не откатывается.
     if (this.tapeState === 'blank') this.recordTape();
     else if (this.tapeState === 'recorded') this.insertTape();
   }

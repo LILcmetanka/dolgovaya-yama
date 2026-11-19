@@ -9,7 +9,7 @@ import { addText, fitTextWidth, GOLD_TEXT, LED_STYLE, POPUP_DEPTH } from '../the
 import { TAKE_BEZEL_LEFT } from './payoutWindow';
 import { attachHint, type Hint } from './tooltip';
 
-// Полоса последнего шанса встаёт туда же, где полоса перемешки: на место окошка выплаты (те же числа, что в rerollMenu).
+// Полоса последнего шанса встаёт на место окошка выплаты (числа — от PAYOUT_WINDOW).
 const BAND_LEFT = PAYOUT_WINDOW.x - PAYOUT_WINDOW.width / 2; // 509
 const BAND_RIGHT = TAKE_BEZEL_LEFT; // 731 — кнопку «забрать» не накрываем
 const BAND_TOP = PAYOUT_WINDOW.y - PAYOUT_WINDOW.height / 2 - 12; // 505

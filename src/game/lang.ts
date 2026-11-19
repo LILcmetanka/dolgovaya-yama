@@ -43,13 +43,11 @@ const TEXTS = {
   },
   debtCovered: { ru: 'ДАЛЬШЕ — ПРИБЫЛЬ', en: "NOW IT'S PROFIT" }, // на стекле: на долг хватает — дальше крутишь себе в плюс
   // Цель забега: новость на стекле, когда набранное перевалило порог (сама цель — на записке над экраном).
-  chipsMilestone: { ru: 'НАБРАНО {0} · {1}% ЦЕЛИ', en: '{0} EARNED · {1}% OF GOAL' },
+  chipsMilestone: { ru: 'НАБРАНО {0}', en: '{0} EARNED' },
   patternNew: { ru: 'НОВЫЙ ПАТТЕРН ×{0}', en: 'NEW PATTERN ×{0}' }, // на стекле: паттерн выпал впервые
   patternKnown: { ru: 'ПАТТЕРН ×{0}', en: 'PATTERN ×{0}' }, // он уже открывался раньше (например, до отката кассетой)
-  rerollAsk: { ru: 'ПОМЕНЯТЬ СЕТКУ?', en: 'CHANGE THE GRID?' }, // окно перемешки и подмены
-  rerollColumn: { ru: 'КАКОЙ СТОЛБЕЦ?', en: 'WHICH COLUMN?' },
-  rerollCell: { ru: 'КАКАЯ КЛЕТКА?', en: 'WHICH CELL?' },
-  rerollSkip: { ru: 'Пропустить', en: 'Skip' }, // ✕ в окне
+  rerollAskRespin: { ru: 'ПЕРЕКРУТИТЬ?', en: 'RESPIN?' }, // новость на стекле: перемешка заряжена
+  rerollAskSwap: { ru: 'ПОДМЕНА?', en: 'SWAP?' },
   // Последний шанс: цель (множитель паттерна), два действия и пять кнопок (пятая — докупка действия).
   lcGoalPattern: { ru: 'ЦЕЛЬ: ПАТТЕРН ×{0}', en: 'GOAL: PATTERN ×{0}' },
   lcGoalJackpot: { ru: 'ЦЕЛЬ: ТОЛЬКО ДЖЕКПОТ', en: 'GOAL: JACKPOT ONLY' },

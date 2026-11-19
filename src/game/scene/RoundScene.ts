@@ -71,7 +71,6 @@ const DEBT_LAMPS_TIME = 1500; // фишек на табло стало хват�
 const TICKET_BORDER = 0xf59e0b; // рамки на клетках с билетами, когда их три
 const SPIDER_BORDER = 0xa855f7; // рамки на пауках, когда они съели часть кона
 const REVEAL_NOTE_SPIN = 3; // после третьей прокрутки из тьмы проступает долг (первый забег)
-const REROLL_WINDOW_TIME = 10_000; // сколько ждём выбора в окне перемешки и подмены, мс: прошло — сетка посчитана как есть
 const MIN_ROUND_SPINS = 1; // сделка «−1 прокрутка» не может оставить раунд без прокруток вовсе
 
 /** «+12», «+4 ×3 = +12» или с амулетами «+4 ×3 ×2 = +24». */
@@ -102,9 +101,8 @@ export abstract class RoundScene extends MachineScene {
   /** Выпал кубик — Дилер предлагает сделки (dealerGame); ушёл — done(). Её делает слой DealerScene. */
   protected abstract startDealerGame(done: () => void): void;
   private spinsThisRun = 0; // сколько раз крутил за забег — на третьей прокрутке из тьмы проступает записка
-  // Сетка, которая ждёт решения в окне перемешки и подмены (шаг 63б): итог ещё не посчитан. null — окно закрыто.
-  private pendingReroll: { grid: Grid; weightOf: WeightOf; multiplier: number } | null = null;
-  private rerollTimer?: Phaser.Time.TimerEvent; // через REROLL_WINDOW_TIME окно закроется само — пропуск
+  // Сетка, которая ждёт решения по перемешке или подмене (шаг 63б): итог ещё не посчитан. null — решения нет.
+  private pendingReroll: { grid: Grid; weightOf: WeightOf; multiplier: number; id: RerollId } | null = null;
   /** Раунд закрыт ранней оплатой: Коллектор забирает долг сам (и после «ДАЛЬШЕ» с экрана победы — тоже). */
   protected isPaidEarly = false;
   // Сделка №15 «забрать дважды»: в одной прокрутке после обычного «забрать» можно забрать ещё раз.
@@ -113,12 +111,11 @@ export abstract class RoundScene extends MachineScene {
   private lastTakeAmount = 0; // сколько дало первое забирание: от него считается второе
   private bankKeptThisRound = false; // сделка №10: первый череп в этом раунде кон уже не сжёг
 
-  /** Новый забег: прокруток ещё не было, окно перемешки не висит, сделок Дилера нет. */
+  /** Новый забег: прокруток ещё не было, решения по перемешке не висит, сделок Дилера нет. */
   protected resetState(): void {
     super.resetState();
     this.spinsThisRun = 0;
     this.pendingReroll = null;
-    this.rerollTimer = undefined;
     this.isPaidEarly = false;
     this.tookThisSpin = false;
     this.tookExtraThisSpin = false;
@@ -130,6 +127,7 @@ export abstract class RoundScene extends MachineScene {
 
   /** Прокрутка: одно нажатие рычага (или Пробел, Enter) — одна прокрутка. Нельзя, пока canAct() против. */
   protected spin(): void {
+    if (this.remindReroll()) return; // висит решение — сначала столбец или клетка, крутить раньше нельзя
     if (!this.canAct()) return;
     this.spinsThisRun += 1;
     this.forgetTakeThisSpin();
@@ -258,13 +256,14 @@ export abstract class RoundScene extends MachineScene {
   }
 
   /**
-   * Сетка встала. Платная прокрутка с заряженной перемешкой или подменой — сначала окно выбора (openReroll), итог потом;
-   * иначе итог сразу (evaluateSpin). Бесплатная прокрутка окна не открывает: заряженное ждёт платной.
+   * Сетка встала. Платная прокрутка с заряженной перемешкой или подменой — обязательный выбор: надпись на стекле
+   * и столбец (клетка), и только потом итог (offerReroll); иначе итог сразу (evaluateSpin). Пропустить выбор нельзя.
+   * Бесплатная прокрутка выбора не предлагает: заряженное ждёт платной.
    */
   private finishSpin(grid: Grid, weightOf: WeightOf, multiplier: number, isFree: boolean): void {
     this.isSpinning = false;
     if (!isFree && (this.itemEffects.shuffle || this.itemEffects.swap)) {
-      this.openReroll(grid, weightOf, multiplier);
+      this.offerReroll(grid, weightOf, multiplier);
       return;
     }
     this.evaluateSpin(grid, multiplier);
@@ -303,9 +302,10 @@ export abstract class RoundScene extends MachineScene {
     this.itemEffects.risk = false;
     this.itemEffects.hammer = false;
     this.itemEffects.luckSpin = false;
-    // Перемешка и подмена здесь не гаснут: окно выбора их уже погасило (applyShuffle/applySwap), а пропуск
-    // оставляет предмет заряженным на следующую платную прокрутку — до конца раунда его снимет clearRoundEffects.
+    // Перемешка и подмена здесь не гаснут: выбор их уже погасил (applyShuffle/applySwap). Если заряжены оба,
+    // подмена осталась на следующую платную прокрутку — до конца раунда её снимет clearRoundEffects.
     this.showItemEffects();
+    this.itemShelf.refreshPulses(); // риск, молот и фарт погасли — предметы на полке снова годны, пульс пересчитываем
     this.refreshHud();
     if (cellsOf(grid, 'dice').length > 0) {
       this.diceDrought = 0;
@@ -320,34 +320,48 @@ export abstract class RoundScene extends MachineScene {
   // ---------- Перемешка и подмена (шаг 63б) ----------
 
   /**
-   * Платная прокрутка встала, а на полке заряжена перемешка или подмена: окно выбора на месте окошка выплаты.
-   * Итог ждёт (pendingReroll), ввод заблокирован (isRerolling). Один предмет заряжен — режим выбирается сам:
-   * спрашивать «какой предмет» незачем. Через REROLL_WINDOW_TIME окно закроется пропуском.
+   * Платная прокрутка встала, а на полке заряжена перемешка или подмена: на стекле короткая новость «ПЕРЕКРУТИТЬ?»
+   * или «ПОДМЕНА?» (как «ФАЗА 2», без окна и крестика), и сразу включаются зоны выбора — столбец или клетка.
+   * Выбор ОБЯЗАТЕЛЕН: итог ждёт (pendingReroll), canAct() заперт, пока столбец или клетка не выбраны; пропуска нет.
+   * Оба предмета заряжены — сначала перемешка, подмена остаётся на следующую платную прокрутку.
    */
-  private openReroll(grid: Grid, weightOf: WeightOf, multiplier: number): void {
-    this.pendingReroll = { grid, weightOf, multiplier };
+  private offerReroll(grid: Grid, weightOf: WeightOf, multiplier: number): void {
+    const id: RerollId = this.itemEffects.shuffle ? 'shuffle' : 'swap';
+    this.pendingReroll = { grid, weightOf, multiplier, id };
     this.isRerolling = true;
-    const armed: RerollId[] = [];
-    if (this.itemEffects.shuffle) armed.push('shuffle');
-    if (this.itemEffects.swap) armed.push('swap');
-    this.rerollMenu.open(armed);
-    if (armed.length === 1) this.chooseReroll(armed[0]);
-    this.rerollTimer = this.time.delayedCall(REROLL_WINDOW_TIME, () => this.skipReroll());
-    this.refreshHud();
-  }
-
-  /** Выбрали предмет в окне: теперь клик по сетке — столбец (перемешка) или клетка (подмена). */
-  protected chooseReroll(id: RerollId): void {
-    this.rerollMenu.ask(id);
+    this.screen.announceNews(t(this.rerollNewsKey(id)));
     this.screen.beginPick(id === 'shuffle' ? 'column' : 'cell', (row, col) => {
       if (id === 'shuffle') this.applyShuffle(col);
       else this.applySwap(row, col);
     });
+    this.refreshHud();
+  }
+
+  /**
+   * Игрок дёрнул прокрутку, «забрать» или долг, пока решение висит: ничего не делаем, только напоминаем —
+   * надпись на стекле заново и «нет» звуком. Выбор обязателен: обойти его нельзя.
+   */
+  private remindReroll(): boolean {
+    if (!this.pendingReroll) return false;
+    this.relabelReroll();
+    this.sfx.play('deny');
+    return true;
+  }
+
+  /** Сменили язык, а решение висит: новость на стекле — заново на новом языке. */
+  protected relabelReroll(): void {
+    const pending = this.pendingReroll;
+    if (pending) this.screen.announceNews(t(this.rerollNewsKey(pending.id)));
+  }
+
+  /** Ключ новости решения: «ПЕРЕКРУТИТЬ?» для перемешки, «ПОДМЕНА?» для подмены. */
+  private rerollNewsKey(id: RerollId): 'rerollAskRespin' | 'rerollAskSwap' {
+    return id === 'shuffle' ? 'rerollAskRespin' : 'rerollAskSwap';
   }
 
   /**
    * Перемешка: столбец col перекручивается целиком новыми символами этой прокрутки, потом — итог по новой сетке.
-   * Предмет тратится; защита от двойного клика — pendingReroll.
+   * Предмет тратится; защита от двойного клика — pendingReroll снимается до анимации.
    */
   private applyShuffle(col: number): void {
     const pending = this.pendingReroll;
@@ -355,8 +369,9 @@ export abstract class RoundScene extends MachineScene {
     for (let row = 0; row < GRID_ROWS; row++) pending.grid[row][col] = randomSymbol(pending.weightOf);
     this.itemEffects.shuffle = false;
     this.itemShelf.spend('shuffle', cellX(col), GRID_Y);
+    this.itemShelf.refreshPulses(); // перемешка потрачена — место у экрана свободно, пульс пересчитываем
     this.isSpinning = true; // сетка перекручивается: приборы гаснут до итога
-    this.closeReroll();
+    this.clearReroll();
     this.screen.rerollColumn(col, pending.weightOf, (row) => pending.grid[row][col], () => {
       this.isSpinning = false;
       this.evaluateSpin(pending.grid, pending.multiplier);
@@ -370,31 +385,22 @@ export abstract class RoundScene extends MachineScene {
     pending.grid[row][col] = JOKER;
     this.itemEffects.swap = false;
     this.itemShelf.spend('swap', cellX(col), cellY(row));
+    this.itemShelf.refreshPulses(); // подмена потрачена — место у экрана свободно, пульс пересчитываем
     this.isSpinning = true;
-    this.closeReroll();
+    this.clearReroll();
     this.screen.revealCell(row, col, JOKER, () => {
       this.isSpinning = false;
       this.evaluateSpin(pending.grid, pending.multiplier);
     });
   }
 
-  /** Пропуск (✕, Пробел, Enter или время вышло): сетка считается как есть, предмет остаётся заряженным. */
-  protected skipReroll(): void {
-    const pending = this.pendingReroll;
-    if (!pending) return;
-    this.closeReroll();
-    this.evaluateSpin(pending.grid, pending.multiplier);
-  }
-
-  /** Окно закрылось: таймер снят, выбор на сетке кончился, подсказка ✕ убрана, приборы снова по canAct(). */
-  private closeReroll(): void {
-    this.rerollTimer?.remove();
-    this.rerollTimer = undefined;
+  /** Решение снято: зоны выбора выключены, приборы снова по canAct(). Итог считает выбор столбца или клетки. */
+  private clearReroll(): void {
     this.pendingReroll = null;
     this.isRerolling = false;
-    this.tooltip.hide(); // подсказка ✕ не должна висеть, когда полосы уже нет
+    this.tooltip.hide(); // подсказка не должна висеть, когда решения уже нет
+    this.screen.clearNews(); // «ПЕРЕКРУТИТЬ?» / «ПОДМЕНА?» гаснут сразу: решение снято
     this.screen.endPick();
-    this.rerollMenu.close();
     this.showItemEffects();
     this.refreshHud();
   }
@@ -453,6 +459,7 @@ export abstract class RoundScene extends MachineScene {
     } else if (this.itemEffects.shields > 0) {
       this.itemEffects.shields -= 1;
       this.itemShelf.spend('shield', CENTER_X, GRID_Y); // щит летит на сетку и тает
+      this.itemShelf.refreshPulses(); // щит потрачен: место у экрана могло освободиться — второй щит на полке снова годен
       this.blockSkulls(result);
     } else {
       // Сделка №10: первый череп в этом раунде кон не жжёт (потом жжёт как обычно). Серия падает в любом случае.
@@ -578,6 +585,7 @@ export abstract class RoundScene extends MachineScene {
    * DOUBLE_TAKE_SHARE (80%) только что забранного кона и серию второй раз не режет.
    */
   protected take(): void {
+    if (this.remindReroll()) return; // висит решение — сначала столбец или клетка, забрать раньше нельзя
     if (!this.canAct()) return;
     if (this.pot > 0) {
       this.payout.press();
@@ -650,6 +658,8 @@ export abstract class RoundScene extends MachineScene {
       this.panel.pulseBoard();
     });
     this.markDebt();
+    // ×3 отработал и свеча сгорела — места у экрана освободились, предметы на полке снова годны: пульс пересчитываем.
+    this.itemShelf.refreshPulses();
   }
 
   /**
@@ -671,31 +681,44 @@ export abstract class RoundScene extends MachineScene {
 
   // ---------- Предметы ----------
 
+  /**
+   * Почему предмет с полки нельзя включить (порядок как в useItem): «риск» с «фартом» несовместимы,
+   * такой предмет уже действует (сигарета у потолка прокруток пропала бы впустую), места у экрана заняты.
+   * null — можно включать.
+   */
+  private denyReason(item: Item): 'conflict' | 'busy' | 'full' | null {
+    // Риск с фартом несовместимы — попытка включить один при другом и есть «Неа».
+    if (conflictsWith(item.id, this.itemEffects)) return 'conflict';
+    if (isItemOn(item.id, this.itemEffects) || (item.id === 'cigarette' && this.spinsLeft >= MAX_SPINS_PER_ROUND)) return 'busy';
+    if (takesEffectSlot(item.id) && activeSlotEffects(this.itemEffects).length >= this.effectPlaces()) return 'full';
+    return null;
+  }
+
+  /** Сколько мест у экрана сейчас даёт столбик (сделка №13 короче: предел — effectSlotLimit). */
+  private effectPlaces(): number {
+    return effectSlotLimit(pactEffects(this.pacts, this.round).effectSlotsDelta);
+  }
+
+  /**
+   * Можно ли сейчас включить предмет с полки: одни и те же правила в useItem и у полки (ItemShelf спрашивает
+   * для пульса) — одна правда, без дублей (DONTLIKE, стр. 3: пульс не должен врать).
+   */
+  protected canUseItem(item: Item): boolean {
+    return this.denyReason(item) === null;
+  }
+
   /** Включить предмет с места полки slot (клик по нему или клавиша). Только между прокрутками. */
   protected useItem(slot: number): void {
     const item = this.shelf[slot];
     if (!item) return;
-    if (!this.canAct()) return;
-    // Нельзя: риск с фартом несовместимы — попытка включить один при другом и есть «Неа».
-    if (conflictsWith(item.id, this.itemEffects)) {
+    if (!this.canAct()) return; // висит решение по перемешке — этот нажим теряется, предмет включается отдельным нажатием после выбора
+    const reason = this.denyReason(item);
+    if (reason !== null) {
       this.sfx.play('deny');
       this.itemShelf.deny(slot);
-      this.unlockAchievement('nope');
-      return;
-    }
-    // Нельзя: такой предмет уже действует, а сигарета у потолка прокруток пропала бы впустую.
-    if (isItemOn(item.id, this.itemEffects) || (item.id === 'cigarette' && this.spinsLeft >= MAX_SPINS_PER_ROUND)) {
-      this.sfx.play('deny');
-      this.itemShelf.deny(slot);
-      return;
-    }
-    // Все места у экрана заняты: место освобождает сам игрок — кликом по включённому предмету, автозамены нет.
-    // Сделка №13 короче столбик: предел — effectSlotLimit (EFFECT_SLOTS минус её поправка).
-    const places = effectSlotLimit(pactEffects(this.pacts, this.round).effectSlotsDelta);
-    if (takesEffectSlot(item.id) && activeSlotEffects(this.itemEffects).length >= places) {
-      this.sfx.play('deny');
-      this.itemShelf.deny(slot);
-      this.tooltip.show(t('effectsFull'), '');
+      if (reason === 'conflict') this.unlockAchievement('nope');
+      // Все места у экрана заняты: место освобождает сам игрок — кликом по включённому предмету, автозамены нет.
+      if (reason === 'full') this.tooltip.show(t('effectsFull'), '');
       return;
     }
     this.tooltip.hide();
@@ -710,13 +733,14 @@ export abstract class RoundScene extends MachineScene {
           ? { x: CENTER_X, y: GRID_Y }
           : effectPosition(item.id, this.itemEffects);
     this.itemShelf.takeItem(slot, target.x, target.y, () => this.showItemEffects());
+    this.itemShelf.refreshPulses(); // у других предметов из-за этого включения могли измениться правила
     this.refreshHud();
   }
 
   /**
    * Игрок кликнул по включённому предмету у экрана и освободил его место: предмет больше ничего не делает.
    * Значок к этому моменту уже погас (ItemShelf.fadeOut) — остаётся снять сам эффект и переставить столбик.
-   * Не между прокрутками (крутится, Дилер, окно перемешки, последний шанс) — нельзя: значок вернётся на место.
+   * Не между прокрутками (крутится, Дилер, решение по перемешке, последний шанс) — нельзя: значок вернётся на место.
    */
   protected discardEffect(id: SlotEffectId): void {
     if (!this.canAct()) {
@@ -726,6 +750,7 @@ export abstract class RoundScene extends MachineScene {
     clearEffect(id, this.itemEffects);
     this.sfx.play('item');
     this.showItemEffects();
+    this.itemShelf.refreshPulses(); // место у экрана освободилось — предмет снова годен и снова может дышать
     this.refreshHud();
   }
 
@@ -775,7 +800,7 @@ export abstract class RoundScene extends MachineScene {
         this.itemEffects.luckSpin = true;
         break;
       case 'shuffle':
-        this.itemEffects.shuffle = true; // заряжена: окно откроется после следующей платной прокрутки
+        this.itemEffects.shuffle = true; // заряжена: надпись и выбор столбца — после следующей платной прокрутки
         break;
       case 'swap':
         this.itemEffects.swap = true;
@@ -791,7 +816,7 @@ export abstract class RoundScene extends MachineScene {
   /** Включённые предметы у экрана и цвет огней вокруг экрана в покое (чеснок, кровь, фаза — calmLampColor). */
   protected showItemEffects(): void {
     // Сделка №13: столбик короче на FREE_AMULET_SLOTS — лишние пустые места прячутся.
-    this.itemShelf.showEffects(this.itemEffects, effectSlotLimit(pactEffects(this.pacts, this.round).effectSlotsDelta));
+    this.itemShelf.showEffects(this.itemEffects, this.effectPlaces());
     this.screen.setCalmColor(this.calmLampColor());
   }
 
@@ -850,6 +875,8 @@ export abstract class RoundScene extends MachineScene {
     this.sfx.play('roundStart');
     this.checkPhase(); // начало раунда — спокойный момент; после зелёных огней раунда, иначе они перекроют красную вспышку фазы
     this.refreshHud();
+    // В самом конце: прокрутки уже посчитаны (сигарета смотрит на spinsLeft), просроченные сделки сняты (лимит мест).
+    this.itemShelf.refreshPulses(); // бусты и флаги прошлого раунда сняты — предметы на полке снова годны
   }
 
   /**
@@ -879,6 +906,7 @@ export abstract class RoundScene extends MachineScene {
    * (лампочки гаснут, за EARLY_PAY_MIN_SPINS и больше из них вылетает билет), и сразу приходит Коллектор — банкомат сам забирает долг.
    */
   protected payEarly(): void {
+    if (this.remindReroll()) return; // висит решение — долг отдаётся только после выбора
     if (!this.canAct() || !this.hasEnoughForDebt()) return;
     const bonus = earlyPayTickets(this.spinsLeft);
     this.panel.burnOutSpinLamps(this.spinsLeft);
@@ -927,6 +955,7 @@ export abstract class RoundScene extends MachineScene {
     }
     clearRoundEffects(this.itemEffects); // чеснок, вишни и прочее действуют только до конца раунда
     this.showItemEffects();
+    this.itemShelf.refreshPulses(); // раунд кончился — всё снято, предметы на полке снова годны, пульс пересчитываем
     this.refreshHud(); // бусты сняты — экранчик доли черепов не должен показывать число с чесноком от прошлого раунда
   }
 }

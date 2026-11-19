@@ -47,7 +47,7 @@ export abstract class DealerScene extends RoundScene {
 
   /** Выпал кубик: Дилер кладёт три карты-сделки. Ушёл — done(). */
   protected startDealerGame(done: () => void): void {
-    if (see(WHO_DEALER)) this.monitor.notify('new'); // Дилер появился впервые — он на экране на стене
+    see(WHO_DEALER); // Дилер появился впервые — он на экране на стене; NEW не поднимаем: он только за новые символы барабана
     this.isDealing = true;
     this.isDealerClosing = false;
     this.dealerDone = done;
@@ -98,6 +98,7 @@ export abstract class DealerScene extends RoundScene {
     this.isDealerClosing = true;
     this.dealerTable.close(() => this.endDealerGame());
     this.pacts.push(pactOf(spec.id, this.round, lucky));
+    this.itemShelf.refreshPulses(); // сделка могла укоротить столбик — пульс полки пересчитать
     this.applyPactOnce(spec.id);
     this.sfx.play('item');
     this.screen.announceNews(t('pactNews', t(spec.bonus), t(spec.cost)));

@@ -247,7 +247,7 @@ export class WallScreen {
     this.buildOverlay(toggle, openSettings);
     this.content = scene.add.container(0, 0);
     this.round = round;
-    this.news = 'new'; // в начале забега (и после кассеты) экран ещё не видели
+    // NEW на старте забега (и после кассеты) не поднимаем: экран мигает только за новые символы барабана (showRound).
     this.redrawSymbols();
     this.showTab('symbols');
     this.hideOverlay();

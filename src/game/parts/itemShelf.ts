@@ -18,7 +18,7 @@ import { attachHint, type Hint } from './tooltip';
 
 // Размеры.
 const ITEM_ON_SHELF_SCALE = 0.9; // предмет в клетке чуть меньше ниши
-const EFFECT_SCALE = 0.68; // включённый предмет у экрана ещё меньше
+const EFFECT_SCALE = 0.55; // включённый предмет у экрана: ниша гнезда 34 px, значок 31 px — не заходит на бронзовую рамку
 // Анимации, мс.
 const FLY_TIME = 450; // предмет летит из лотка на полку или с полки к экрану
 const FADE_TIME = 220; // снятый предмет гаснет у экрана
@@ -65,11 +65,14 @@ export class ItemShelf {
   private readonly effectCounts = new Map<SlotEffectId, Phaser.GameObjects.Text>(); // «2», если включено больше одного
   private readonly shelfItems: (Item | null)[] = []; // какой предмет в какой клетке — для подсказки
   private readonly canDiscard: () => boolean; // сейчас можно снимать предмет у экрана (не во время прокрутки и прочего)
+  private readonly usable: (item: Item) => boolean; // можно ли предмет сейчас включить (правила — в RoundScene.canUseItem)
+  private readonly breathing = new Set<number>(); // слоты, где предмет уже «дышит» — чтобы не плодить твины
 
   /**
    * slots — сколько клеток открыто; use — что делать, когда кликнули по предмету в клетке;
    * discard — когда кликнули по включённому предмету у экрана (игрок освобождает его место);
-   * canDiscard — можно ли снимать сейчас: во время прокрутки, Дилера или последнего шанса случайный клик ничего не портит.
+   * canDiscard — можно ли снимать сейчас: во время прокрутки, Дилера или последнего шанса случайный клик ничего не портит;
+   * usable — можно ли предмет сейчас включить: дышит только то, что реально нажать, а то пульс врёт (DONTLIKE, стр. 3).
    */
   constructor(
     scene: Phaser.Scene,
@@ -77,10 +80,12 @@ export class ItemShelf {
     use: (slot: number) => void,
     discard: (id: SlotEffectId) => void,
     canDiscard: () => boolean,
+    usable: (item: Item) => boolean,
     hint: Hint,
   ) {
     this.scene = scene;
     this.canDiscard = canDiscard;
+    this.usable = usable;
     createItemTextures(scene, ITEMS, ITEM_SIZE);
     createShelfTextures(scene, SHELF_CELL);
     createEffectSlotTexture(scene, EFFECT_SLOT);
@@ -121,7 +126,7 @@ export class ItemShelf {
 
   /** Клик по значку: снимаем, только если сцена разрешает сейчас, — иначе значок не трогаем. */
   private tryFadeOut(id: SlotEffectId, discard: (id: SlotEffectId) => void): void {
-    if (!this.canDiscard()) return; // прокрутка, Дилер, окно перемешки, последний шанс — клик ничего не портит
+    if (!this.canDiscard()) return; // прокрутка, Дилер, решение по перемешке, последний шанс — клик ничего не портит
     this.fadeOut(id, discard);
   }
 
@@ -227,15 +232,18 @@ export class ItemShelf {
       onComplete: () => {
         flying.destroy();
         target.setTexture(itemTexture(item)).setVisible(true);
-        this.breathe(target);
+        this.refreshPulses(); // дышит, только если его сейчас можно включить
       },
     });
   }
 
   /** Купленный предмет «дышит» в клетке, пока его не нажмут (включить или «нельзя» — тряска это останавливает). */
-  private breathe(target: Phaser.GameObjects.Image): void {
+  private breathe(slot: number): void {
+    const target = this.items[slot];
     this.scene.tweens.killTweensOf(target);
+    target.setX(shelfX(slot)).setAlpha(1); // ровно в клетке: пульс не должен стартовать со сдвига после оборванной тряски
     target.setScale(ITEM_ON_SHELF_SCALE);
+    this.breathing.add(slot);
     this.scene.tweens.add({
       targets: target,
       scale: ITEM_ON_SHELF_SCALE * NEW_ITEM_SCALE,
@@ -246,11 +254,34 @@ export class ItemShelf {
     });
   }
 
+  /**
+   * Пересчитать пульс всех предметов на полке: дышит только то, что сейчас можно включить (usable).
+   * Уже дышащие не трогаем (breathing — чтобы не плодить твины); не годящиеся стоят ровно: scale и alpha обычные.
+   * Сцена зовёт после включения предмета и после того, как игрок освободил место у экрана, а putItem — когда
+   * купленный предмет долетел в клетку: правила изменились, пульс пересчитываем.
+   */
+  refreshPulses(): void {
+    this.shelfItems.forEach((item, slot) => {
+      const canUse = item !== null && this.usable(item);
+      if (canUse && !this.breathing.has(slot)) this.breathe(slot);
+      else if (!canUse) this.stopBreathing(slot);
+    });
+  }
+
+  /** Пульс выключен: твины убиты, предмет стоит ровно в клетке (обычные scale и alpha). */
+  private stopBreathing(slot: number): void {
+    this.breathing.delete(slot);
+    const target = this.items[slot];
+    this.scene.tweens.killTweensOf(target);
+    target.setX(shelfX(slot)).setScale(ITEM_ON_SHELF_SCALE).setAlpha(1);
+  }
+
   /** Включили предмет: он улетает из клетки slot к (toX, toY) и там тает. Долетел — landed(). */
   takeItem(slot: number, toX: number, toY: number, landed: () => void): void {
     this.shelfItems[slot] = null;
     const item = this.items[slot];
-    this.scene.tweens.killTweensOf(item); // перестал «дышать»
+    this.breathing.delete(slot); // перестал «дышать»
+    this.scene.tweens.killTweensOf(item);
     item.setScale(ITEM_ON_SHELF_SCALE).setVisible(false);
     const flying = this.scene.add.image(item.x, item.y, item.texture.key).setScale(ITEM_ON_SHELF_SCALE).setDepth(POPUP_DEPTH);
     this.scene.tweens.add({
@@ -269,17 +300,20 @@ export class ItemShelf {
 
   /** Нельзя: предмет в клетке slot коротко трясётся. */
   deny(slot: number): void {
-    this.shake(this.items[slot], shelfX(slot));
+    this.shake(slot);
   }
 
   /** На полке нет свободного места: трясутся все предметы. */
   shakeFull(): void {
-    this.items.forEach((item, slot) => this.shake(item, shelfX(slot)));
+    this.items.forEach((_, slot) => this.shake(slot));
   }
 
   /** Тряска «нельзя»: влево-вправо и на место. */
-  private shake(target: Phaser.GameObjects.Image, homeX: number): void {
-    this.scene.tweens.killTweensOf(target); // и «дышать» перестаёт: на предмет уже нажимали
+  private shake(slot: number): void {
+    const target = this.items[slot];
+    const homeX = shelfX(slot);
+    this.breathing.delete(slot); // и «дышать» перестаёт: на предмет уже нажимали
+    this.scene.tweens.killTweensOf(target);
     target.setX(homeX).setScale(ITEM_ON_SHELF_SCALE);
     this.scene.tweens.add({ targets: target, x: homeX + 6, duration: SHAKE_TIME, yoyo: true, repeat: 2, onComplete: () => target.setX(homeX) });
   }
