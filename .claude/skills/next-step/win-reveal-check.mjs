@@ -19,7 +19,20 @@
  *  - джекпот — ровно один шаг и 15 клеток в одной рамке;
  *  - пауза посреди показа замораживает его, в окошке стоит промежуточная сумма (а не финал), после снятия кон доначисляется ровно один раз (не дважды);
  *  - бесплатная прокрутка: свой короткий бюджет и без паузы перед итогом (короче платной на тех же 8 паттернах);
- *  - во время показа рычаг, «забрать» и кассета не срабатывают.
+ *  - во время показа рычаг, «забрать» и кассета не срабатывают;
+ *  - KABOOM посреди показа снимает ввод, но не запирает сцену.
+ *
+ * Шаг 19: каскад сдвинул поток, и проверяется, что всё, что раньше шло сразу после прокрутки, идёт ПОСЛЕ последней рамки:
+ *  - выигрыш + 🎲: пока идёт показ, Дилер ещё не пришёл (isDealing снят, карт на сукне нет) и звука dice нет; Дилер садится
+ *    ровно в конце каскада (isDealing, карт = PACT_OFFER_COUNT), звук dice — после последней паузы каскада (по игровому
+ *    времени), а отказ возвращает раунд в игру, не съев ни рамки, ни окошко;
+ *  - выигрыш + 🕷: во время показа в окошке показанные доли, а кон на t0 = potBefore + gain (паук ещё не ел); укус
+ *    считается независимо — по SPIDER_BITE из evil.ts и свежему кону — и приходится на конец каскада (звук spider там же);
+ *  - смена языка (L, дважды — назад к исходному) посреди каскада: числа в окошке не меняются, каскад не сбрасывается,
+ *    после конца кон финальный, язык исходный;
+ *  - записанная кассета: во время каскада перемотка отклонена (deny, запись цела, кон не откачен), после каскада откат
+ *    работает — сцена пересоздаётся, кон/прокрутки как на плёнке, кассету съел автомат. Этот сценарий последний:
+ *    рестарт убивает старые хуки показа.
  *
  * Как делаются фиксированные сетки: у сцены на одну прокрутку подменяется g.rollGrid — прокрутка берёт готовую сетку,
  * а символы для неё берутся из самой игры (при постоянном Math.random spinGrid кладёт один и тот же настоящий SlotSymbol).
@@ -58,6 +71,12 @@ function patternTable() {
 const PATTERNS = patternTable();
 const cellsOf = (id) => PATTERNS[id].cells;
 const multOf = (id) => PATTERNS[id].multiplier;
+/**
+ * Числа злых знаков — тоже из игры, а не копией: доля укуса паука лежит в src/game/evil.ts (SPIDER_BITE), число карт
+ * Дилера — в src/game/dealerGame.ts (PACT_OFFER_COUNT). Иначе проверка держала бы в себе магическое 54 фишки.
+ */
+const SPIDER_BITE = Number(/SPIDER_BITE\s*=\s*([\d.]+)/.exec(readFileSync(new URL('../../../src/game/evil.ts', import.meta.url), 'utf8'))[1]);
+const PACT_COUNT = Number(/PACT_OFFER_COUNT\s*=\s*(\d+)/.exec(readFileSync(new URL('../../../src/game/dealerGame.ts', import.meta.url), 'utf8'))[1]);
 try {
   let tabs;
   for (let i = 0; i < 40; i++) { try { tabs = await (await fetch('http://127.0.0.1:9337/json')).json(); if (tabs.length) break; } catch {} await sleep(300); }
@@ -66,12 +85,15 @@ try {
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((r) => (ws.onopen = r));
   let id = 0; const pend = new Map();
+  /** Необработанные исключения страницы: считаем их, чтобы откат кассетой проверялся не только по числам, но и по консоли. */
+  const pageErrors = [];
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.id && pend.has(m.id)) pend.get(m.id)(m);
     // Ошибки страницы (необработанные исключения игры) печатаем: сценарий должен падать не молча.
     if (m.method === 'Runtime.exceptionThrown') {
       const d = m.params.exceptionDetails;
+      pageErrors.push((d.exception && d.exception.description) || d.text);
       console.log('page exception:', (d.exception && d.exception.description) || d.text);
     }
   };
@@ -93,6 +115,8 @@ try {
   const json = (text) => JSON.parse(text ?? 'null');
   check(Object.keys(PATTERNS).length === 14 && multOf('row3') === 1 && multOf('eye') === 10 && multOf('jackpot') === 100 && cellsOf('jackpot') === 15 && cellsOf('row3') === 3,
     `паттерны прочитаны из patterns.ts: ${Object.keys(PATTERNS).length} паттернов, джекпот ×${multOf('jackpot')} на ${cellsOf('jackpot')} клетках`);
+  check(SPIDER_BITE > 0 && SPIDER_BITE < 1 && PACT_COUNT >= 1,
+    `числа злых знаков прочитаны из игры: SPIDER_BITE ${SPIDER_BITE} (evil.ts), карт у Дилера ${PACT_COUNT} (dealerGame.ts)`);
 
   await send('Runtime.enable'); await send('Page.enable');
   await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
@@ -242,6 +266,48 @@ try {
     /** Кадры каскада и звуки — одним вызовом: между ними ничего не успевает случиться. */
     window.__frames = () => JSON.stringify(window.__hist);
     window.__sounds = () => JSON.stringify(window.__snd);
+    /**
+     * Ждать условие на странице по ИГРОВОМУ времени: expr — строка-предикат. Нужен там, где конец шага определяет
+     * не таймер показа, а твин сцены (стол Дилера уезжает, пауза, фаза) — спать на удачу не приходится.
+     * Предел 60 с по часам страницы — только страховка от вечного ожидания.
+     */
+    window.__waitFor = (expr, gameLimit = 5000) => new Promise((resolve, reject) => {
+      const started = performance.now();
+      const t0 = window.__clock;
+      const fn = new Function('return (' + expr + ')');
+      const step = () => {
+        if (fn()) return resolve(Math.round(window.__clock - t0));
+        if (window.__clock - t0 > gameLimit) return reject(new Error('не дождались по игровому времени: ' + expr));
+        if (performance.now() - started > 60000) return reject(new Error('не дождались: ' + expr));
+        requestAnimationFrame(step);
+      };
+      step();
+    });
+    /**
+     * Ждать пересоздания сцены после отката кассетой. Phaser перезапускает ТОТ ЖЕ экземпляр сцены (shutdown → create),
+     * поэтому «новая сцена» — это счётчик shutdown и новые части (create строит их заново), а не новый window.__g.
+     * После create статус снова RUNNING (5) — по нему и понимаем, что игра готова.
+     */
+    window.__waitRestart = () => new Promise((resolve, reject) => {
+      const started = performance.now();
+      const step = () => {
+        const g = window.__g;
+        const running = g && g.sys && g.sys.settings && g.sys.settings.status === 5;
+        if (window.__restartSeen === 1 && running) return resolve(true);
+        if (performance.now() - started > 40000) return reject(new Error('сцена не перезапустилась'));
+        requestAnimationFrame(step);
+      };
+      step();
+    });
+    /** Язык по постоянной надписи «ПАУЗА»/«PAUSE» (её relabel'ит toggleLanguage); резерв — золотая рамка RU/EN. */
+    window.__lang = () => {
+      const g = window.__g;
+      const title = g.pauseScreen && g.pauseScreen.title && g.pauseScreen.title.text;
+      if (title === 'ПАУЗА' || title === 'PAUSE') return title === 'ПАУЗА' ? 'ru' : 'en';
+      const frames = g.settingsPanel && g.settingsPanel.languageFrames;
+      if (frames) for (const [key, frame] of frames) if (frame.lineWidth === 3) return key;
+      return '?';
+    };
     return 'patched';
   })()`);
 
@@ -275,6 +341,17 @@ try {
     })()`);
     return JSON.parse(made ?? 'null');
   };
+  /**
+   * Настоящий символ злого знака (🎲, 🕷): они открываются позже (раунды 4 и 6), поэтому в общий перебор из rollGrid
+   * на первом раунде не попадают. Берём их тем же rollGrid с весом только на нужный id — это тот же объект SlotSymbol
+   * игры (с ценой и знаком), а не копия.
+   */
+  const takeSym = async (id) => json(await val(`(() => {
+    const g = window.__g;
+    if (!window.__sym['${id}']) window.__sym['${id}'] = g.rollGrid((s) => (s.id === '${id}' ? 1 : 0), false, false)[0][0];
+    const s = window.__sym['${id}'];
+    return JSON.stringify({ id: s.id, price: s.price, sign: s.sign });
+  })()`));
   const waitStart = async (what) => check((await val('window.__waitStart()')) !== undefined, what);
 
   /**
@@ -514,6 +591,205 @@ try {
   })()`));
   check(after7.over === true && after7.spinning === false, 'после KABOOM isSpinning снят: сцена не заперта');
   check(after7.pot === after7.gamePot, `после KABOOM окошко снова показывает кон обычным путём: ${after7.pot}`);
+
+  // ---------- Сценарий 8: выигрыш + кубик 🎲 — Дилер садится только после каскада ----------
+  console.log('--- сценарий 8: выигрыш + кубик 🎲');
+  const diceSym = await takeSym('dice');
+  check(diceSym && diceSym.id === 'dice' && diceSym.price === 0, `кубик взят из игры: ${diceSym && diceSym.sign} цена ${diceSym && diceSym.price} (не платит)`);
+  const GRID_DICE = GRID3.map((row) => [...row]);
+  GRID_DICE[0][4] = 'dice'; // кубик в клетке вне выигравших линий: те же три паттерна
+  const before8 = json(await val(`window.__reset(${POT_BEFORE})`));
+  const gainDice = Math.round(tend3 * before8.multiplier);
+  await spinGrid(GRID_DICE);
+  await waitStart('кубик: каскад начался');
+  const during8 = json(await val(`window.__at(300).then(() => {
+    const g = window.__g;
+    return JSON.stringify({
+      calls: window.__hl.calls, spinning: g.isSpinning, shown: g.payout.pot,
+      dealing: g.isDealing, offer: Array.isArray(g.pactOffer) ? g.pactOffer.length : -1,
+      dice: window.__snd.filter((s) => s.name === 'dice').length,
+    });
+  })`));
+  check(during8.dealing === false && during8.offer === 0, `во время каскада Дилер ещё не пришёл: isDealing ${during8.dealing}, карт на сукне ${during8.offer}`);
+  check(during8.dice === 0, `во время каскада звук dice не звучит: ${during8.dice} раз`);
+  check(during8.spinning === true && during8.shown < POT_BEFORE + gainDice,
+    `показ идёт своим ходом: ${during8.calls} шага, в окошке промежуточные ${during8.shown} (итог ${POT_BEFORE + gainDice})`);
+  await val('window.__measure()');
+  const end8d = json(await val(`(() => {
+    const g = window.__g;
+    return JSON.stringify({
+      calls: window.__hl.calls, perCall: window.__hl.perCall, drawn: window.__gfx.drawn,
+      spinning: g.isSpinning, dealing: g.isDealing, offer: Array.isArray(g.pactOffer) ? g.pactOffer.length : -1,
+      shown: g.payout.pot, gamePot: g.pot,
+    });
+  })()`));
+  check(end8d.calls === 3 && end8d.perCall.join(',') === cells3.join(',') && end8d.drawn === 0,
+    `каскад доехал до финала, Дилер его не съел: ${end8d.perCall.join(' + ')}, рамок на сетке ${end8d.drawn}`);
+  check(end8d.spinning === false && end8d.shown === POT_BEFORE + gainDice && end8d.gamePot === POT_BEFORE + gainDice,
+    `после показа окошко и кон = potBefore + gain: ${end8d.shown} = ${POT_BEFORE} + ${gainDice}`);
+  check(end8d.dealing === true && end8d.offer === PACT_COUNT,
+    `Дилер пришёл только после каскада: isDealing ${end8d.dealing}, карт ${end8d.offer} (PACT_OFFER_COUNT = ${PACT_COUNT})`);
+  const snd8d = json(await val('window.__sounds()'));
+  const dice8 = snd8d.filter((s) => s.name === 'dice');
+  const coin8 = snd8d.filter((s) => s.name === 'coin');
+  const lastCoin8 = Math.max(...coin8.map((s) => s.t));
+  check(dice8.length === 1 && coin8.length > 0 && dice8[0].t >= 3 * STEP3 + HOLD3 - 40 && dice8[0].t > lastCoin8,
+    `звук dice — после последней паузы каскада: ${dice8.length} раз, ${dice8[0] ? Math.round(dice8[0].t) : '—'} мс при ${3 * STEP3 + HOLD3}, coin ${coin8.length} раз, последний ${coin8.length ? Math.round(lastCoin8) : '—'}`);
+  const refused8 = json(await val(`(() => {
+    const g = window.__g;
+    g.refusePacts();
+    return JSON.stringify({ closing: g.isDealerClosing, dealing: g.isDealing, pacts: g.pacts.length });
+  })()`));
+  check(refused8.closing === true && refused8.dealing === true && refused8.pacts === 0, 'отказ закрывает стол, а не раунд: isDealerClosing, сделок нет');
+  const after8 = json(await val(`window.__waitFor('!window.__g.isDealing && !window.__g.isDealerClosing', 8000).then(() => {
+    const g = window.__g;
+    return JSON.stringify({ dealing: g.isDealing, offer: g.pactOffer.length, pacts: g.pacts.length, pot: g.pot, spinning: g.isSpinning, canAct: g.canAct(), spinsLeft: g.spinsLeft });
+  })`));
+  check(after8.dealing === false && after8.offer === 0 && after8.pacts === 0, `после отказа Дилер ушёл без сделки: карт ${after8.offer}, сделок ${after8.pacts}`);
+  check(after8.pot === POT_BEFORE + gainDice && after8.spinning === false && after8.canAct === true,
+    `раунд идёт дальше: кон ${after8.pot}, ввод свободен ${after8.canAct}, прокруток ${after8.spinsLeft}`);
+
+  // ---------- Сценарий 9: выигрыш + паук 🕷 — укус тоже после каскада ----------
+  console.log('--- сценарий 9: выигрыш + паук 🕷');
+  const spiderSym = await takeSym('spider');
+  check(spiderSym && spiderSym.id === 'spider' && spiderSym.price === 0, `паук взят из игры: ${spiderSym && spiderSym.sign} цена ${spiderSym && spiderSym.price}`);
+  const GRID_SPIDER = GRID3.map((row) => [...row]);
+  GRID_SPIDER[0][4] = 'spider'; // один паук вне выигравших линий
+  const before9 = json(await val(`window.__reset(${POT_BEFORE})`));
+  const gainSpider = Math.round(tend3 * before9.multiplier);
+  const potWin9 = POT_BEFORE + gainSpider;
+  const bite9 = Math.min(potWin9, Math.floor(potWin9 * SPIDER_BITE * 1)); // ровно spiderBite(pot, 1) из evil.ts
+  await spinGrid(GRID_SPIDER);
+  await waitStart('паук: каскад начался');
+  const during9 = json(await val(`window.__at(500).then(() => {
+    const g = window.__g;
+    return JSON.stringify({
+      calls: window.__hl.calls, shown: g.payout.pot, gamePot: g.pot,
+      spider: window.__snd.filter((s) => s.name === 'spider').length, spinning: g.isSpinning,
+    });
+  })`));
+  const shown9two = POT_BEFORE + Math.round((symbols.seven.price + symbols.bell.price) * before9.multiplier);
+  check(during9.calls === 2 && during9.shown === shown9two,
+    `во время каскада в окошке показанные доли без укуса: ${during9.shown} = ${shown9two}, а не ${potWin9 - bite9}`);
+  check(during9.gamePot === potWin9, `на t0 кон = potBefore + gain, паук ещё не ел: ${during9.gamePot} = ${potWin9}`);
+  check(during9.spider === 0 && during9.spinning === true, `во время каскада звук spider не звучит: ${during9.spider} раз`);
+  await val('window.__measure()');
+  const end9 = json(await val(`(() => {
+    const g = window.__g;
+    return JSON.stringify({ calls: window.__hl.calls, shown: g.payout.pot, gamePot: g.pot, spinning: g.isSpinning });
+  })()`));
+  check(end9.gamePot === potWin9 - bite9 && end9.shown === potWin9 - bite9,
+    `после каскада паук съел ${bite9} (${Math.round(SPIDER_BITE * 100)}% кона): кон ${end9.gamePot} = ${potWin9} − ${bite9}, в окошке ${end9.shown}`);
+  check(end9.calls === 3 && end9.spinning === false, `показ доехал до конца до укуса: ${end9.calls} шага, ввод свободен ${!end9.spinning}`);
+  const snd9 = json(await val('window.__sounds()'));
+  const spider9 = snd9.filter((s) => s.name === 'spider');
+  check(spider9.length === 1 && spider9[0].t >= 3 * STEP3 + HOLD3 - 40,
+    `звук spider — после последней паузы каскада: ${spider9.length} раз, ${spider9[0] ? Math.round(spider9[0].t) : '—'} мс при ${3 * STEP3 + HOLD3}`);
+
+  // ---------- Сценарий 10: смена языка посреди каскада ----------
+  console.log('--- сценарий 10: смена языка посреди каскада');
+  const langBefore = json(await val("JSON.stringify({ lang: window.__lang(), store: localStorage.getItem('dolgovaya-yama-lang') })"));
+  const beforeLang = json(await val(`window.__reset(${POT_BEFORE})`));
+  const gainLang = Math.round(tend3 * beforeLang.multiplier);
+  await spinGrid(GRID3);
+  await waitStart('язык: каскад начался');
+  const during10 = json(await val(`window.__at(400).then(() => {
+    const g = window.__g;
+    const shown = g.payout.pot, pot = g.pot, calls = window.__hl.calls;
+    g.toggleLanguage(); // RU → EN посреди каскада
+    const first = { lang: window.__lang(), shown: g.payout.pot, pot: g.pot, calls: window.__hl.calls, spinning: g.isSpinning };
+    g.toggleLanguage(); // и назад, к исходному
+    const second = { lang: window.__lang(), shown: g.payout.pot, pot: g.pot, calls: window.__hl.calls, spinning: g.isSpinning };
+    return JSON.stringify({ shown, pot, calls, first, second });
+  })`));
+  check(during10.first.lang !== langBefore.lang && (during10.first.lang === 'ru' || during10.first.lang === 'en'),
+    `первое нажатие сменило язык: ${langBefore.lang} → ${during10.first.lang}`);
+  check(during10.second.lang === langBefore.lang, `второе вернуло исходный язык: ${during10.second.lang} = ${langBefore.lang}`);
+  check(during10.second.shown === during10.shown && during10.second.pot === during10.pot,
+    `смена языка не тронула числа: в окошке ${during10.second.shown} (было ${during10.shown}), кон ${during10.second.pot}`);
+  check(during10.second.spinning === true && during10.second.calls === during10.calls,
+    `каскад не сброшен: шагов ${during10.second.calls} (было ${during10.calls}), показ идёт ${during10.second.spinning}`);
+  check(during10.second.shown < POT_BEFORE + gainLang, `в окошке по-прежнему промежуточная сумма: ${during10.second.shown} < ${POT_BEFORE + gainLang}`);
+  await val('window.__measure()');
+  const end10 = json(await val(`(() => {
+    const g = window.__g;
+    return JSON.stringify({ calls: window.__hl.calls, perCall: window.__hl.perCall, shown: g.payout.pot, gamePot: g.pot, spinning: g.isSpinning, lang: window.__lang() });
+  })()`));
+  check(end10.calls === 3 && end10.perCall.join(',') === cells3.join(',') && end10.spinning === false,
+    `после смены языка каскад дошёл как обычно: ${end10.perCall.join(' + ')}, ввод свободен ${!end10.spinning}`);
+  check(end10.shown === POT_BEFORE + gainLang && end10.gamePot === POT_BEFORE + gainLang,
+    `финальный кон после смены языка: ${end10.shown} = ${POT_BEFORE} + ${gainLang}`);
+  check(end10.lang === langBefore.lang, `язык к концу сценария исходный: ${end10.lang}`);
+  // toggleLang пишет выбор в localStorage — возвращаем хранилище как было (сам язык уже исходный).
+  await val(`(() => { const raw = ${JSON.stringify(langBefore.store)}; if (raw === null) localStorage.removeItem('dolgovaya-yama-lang'); else localStorage.setItem('dolgovaya-yama-lang', raw); return 'ok'; })()`);
+
+  // ---------- Сценарий 11: кассета посреди каскада и откат после него (последний: рестарт убивает хуки показа) ----------
+  console.log('--- сценарий 11: кассета посреди каскада и откат после него');
+  const errorsBefore11 = pageErrors.length;
+  await val(`window.__reset(${POT_BEFORE})`);
+  check((await val("window.__waitFor('!window.__g.isSpinning && !window.__g.isDealing && !window.__g.isRewinding', 4000)")) !== undefined,
+    'сцена перед кассетой успокоилась: каскад, стол Дилера и перемотка закончились (иначе recordTape() упадёт)');
+  const rec11 = json(await val(`(() => {
+    const g = window.__g;
+    g.tapeState = 'blank'; g.tapeRecord = null; g.refreshHud();
+    g.recordTape();
+    const rec = g.tapeRecord;
+    return JSON.stringify({ tape: g.tapeState, saved: rec !== null, pot: rec && rec.pot, spinsLeft: rec && rec.spinsLeft, round: rec && rec.round, streak: rec && rec.streak });
+  })()`));
+  check(rec11.tape === 'recorded' && rec11.saved === true && rec11.pot === POT_BEFORE,
+    `кассета записана в чистом состоянии: ${rec11.tape}, на плёнке кон ${rec11.pot}, прокруток ${rec11.spinsLeft}`);
+  const gainTape = Math.round(tend3 * 1);
+  await spinGrid(GRID3);
+  await waitStart('кассета: каскад начался');
+  const during11 = json(await val(`window.__at(300).then(() => {
+    const g = window.__g;
+    g.useTape(); // записанная кассета — посреди показа
+    return JSON.stringify({
+      tape: g.tapeState, rewinding: g.isRewinding, spinning: g.isSpinning, pot: g.pot,
+      saved: g.tapeRecord !== null, deny: window.__snd.filter((s) => s.name === 'deny').length,
+    });
+  })`));
+  check(during11.tape === 'recorded' && during11.rewinding === false && during11.saved === true,
+    `перемотка посреди каскада отклонена: кассета ${during11.tape}, isRewinding ${during11.rewinding}, запись цела ${during11.saved}`);
+  check(during11.deny === 1, `на отказ кассета ответила deny: ${during11.deny} раз`);
+  check(during11.spinning === true && during11.pot === POT_BEFORE + gainTape,
+    `показ не откачен: isSpinning ${during11.spinning}, кон ${during11.pot} = ${POT_BEFORE} + ${gainTape}`);
+  await val('window.__measure()');
+  const end11 = json(await val(`(() => {
+    const g = window.__g;
+    return JSON.stringify({ shown: g.payout.pot, gamePot: g.pot, tape: g.tapeState, spinning: g.isSpinning });
+  })()`));
+  check(end11.shown === POT_BEFORE + gainTape && end11.spinning === false && end11.tape === 'recorded',
+    `после каскада кон финальный, кассета цела: окошко ${end11.shown}, ${end11.tape}`);
+  // Откат после конца показа. Phaser перезапускает тот же экземпляр сцены (shutdown → create), поэтому «новая сцена» —
+  // это счётчик shutdown и заново построенные части, а не новый объект window.__g. Старые хуки (__hl, __snap) после
+  // рестарта недействительны: дальше читаем только поля через window.__g.
+  const started11 = json(await val(`(() => {
+    const g = window.__g;
+    window.__oldG = g; window.__oldScreen = g.screen; window.__restartSeen = 0;
+    g.events.once('shutdown', () => { window.__restartSeen += 1; });
+    g.useTape();
+    return JSON.stringify({ rewinding: g.isRewinding, tape: g.tapeState });
+  })()`));
+  check(started11.rewinding === true, `после каскада откат пошёл: isRewinding ${started11.rewinding}`);
+  check((await val('window.__waitRestart()')) === true, 'сцена перезапустилась после отката');
+  const after11 = json(await val(`(() => {
+    const g = window.__g;
+    return JSON.stringify({
+      restarted: window.__restartSeen, freshParts: g.screen !== window.__oldScreen,
+      pot: g.pot, spinsLeft: g.spinsLeft, round: g.round, streak: g.streak,
+      tape: g.tapeState, record: g.tapeRecord === null, spinning: g.isSpinning, rewinding: g.isRewinding, shown: g.payout.pot,
+    });
+  })()`));
+  check(after11.restarted === 1 && after11.freshParts === true,
+    `сцена действительно пересоздана: shutdown ${after11.restarted} раз, части новые ${after11.freshParts}`);
+  check(after11.pot === rec11.pot && after11.spinsLeft === rec11.spinsLeft && after11.round === rec11.round && after11.streak === rec11.streak,
+    `кон, прокрутки, раунд и серия — как на записи: кон ${after11.pot}, прокруток ${after11.spinsLeft}, раунд ${after11.round}, серия ${after11.streak}`);
+  check(after11.tape === 'forSale' && after11.record === true,
+    `кассету съел автомат: состояние ${after11.tape}, записи нет ${after11.record}`);
+  check(after11.spinning === false && after11.rewinding === false && after11.shown === after11.pot,
+    `после отката сцена не заперта: isSpinning ${after11.spinning}, окошко ${after11.shown} = кон ${after11.pot}`);
+  check(pageErrors.length === errorsBefore11, `исключений страницы за сценарий кассеты нет: ${pageErrors.length - errorsBefore11}`);
 
   console.log(`итог ${ok} из ${all}`);
   ws.close();
