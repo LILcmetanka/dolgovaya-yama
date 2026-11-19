@@ -3,8 +3,9 @@
  * Запуск: node .claude/skills/next-step/atm-who-check.mjs <scratchpad>, где <scratchpad>/dist — сборка с хуком
  * window.__g (см. hookbuild.sh: «bash .claude/skills/next-step/hookbuild.sh <scratchpad> .»). Снимки и профиль Chrome — в scratchpad.
  *
- * Что проверяет банкомат: выехал и показывает долг — фишка над числом по центру, число внутри экрана,
- * монетоприёмник ниже экрана; не хватает фишек — GOOD LUCK без фишки; шестизначный долг ужимается по ширине.
+ * Что проверяет банкомат: выехал и показывает долг — число по центру экрана, значка фишки на экране нет,
+ * число внутри экрана, монетоприёмник ниже экрана; не хватает фишек — GOOD LUCK тоже по центру экрана;
+ * шестизначный долг ужимается по ширине.
  * «Кто есть кто»: когда встречены Коллектор, Дилер и все автоматы, в панели пять рядов, нет плиток «???»,
  * описания не налезают на названия следующего ряда, не влезают в соседнюю колонку и не выходят за ряд.
  * Всё повторяется на втором языке (L): русский длиннее английского, там описания переносятся на вторую строку.
@@ -21,7 +22,9 @@ const srv = spawn('python3', ['-m', 'http.server', '8770', '--directory', SP + '
 const chrome = spawn('google-chrome-stable', ['--headless=new', '--remote-debugging-port=9337', '--window-size=1280,720', '--user-data-dir=' + SP + '/prof-atm', '--no-sandbox', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=gl', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Константы из atm.ts: экран на корпусе и предел ширины числа.
-const SCREEN = { left: -80, right: 80, top: -124, bottom: -40 }; // SCREEN_Y −82 ± SCREEN_HEIGHT/2, по ширине ±SCREEN_WIDTH/2
+const SCREEN_Y = -82; // SCREEN_Y: на этой высоте стоит экран и по центру него — число и GOOD LUCK
+const SCREEN_HEIGHT = 66; // SCREEN_HEIGHT
+const SCREEN = { left: -80, right: 80, top: SCREEN_Y - SCREEN_HEIGHT / 2, bottom: SCREEN_Y + SCREEN_HEIGHT / 2 }; // ±SCREEN_WIDTH/2 по ширине
 const DEMAND_MAX_WIDTH = 136; // DEMAND_MAX_WIDTH
 const COIN_TOP = -38; // COIN_SLOT_DY −10 − COIN_BODY.height/2: верх накладки приёмника
 try {
@@ -61,28 +64,35 @@ try {
     for (let i = 0; i < 30; i++) { if (await val('window.__g.collector.atm.isOut')) break; await sleep(150); }
     await sleep(150);
     const raw = await val(`(() => {
-      const a = window.__g.collector.atm, b = a.box, d = a.demand, ch = a.chip, slot = a.slotPosition();
+      const a = window.__g.collector.atm, b = a.box, d = a.demand, slot = a.slotPosition();
       const rel = (o) => { const g = o.getBounds(); return { x: Math.round(g.x - b.x), y: Math.round(g.y - b.y), right: Math.round(g.right - b.x), bottom: Math.round(g.bottom - b.y) }; };
-      return JSON.stringify({ out: a.isOut, text: d.text, chipVisible: ch.visible, chip: rel(ch), demand: rel(d), slotY: Math.round(slot.y - b.y) });
+      // 'chip' — зеркало export const CHIP_TEXTURE из src/game/decor.ts:71; импортировать decor.ts сюда не надо.
+      const chipInBox = b.list.some((o) => o.texture && o.texture.key === 'chip');
+      // hasChip — булево, а не сам объект: JSON.stringify на Phaser.Image падает на циклических ссылках.
+      return JSON.stringify({ out: a.isOut, text: d.text, hasChip: ('chip' in a), chipInBox, demandY: Math.round(d.y), demand: rel(d), slotY: Math.round(slot.y - b.y) });
     })()`);
     return raw === undefined ? undefined : JSON.parse(raw);
   };
 
-  // 5.1: фишка над суммой по центру, число под ней и внутри экрана.
+  /** Число (или GOOD LUCK) стоит по центру экрана: середина по y — на SCREEN_Y, середина по x — на оси корпуса. */
+  const centered = (r) => r && Math.abs(r.demandY - SCREEN_Y) <= 1 && Math.abs((r.demand.x + r.demand.right) / 2) <= 1;
+
+  // 5.1: число долга по центру экрана, значка фишки на экране нет, число внутри экрана.
   const debt = await atm(30, 5000);
   await shot('atm-debt.png');
   const demandOk = debt && debt.demand.x >= SCREEN.left && debt.demand.right <= SCREEN.right && debt.demand.y >= SCREEN.top && debt.demand.bottom <= SCREEN.bottom;
   check(debt && debt.out, 'банкомат выехал к игроку');
-  check(debt && debt.text === '30' && debt.chipVisible, 'на экране долг и фишка над числом: ' + (debt && debt.text));
-  check(debt && debt.chip.bottom <= debt.demand.y - 1, 'фишка не налезает на число (низ фишки ' + (debt && debt.chip.bottom) + ' < верх числа ' + (debt && debt.demand.y) + ')');
-  check(debt && Math.abs((debt.chip.x + debt.chip.right) / 2 - (debt.demand.x + debt.demand.right) / 2) <= 1, 'фишка и число стоят по одной оси');
+  check(debt && debt.text === '30', 'на экране долг: ' + (debt && debt.text));
+  check(debt && debt.hasChip === false && !debt.chipInBox, 'значка фишки на экране нет (объекта-фишки в банкомате нет)');
+  check(centered(debt), 'число по центру экрана (y ' + (debt && debt.demandY) + ' ≈ ' + SCREEN_Y + ', центр x ' + (debt && (debt.demand.x + debt.demand.right) / 2) + ')');
   check(demandOk, 'число целиком внутри экрана ' + JSON.stringify(debt && debt.demand));
   check(debt && debt.slotY - 28 >= SCREEN.bottom, 'накладка монетоприёмника ниже экрана (верх накладки ' + (debt && debt.slotY - 28) + ' ≥ ' + SCREEN.bottom + ')');
 
-  // 5.2: не хватает фишек — GOOD LUCK, фишки над экраном нет.
+  // 5.2: не хватает фишек — GOOD LUCK по центру экрана, значка фишки тоже нет.
   const luck = await atm(30, 0);
   await shot('atm-good-luck.png');
-  check(luck && luck.text === 'GOOD LUCK' && !luck.chipVisible, 'не хватило фишек: GOOD LUCK без фишки');
+  check(luck && luck.text === 'GOOD LUCK' && luck.hasChip === false && !luck.chipInBox, 'не хватило фишек: GOOD LUCK без фишки');
+  check(centered(luck), 'GOOD LUCK по центру экрана (y ' + (luck && luck.demandY) + ' ≈ ' + SCREEN_Y + ', центр x ' + (luck && (luck.demand.x + luck.demand.right) / 2) + ')');
   check(luck && luck.demand.x >= SCREEN.left && luck.demand.right <= SCREEN.right && luck.demand.y >= SCREEN.top && luck.demand.bottom <= SCREEN.bottom, 'GOOD LUCK целиком внутри экрана');
 
   // 5.3: шестизначный долг ужимается, за ширину экрана не вылезает.
