@@ -39,6 +39,7 @@ import { phaseAt } from '../phases';
 import { skullShareOf, symbolWeightOf, type WeightContext } from '../skullShare';
 import { CENTER_X, cellX, cellY, DISPLAY, GRID_Y, PAYOUT_WINDOW, SPIN_LAMPS_Y } from '../layout';
 import { evaluateGrid, lockedColumns, ticketCells, type SpinResult } from '../patterns';
+import { revealStepMs, revealSteps, WIN_REVEAL_FADE_SHARE, WIN_REVEAL_HOLD, winGain, type RevealStep } from '../reveal';
 import {
   GRID_ROWS,
   isSkull,
@@ -110,6 +111,12 @@ export abstract class RoundScene extends MachineScene {
   private tookExtraThisSpin = false; // второе «забрать» уже потрачено (больше двух за прокрутку нельзя)
   private lastTakeAmount = 0; // сколько дало первое забирание: от него считается второе
   private bankKeptThisRound = false; // сделка №10: первый череп в этом раунде кон уже не сжёг
+  // Поколение показа выигрыша: пока идёт каскад рамок, оно не меняется; сброс состояния его двигает,
+  // и запоздавшие шаги старого показа молча гаснут (сцена перезапустилась — показывать уже нечего).
+  private revealId = 0;
+  // Сколько показано в окошке выплаты посреди каскада; null — каскада нет, окошко показывает кон как обычно.
+  // Нужно, чтобы любой refreshHud во время показа (снятие паузы, новость) не выдал финальную сумму раньше времени.
+  private revealShown: number | null = null;
 
   /** Новый забег: прокруток ещё не было, решения по перемешке не висит, сделок Дилера нет. */
   protected resetState(): void {
@@ -121,6 +128,8 @@ export abstract class RoundScene extends MachineScene {
     this.tookExtraThisSpin = false;
     this.lastTakeAmount = 0;
     this.bankKeptThisRound = false;
+    this.revealId += 1; // новый забег: недосмотренный каскад не должен вернуться в него своим колбэком
+    this.revealShown = null;
   }
 
   // ---------- Прокрутка ----------
@@ -253,6 +262,9 @@ export abstract class RoundScene extends MachineScene {
     // (обычное «кон пуст — окно гаснет» сделало бы второе забирание невидимой кнопкой).
     const extra = this.canTakeAgain() ? this.extraTake() : 0;
     if (extra > 0) this.payout.showPot(extra, this.debt);
+    // Идёт каскад рамок — окошко показывает свою долю, а не весь кон: снятие паузы или новость во время показа
+    // не должны выдать финальную сумму раньше последней рамки.
+    if (this.revealShown !== null && !this.isGameOver) this.payout.showPot(this.revealShown, this.debt);
   }
 
   /**
@@ -285,13 +297,31 @@ export abstract class RoundScene extends MachineScene {
     if (this.isBloodNext) this.sfx.play('blood');
     if (result.kind === 'skull') {
       this.onSkulls(result, isBloody);
+      this.finishSpinOutcome(grid, result); // черепам показывать нечего: итог идёт сразу, как раньше
     } else {
       this.streak += 1; // серия растёт с каждой прокруткой без паттерна из черепов, даже без выигрыша
       this.panel.pulseMultiplier(); // множитель в окошке вырос
-      if (result.kind === 'win') this.addToPot(result, multiplier, isBloody);
-      else this.feedPiggy(multiplier);
-      this.feedSpiders(grid);
+      if (result.kind === 'win') {
+        // Выигрыш показывается каскадом рамок, а остальной итог ждёт конца показа (finishSpinOutcome в колбэке).
+        this.addToPot(result, multiplier, isBloody, () => {
+          this.feedSpiders(grid);
+          this.finishSpinOutcome(grid, result);
+        });
+      } else {
+        this.feedPiggy(multiplier);
+        this.feedSpiders(grid);
+        this.finishSpinOutcome(grid, result);
+      }
     }
+  }
+
+  /**
+   * Всё, что идёт после того, как кон пополнен и выигрыш показан: короны, клевер и джекпот, ржавчина, ачивки,
+   * сброс риск/молот/фарт, предметы у экрана, HUD, кубик (сделки Дилера) или обычное продолжение раунда.
+   * У выигрыша это зовётся из колбэка каскада рамок — порядок тот же, что был, сдвинут только момент
+   * (раньше — сразу после addToPot, теперь — после последней рамки).
+   */
+  private finishSpinOutcome(grid: Grid, result: SpinResult): void {
     this.collectBonuses(grid, result);
     this.rustAfterSpin(grid); // ржавый автомат: столбец может заржаветь к следующей прокрутке
     // Ачивки этой прокрутки проверяем до того, как гаснут риск, молот и фарт: они работали на неё, и «Неа»,
@@ -537,9 +567,11 @@ export abstract class RoundScene extends MachineScene {
 
   /**
    * Выигрыш паттернов (с амулетами) × множитель серии × множитель амулетов и автомата идёт на кон.
-   * Колокольчик добавляет прокрутки (не выше потолка раунда).
+   * Колокольчик добавляет прокрутки (не выше потолка раунда). Кон прибавляется сразу (t0): числа те же, что были,
+   * а вот показ теперь поэтапный — рамки загораются по одной (showWinReveal), и done() зовётся, когда каскад кончился.
+   * Звук итога здесь не играет: по звуку на каждый паттерн и один итоговый — в каскаде, в самом его конце.
    */
-  private addToPot(result: SpinResult, multiplier: number, isBloody: boolean): void {
+  private addToPot(result: SpinResult, multiplier: number, isBloody: boolean, done: () => void): void {
     const ids = this.amuletIds();
     const win = amuletPatternWin(result.hits, ids);
     const factor =
@@ -548,7 +580,8 @@ export abstract class RoundScene extends MachineScene {
       machineWinFactor(this.machineId) *
       (this.itemEffects.risk ? RISK_WIN_FACTOR : 1) * // риск: выигрыш ×10 (видно в подсказке как ×10)
       pactEffects(this.pacts, this.round).winMul; // сделка «выигрыш паттернов +N%» — только паттерны, не «забрать»
-    const gain = Math.round(win * multiplier * factor);
+    const gain = winGain(result.hits, ids, multiplier, factor); // та же формула, что в показе по шагам (revealSteps)
+    const potBefore = this.pot; // от него окошко выплаты показывает, как кон растёт по шагам
     this.pot += gain;
     // Колокольчик: прокрутки, но не выше потолка. Показываем, сколько добавилось на самом деле: у потолка бывает и 0.
     const extra = spinsAfterBonus(this.spinsLeft, bellSpins(result.hits, ids)) - this.spinsLeft;
@@ -558,12 +591,95 @@ export abstract class RoundScene extends MachineScene {
       this.panel.winkSpinLamps(this.spinsLeft);
     }
     for (const id of amuletsOnWin(result.hits, ids)) this.amuletRack.trigger(id);
-    this.screen.highlightWin(result.hits);
-    this.sfx.play(gain >= this.debt / 2 ? 'bigWin' : 'win'); // крупный выигрыш — громче и длиннее
-    this.effects.popup(formatWin(win, multiplier, factor, gain), GOLD_TEXT);
-    this.effects.burstFromGrid(gain);
     this.screen.flashLamps(LAMP_GOLD, WIN_LAMPS_TIME);
-    this.payout.addWin(this.pot, this.debt);
+    // Каскад рамок: по шагу на паттерн. Он показывает то, что уже начислено, и в конце зовёт done().
+    this.showWinReveal(revealSteps(result.hits, ids, multiplier, factor), win, multiplier, factor, gain, potBefore, done);
+  }
+
+  /**
+   * Поэтапный показ выигравших паттернов: каждая линия (диагональ, фигура) загорается своей рамкой, попапом «+дельта»
+   * и прибавкой в окошке выплаты — как в Clover Pit (DONTLIKE 19.11, «Улучшения» п.1). Рамки НЕ копятся: линия
+   * загорелась, погасла, загорелась следующая. Каждый шаг сам снимает прошлую рамку (SlotScreen.startWinStep), а свою
+   * тушит по alpha за последние WIN_REVEAL_FADE_SHARE шага — к началу следующего шага на сетке пусто.
+   *
+   * Звук: короткий «coin» на каждый паттерн (громкости на вызов у Sfx нет, поэтому coin, а не win) и один итоговый
+   * win/bigWin после последней паузы — там же, где «+gain» и брызги фишек.
+   *
+   * В деньги и счётчики здесь не пишется ничего: кон уже начислен в addToPot (t0), окошко выплаты получает только показ
+   * (showPot), а начислять в конце (payout.addWin) — это тоже показ, а не деньги. Настоящее начисление и всё, что
+   * после него, — в finishSpinOutcome, её зовёт колбэк в самом конце. Не переносить сюда collectBonuses,
+   * rustAfterSpin и checkAchievements: числа должны остаться прежними.
+   *
+   * isSpinning держится на весь показ — поэтому рычаг, «забрать» и кассета до конца каскада не срабатывают.
+   * Шаги идут по таймерам сцены (пауза их замораживает), и каждый проверяет своё поколение (revealId) и isGameOver:
+   * запоздавший шаг старого показа после сброса или KABOOM молча гаснет.
+   */
+  private showWinReveal(
+    steps: RevealStep[],
+    win: number,
+    multiplier: number,
+    factor: number,
+    gain: number,
+    potBefore: number,
+    done: () => void,
+  ): void {
+    if (steps.length === 0) {
+      // Страховка: показывать нечего (пустой каскад) — не запираем ввод и сразу отдаём итог. Без неё цикл шагов
+      // пуст, а ввод всё равно стоял бы до конца паузы WIN_REVEAL_HOLD.
+      done();
+      return;
+    }
+    const id = this.revealId; // поколение показа: сброс состояния его сменит, и старые шаги замолчат
+    const stepMs = revealStepMs(steps.length, this.isFreeSpinNow);
+    const hold = this.isFreeSpinNow ? 0 : WIN_REVEAL_HOLD; // бесплатная прокрутка идёт сама — лишней паузы нет
+    // Тушение рамки: последние 45% шага. У последнего шага оно тянется ещё и на паузу hold — рамка тает до итога.
+    const fadeMs = stepMs * WIN_REVEAL_FADE_SHARE;
+    const fadeDelay = stepMs - fadeMs;
+    this.isSpinning = true; // каскад — часть прокрутки: ввод закрыт до его конца (canAct)
+    steps.forEach((step, index) => {
+      const tail = index === steps.length - 1 ? hold : 0; // последней рамке — ещё и пауза перед итогом
+      this.time.delayedCall(index * stepMs, () => {
+        if (this.revealId !== id || this.isGameOver) return;
+        this.showWinStep(step, potBefore, fadeDelay, fadeMs + tail);
+      });
+    });
+    // Последний шаг тоже держится свой шаг, потом пауза hold — и итог.
+    this.time.delayedCall(steps.length * stepMs + hold, () => {
+      if (this.revealId !== id) return; // сцена перезапустилась: показ не наш, снимать нечего
+      if (this.isGameOver) {
+        this.revealShown = null; // KABOOM: каскад снят, окошко снова живёт обычным путём
+        this.isSpinning = false; // раунд кончился на KABOOM, но не запираем сцену: если забег продолжится без resetState, ввод свободен
+        this.refreshHud();
+        return;
+      }
+      this.sfx.play(gain >= this.debt / 2 ? 'bigWin' : 'win'); // итог — один раз и в конце, а не на t0
+      this.effects.popup(formatWin(win, multiplier, factor, gain), GOLD_TEXT);
+      this.effects.burstFromGrid(gain);
+      this.payout.addWin(this.pot, this.debt); // в окошке — настоящий кон: он равен potBefore + последнего shown
+      this.screen.clearHighlights(); // последняя рамка уже погасла твином — снимаем её совсем, чтобы не висела
+      this.revealShown = null; // каскад кончился: окошко снова показывает кон обычным путём
+      this.isSpinning = false;
+      this.refreshHud();
+      done();
+    });
+  }
+
+  /**
+   * Один шаг каскада: рамка паттерна, его прибавка попапом в центре фигуры и новое число в окошке выплаты.
+   * Прошлую рамку снимает startWinStep, а своя гаснет за fadeDuration мс через fadeDelay — горит только этот паттерн.
+   * Звук на шаг один: короткий «coin».
+   */
+  private showWinStep(step: RevealStep, potBefore: number, fadeDelay: number, fadeDuration: number): void {
+    this.screen.startWinStep(step.hit); // прошлые рамки сняты: горит только этот паттерн
+    this.sfx.play('coin');
+    const cols = step.hit.cells.map(([, col]) => cellX(col));
+    const rows = step.hit.cells.map(([row]) => cellY(row));
+    const x = (Math.min(...cols) + Math.max(...cols)) / 2; // попап — в центр фигуры
+    const y = (Math.min(...rows) + Math.max(...rows)) / 2;
+    if (step.delta > 0) this.effects.popupAt(x, y - 30, `+${step.delta}`, GOLD_TEXT); // округление может дать и 0
+    this.revealShown = potBefore + step.shown; // только показ: в состояние не пишем
+    this.payout.showPot(this.revealShown, this.debt);
+    this.screen.fadeWinHighlights(fadeDelay, fadeDuration); // последние 45% шага рамка тает в ноль
   }
 
   /** Прокрутка без выигрыша: копилка кладёт на кон немного фишек (× множитель). */

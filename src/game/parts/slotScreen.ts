@@ -623,9 +623,34 @@ export class SlotScreen {
    * (это вызывают перед каждой прокруткой — RoundScene и CollectorScene), гаснет только цвет удара.
    */
   clearHighlights(): void {
-    this.cellHighlights.clear();
-    for (const slot of this.patternSlots) if (this.isOpen(slot.id)) slot.frame.setStrokeStyle(PATTERN_FRAME_LINE, PATTERN_FRAME_DIM);
+    this.clearWinFrames();
     this.isPatternNewsShown = false; // новая прокрутка — снова есть право на одну новость о паттерне
+  }
+
+  /**
+   * Каскад выигрыша, новый шаг: прошлую рамку снимаем (она уже погасла твином, а эту подстраховку держит killTweensOf),
+   * графику возвращаем в alpha 1 и рисуем только этот паттерн. Флаг новости о паттерне не трогаем: он живёт на всю
+   * прокрутку, иначе на каждом шаге вылезала бы своя новость.
+   */
+  startWinStep(hit: PatternHit): void {
+    this.clearWinFrames();
+    this.highlightWin([hit]);
+  }
+
+  /**
+   * Рамка шага гаснет: alpha графики 1 → 0 за duration мс, начиная через delay. Гаснет только сетка; схема на стекле
+   * меняет цвет удара на спокойный в начале следующего шага (её собственные твины не трогаем — их ведёт revealPattern).
+   */
+  fadeWinHighlights(delay: number, duration: number): void {
+    this.scene.tweens.killTweensOf(this.cellHighlights);
+    this.scene.tweens.add({ targets: this.cellHighlights, alpha: 0, delay, duration, ease: 'Quad.easeIn' });
+  }
+
+  /** Снять рамки выигрыша с сетки: пустая графика, alpha 1, у схем на стекле — спокойный цвет вместо цвета удара. */
+  private clearWinFrames(): void {
+    this.scene.tweens.killTweensOf(this.cellHighlights); // недогасший твин прошлого шага не должен тянуть alpha дальше
+    this.cellHighlights.clear().setAlpha(1);
+    for (const slot of this.patternSlots) if (this.isOpen(slot.id)) slot.frame.setStrokeStyle(PATTERN_FRAME_LINE, PATTERN_FRAME_DIM);
   }
 
   /** Огоньки бегут по лампочкам: горит каждая третья, огонёк сдвигается раз в lampSpeed тиков. */
