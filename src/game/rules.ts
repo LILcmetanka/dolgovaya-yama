@@ -210,7 +210,7 @@ export const FAILED_DEBT_ROUND_STEP = 1;
 /** На сколько уменьшается счёт, когда последний шанс выигран: магазин прибавит единицу — счёт на один долг назад. */
 export const WON_DEBT_ROUND_STEP = 2;
 
-/** Долг раунда N = DEBT_START × DEBT_GROWTH^(N−1), округлённый до DEBT_ROUND_TO: 30, 50, 100, 170, 310… */
+/** Долг раунда N = DEBT_START × DEBT_GROWTH^(N−1), округлённый до DEBT_ROUND_TO: 150, 540, 1940, 7000, 25 190… */
 export function debtForRound(round: number): number {
   const exact = DEBT_START * DEBT_GROWTH ** (round - 1);
   return Math.round(exact / DEBT_ROUND_TO) * DEBT_ROUND_TO;

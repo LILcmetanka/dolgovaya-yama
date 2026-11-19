@@ -26,6 +26,7 @@
 //   SIM_PHASE_SKULL=1.2 — старый множитель веса черепа в фазе 2 (phase2SkullFactor до правки)
 //   SIM_LEGACY=1 — все четыре старые ручки сразу: вся игра-правила до замечания 19 (доля 21,5%, фаза ×1,2,
 //                  шаг 2, без +1 прокрутки). Таблицу замера в DESIGN/HANDOFF собирают из отдельных флагов.
+//   SIM_TAKE_POT=<фишки> — порог «забрать» кон (политика бота, не правило игры): по умолчанию 180, как решено 19.11.
 // streakReset — не переменная: это второй вариант в обычном прогоне, BASE_STRATEGY + { streakReset: true } («серия
 // сгорает в конце раунда», в коде — переходит). Числа из двух строк одного прогона сравнимы между собой.
 //
@@ -36,7 +37,8 @@
 // (последний шанс живёт в last-chance-sim.mjs). Правила и числа — из rules, patterns, items, amulets, evil,
 // bonus, phases, machines, drum, dealerGame, save; копий чисел в симуляторе нет.
 // Политика игрока (BASE_STRATEGY) — это не правила игры, а выбор за игрока: «забрать», когда кон добирает долг
-// или набирает долю долга; риск, молот, свеча и фарт — по своим порогам; бусты символов, перемешка и подмена —
+// или дорос до абсолютного порога SIM_TAKE_POT (180 фишек; при долге 10к+ доля долга не набиралась никогда и бот
+// тянул забег до предохранителя); риск, молот, свеча и фарт — по своим порогам; бусты символов, перемешка и подмена —
 // пока на долг не хватает; Дилер — сделка с приоритетом «шаг ×2 → раунд без черепов → билеты», иначе отказ; покупки в магазине по порядку «кассета →
 // билеты за фишки под нужный амулет → амулеты по AMULET_POWER → предметы по ITEM_ORDER → барабан» с резервом reserveShare долга
 // (ряды витрины пополняются после покупки, как ShopScene.refillRow); автомат игрок не выбирает —
@@ -223,9 +225,29 @@ function ticketPrice(balance, bought, mul = 1) {
   return I.roundPrice(bank * ticketShareOf(bought), mul);
 }
 
+/**
+ * Порог «забрать» в фишках — абсолютный, а не доля долга (правка 19.11.2026, DONTLIKE.md, «Переделать (баланс долгов)» п.3).
+ * Раньше бот забирал кон при pot ≥ takeShare (0,5) × долга: при долге 10к такой кон не набирался никогда, бот
+ * накручивал бесплатные прокрутки до предохранителя, забег тянулся 294 минуты, и замеры на жёстких кривых врали.
+ * Живой игрок забирает, когда на коне есть заметная сумма, а не «половина долга». Ориентир автора — 150–200;
+ * SIM_TAKE_POT=<целое> меняет порог для замера, не трогая файл.
+ * Цифра 2,3% (150 ×3,6, сид 1) — нижняя граница, а не потолок: в ветке «долг уже покрыт банком» бот берёт кон
+ * по 180 и режет серию, хотя человек с запасом играет мягче: копит кон дольше и уходит дальше.
+ */
+export const SIM_TAKE_POT = takePotFromEnv() ?? 180;
+
+/** Порог «забрать» из SIM_TAKE_POT (целое больше нуля); пусто — порог по умолчанию. */
+function takePotFromEnv() {
+  const raw = process.env.SIM_TAKE_POT;
+  if (raw === undefined || raw === '') return null;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) throw new Error(`SIM_TAKE_POT должен быть целым числом больше нуля, получено «${raw}»`);
+  return value;
+}
+
 /** Политика игрока (не правила игры). */
 export const BASE_STRATEGY = {
-  takeShare: 0.5, shieldShare: 0.25, boostShare: 0.25, reserveShare: 0.5, drumShare: 0.5,
+  shieldShare: 0.25, boostShare: 0.25, reserveShare: 0.5, drumShare: 0.5,
   rustSkulls: 2,
   // Кассета (шаг 45): когда покупать ('none' | 'first' — до амулетов | 'after'), сколько за забег ('one' | 'always'),
   // когда записывать и когда откатываться.
@@ -469,6 +491,7 @@ function startRound(s, st, g) {
   g.roundPaid = 0;
   I.clearRoundEffects(s.effects); // бусты и флаги прошлого раунда не переходят в новый
   s.slotBase = I.activeSlotEffects(s.effects).length; // щит и ×3 переходят раунд: столбик с этого начался
+  g.roundEarnStart = s.earned; // доход раунда считается от «набрано» на входе в раунд
   check(s, g);
 }
 
@@ -759,7 +782,12 @@ function beforeSpin(s, st, g) {
   if (s.pot >= st.boostShare * need && s.effects.tripleTakes === 0 && useSlot('triple')) s.effects.tripleTakes += 1;
   if (s.spinsLeft === 1 && s.balance + s.pot < need && !I.isItemOn('cigarette', s.effects)
     && s.spinsLeft < R.MAX_SPINS_PER_ROUND && useSlot('cigarette')) s.spinsLeft = R.spinsAfterBonus(s.spinsLeft, I.CIGARETTE_SPINS);
-  let take = s.balance < need ? s.balance + s.pot >= need : s.pot >= st.takeShare * need;
+  // «Забрать»: пока на руках меньше долга — забираем, как только баланс с коном закрывает его (как в игре);
+  // когда долг уже покрыт — забираем кон от абсолютного порога SIM_TAKE_POT. Второй случай и есть правка 19.11:
+  // раньше порог был 0,5 × долга, и при долге 10к+ кон не набирался никогда — бот крутил фриспины до предохранителя
+  // (забег 294 минуты), и замеры на жёстких кривых врали.
+  // Ржавая смерть отдельно: столбец с черепами сжигает кон, его тоже забираем при любом пороге.
+  let take = s.balance < need ? s.balance + s.pot >= need : s.pot >= SIM_TAKE_POT;
   if (s.rustyColumn !== null && s.lastGrid) {
     const skulls = s.lastGrid.filter((line) => R.isSkull(line[s.rustyColumn])).length;
     if (skulls >= st.rustSkulls) take = true;
@@ -795,7 +823,9 @@ function record(s, g) {
   g.tape = 'recorded'; g.record = clone(runSave(s));
   // Счётчики прокруток вместе со снимком: после отката раунд играется заново, и списанные до отката прокрутки
   // не должны дважды попадать в «прокруток за забег», «макс. за раунд» и долю раундов сверх потолка.
-  g.recordCounters = { roundSpins: g.roundSpins, spins: g.spins, paidSpins: g.paidSpins, roundPaid: g.roundPaid, firstSpinMult: g.firstSpinMult, firstSpinRounds: g.firstSpinRounds };
+  // roundEarnStart — «набрано» на входе в раунд: без него после отката «доход раунда» в balanceRows считался
+  // от начала заново сыгранного раунда и врал в меньшую сторону.
+  g.recordCounters = { roundSpins: g.roundSpins, spins: g.spins, paidSpins: g.paidSpins, roundPaid: g.roundPaid, firstSpinMult: g.firstSpinMult, firstSpinRounds: g.firstSpinRounds, roundEarnStart: g.roundEarnStart };
   g.time += SECONDS.rec; g.recs += 1;
 }
 
@@ -829,7 +859,7 @@ function rewind(s, g) {
   back.insuranceSaves = Math.max(saved.round === s.round ? s.insuranceSaves : 0, saved.insuranceSaves ?? 0);
   g.tape = 'forSale'; g.record = null; g.time += SECONDS.rewind; g.rewinds += 1;
   Object.assign(s, back);
-  Object.assign(g, g.recordCounters ?? {}); // счётчики прокруток — как на записи
+  Object.assign(g, g.recordCounters ?? {}); // счётчики прокруток и начало дохода раунда (roundEarnStart) — как на записи
   g.recordCounters = null;
   g.ticketsLedger = back.tickets; // билеты вернулись к записи — сверка табло начинается заново
   s.rustyColumn = null; s.lastGrid = null; s.freeSpins = 0; // заморозок и прошлой сетки в записи нет
@@ -897,9 +927,12 @@ function playRound(s, st, g) {
 function freeSlot(s) { return s.shelf.indexOf(null); }
 
 /** Долг нового раунда: debtForRound + разовый «следующий долг +20%» (№12) — как ShopScene.takeDebtForRound. */
-function takeDebtForRound(s) {
+function takeDebtForRound(s, g) {
   const debt = D.pactDebt(R.debtForRound(s.round), s.debtNextMul);
   s.debtNextMul = 1; // множитель действует ровно на один долг
+  // Замер баланса долгов: у последней оплаты теперь известен настоящий следующий долг (после последнего шанса
+  // раунд может откатиться, и следующий долг будет тем же — debtForRound(round + 1) в collector() бы соврал).
+  if (g.lastBalanceRow) { g.lastBalanceRow.nextDebt = debt; g.lastBalanceRow = null; }
   return debt;
 }
 
@@ -912,14 +945,14 @@ function openShop(s, st, g, econ) {
     g.shopsClosed += 1;
     g.time += SECONDS.shop;
     s.round += 1;
-    s.debt = takeDebtForRound(s); // «следующий долг +20%» из сделки №12, как ShopScene.takeDebtForRound
+    s.debt = takeDebtForRound(s, g); // «следующий долг +20%» из сделки №12, как ShopScene.takeDebtForRound
     check(s, g);
     return;
   }
   g.time += SECONDS.shop;
   g.shops += 1;
   s.round += 1;
-  s.debt = takeDebtForRound(s); // долг не зависит от автомата (characterDebt больше нет)
+  s.debt = takeDebtForRound(s, g); // долг не зависит от автомата (characterDebt больше нет)
   const closed = s.round - 1; // closedDebts(): раунд уже увеличен
   check(s, g);
   // Скидка №2 (ShopScene.shopDiscount) и «страховка вдвое дороже за копию» (№5): магазин открывается после раунда,
@@ -1071,6 +1104,13 @@ function collector(s, g) {
   g.time += SECONDS.collector;
   if (s.balance >= s.debt) {
     s.balance -= s.debt;
+    // Замер баланса долгов (правка 19.11): доход раунда — всё, что пришло на табло с входа в раунд до этой оплаты
+    // (забранный кон, «Проценты», страховка, барабан, сделки); остаток — что осталось сразу после оплаты, до
+    // «Процентов» этого же шага. nextDebt проставит openShop: следующий долг знает только он (после последнего
+    // шанса счёт может откатиться, и следующий долг будет тем же — debtForRound(round + 1) тут соврёт).
+    const row = { round: s.round, debt: s.debt, income: s.earned - g.roundEarnStart, leftover: s.balance, nextDebt: null };
+    g.balanceRows.push(row);
+    g.lastBalanceRow = row;
     const interest = A.interestCoins(s.balance, ids(s));
     if (interest > 0) earn(s, g, interest); // проценты — доход забега (CollectorScene.payDebt), не штраф
     gainTickets(s, g, 'debt', A.TICKETS_PER_DEBT);
@@ -1141,6 +1181,10 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon()) {
     ticketsBought: 0, // билеты за фишки (шаг 13): сколько куплено за забег — от него растёт цена следующего
     itemSlotsDenied: 0, // сколько раз предмет не включился: все 4 места в столбике заняты
     roundPaid: 0,
+    // Замер баланса долгов (правка 19.11): «набрано» на входе в раунд и строка на каждый отданный долг.
+    // Строка: раунд, долг, доход раунда (приход фишек на табло за раунд), остаток после оплаты (до «Процентов»),
+    // следующий долг (его проставляет openShop). Печатает summarizeRuns/report.
+    roundEarnStart: 0, balanceRows: [], lastBalanceRow: null,
     firstSpinMult: 0, firstSpinRounds: 0, // средний множитель на первой платной прокрутке раунда (перенос серии)
     ticketsLedger: 0, ticketIncome: { debt: 0, early: 0, scatter: 0, jackpot: 0, drum: 0, pact: 0 }, // доход по источникам
     pactsOffered: 0, pactsTaken: 0, pactsRefused: 0, shopsClosed: 0, pactsById: {}, doubleTakes: 0, amuletsFree: 0, // сделки Дилера: сколько и каких взято
@@ -1181,10 +1225,15 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon()) {
   }
   g.maxClosed = Math.max(g.maxClosed, s.round - 1);
   return {
+    // balanceRows и roundEarnStart приезжают из ...g — по ним summarizeRuns строит «баланс долгов»;
+    // явно повторяем balanceRows, чтобы сводка не осталась без строк, если состав g когда-нибудь сократят.
+    balanceRows: g.balanceRows, roundEarnStart: g.roundEarnStart,
     closed: s.round - 1, guardHit: guard >= 400, ...g, record: undefined,
     // Итоги цели — с последнего состояния забега (после отката кассетой они тоже с записи).
     earned: s.earned, peakBalance: s.peakBalance, millionRound: s.millionRound, millionSeconds: s.millionSeconds,
     recordRound: s.recordRound, recordSeconds: s.recordSeconds,
+    // Чем забег кончился — для разбора победителей: раунд, долг, баланс, амулеты (копии не важны, берём id).
+    finalRound: s.round, finalDebt: s.debt, finalBalance: s.balance, finalAmulets: A.amuletIdsFrom(s.amuletCounts),
   };
 }
 
@@ -1194,6 +1243,38 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon()) {
 function medianOf(list) {
   const sorted = [...list].sort((a, b) => a - b);
   return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+}
+
+/**
+ * Баланс долгов (правка 19.11, DONTLIKE.md): строки g.balanceRows — по одной на отданный долг (раунд, долг,
+ * доход раунда, остаток после оплаты, следующий долг). Считаем медианы по раундам: «долг / доход раунда»
+ * (ниже 0,9 — подушка копится, долг не жмёт) и «остаток после оплаты / следующий долг» (выше 15% — подушка).
+ */
+function debtBalance(rows) {
+  const byRound = new Map();
+  for (const row of rows) {
+    if (!(row.income > 0) || !(row.nextDebt > 0)) continue; // доля от нуля — не число, такую строку пропускаем
+    if (!byRound.has(row.round)) byRound.set(row.round, []);
+    byRound.get(row.round).push(row);
+  }
+  const first5 = rows.filter((row) => row.round <= 5 && row.income > 0 && row.nextDebt > 0);
+  const rounds = [...byRound.keys()].sort((a, b) => a - b).slice(0, 8).map((round) => {
+    const list = byRound.get(round);
+    return {
+      round,
+      rows: list.length,
+      debt: medianOf(list.map((row) => row.debt)),
+      income: medianOf(list.map((row) => row.income)),
+      ratio: medianOf(list.map((row) => row.debt / row.income)),
+      leftoverShare: medianOf(list.map((row) => row.leftover / row.nextDebt)),
+    };
+  });
+  return {
+    rounds,
+    ratioFirst5: medianOf(first5.map((row) => row.debt / row.income)),
+    leftoverFirst5: medianOf(first5.map((row) => row.leftover / row.nextDebt)),
+    paidRows: rows.length,
+  };
 }
 
 /** Сводка по готовым забегам. */
@@ -1214,6 +1295,7 @@ export function summarizeRuns(runs) {
     for (const [name, count] of Object.entries(run.violations)) violations[name] = (violations[name] ?? 0) + count;
     for (const [name, count] of Object.entries(run.safeguards)) safeguards[name] = (safeguards[name] ?? 0) + count;
   }
+  const debt = debtBalance(runs.flatMap((r) => r.balanceRows ?? []));
   const income = (key) => mean((r) => r.ticketIncome[key]);
   // Забеги, дошедшие до цели: до них — медиана номера раунда и минут, когда 1 000 000 перевалил (millionRound).
   const won = runs.filter((r) => r.earned >= GOAL);
@@ -1272,6 +1354,9 @@ export function summarizeRuns(runs) {
     guardStops: mean((r) => r.guardStops), guardRuns: runs.filter((r) => r.guardStops > 0).length / runs.length,
     // Режимы прокрутки (шаг 70): средние счётчики и доля спокойных среди платных.
     normalSpins: mean((r) => r.normalSpins),
+    // Баланс долгов (правка 19.11): долг / доход раунда и остаток после оплаты к следующему долгу.
+    debtRounds: debt.rounds, debtRatioFirst5: debt.ratioFirst5, debtLeftoverFirst5: debt.leftoverFirst5,
+    debtPaidRows: debt.paidRows,
     violations,
     safeguards,
   };
@@ -1334,6 +1419,16 @@ export function report(name, x) {
     ? ` | рекорд ${chips(RECORD)}: взяли ${pct(x.recordShare)} (${x.recordRuns} из ${x.runs}), у дошедших: раунд мед ${f(x.recordRoundMedian, 0)}, минут мед ${f(x.recordMinutesMedian, 1)}`
     : '';
   console.log(`${''.padEnd(44)} цель ${chips(GOAL)}: набрано за забег мед ${chips(x.earnedMedian)} (среднее ${chips(x.earnedMean)}), пик табло мед ${chips(x.peakBalanceMedian)}, 1 млн взяли ${pct(x.victory)} (${x.wonRuns} из ${x.runs}) | у дошедших: раунд мед ${f(x.millionRoundMedian, 0)}, минут мед ${f(x.millionMinutesMedian, 1)}${recordLine}`);
+  // Баланс долгов (правка 19.11): долг / доход раунда и остаток после оплаты к следующему долгу — по раундам 1–5.
+  // Пустые данные печатаем как «—»: иначе 0 × 100 рисовал бы NaN и ошибку в balanceRows никто бы не заметил.
+  const rounds = (x.debtRounds ?? []).slice(0, 5).map((row) => `р${row.round} ${f(row.ratio, 2)} (${chips(row.debt)}/${chips(row.income)})`).join(', ');
+  const debtEmpty = !(x.debtPaidRows > 0) || !Number.isFinite(x.debtLeftoverFirst5);
+  if (debtEmpty && x.runs > 0) {
+    console.warn(`долги: нет строк баланса при ${x.runs} забегах — проверь, что runGame отдаёт balanceRows (до правки 19.11 их не было)`);
+  }
+  const debtRatioText = debtEmpty ? '—' : f(x.debtRatioFirst5, 2);
+  const debtLeftText = debtEmpty ? '—' : `${f(x.debtLeftoverFirst5 * 100, 1)}%`;
+  console.log(`${''.padEnd(44)} долги: ${rounds || '—'} | мед «долг / доход» 1–5 ${debtRatioText} | остаток после оплаты к следующему долгу мед ${debtLeftText} (раунды 1–5, оплат ${x.debtPaidRows}) | «забрать» при коне от ${SIM_TAKE_POT}`);
 }
 
 /**

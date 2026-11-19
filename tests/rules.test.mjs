@@ -50,6 +50,23 @@ test('провал последнего шанса не растит долг: �
   }
 });
 
+test('долг раунда: формула от ручек gameConfig, округление до 10, рост строгий', async () => {
+  const { GAME_CONFIG } = await import('../src/game/gameConfig.ts');
+  // Проверяем формулу, а не конкретные числа: ручки баланса меняются (19.11.2026 старт 30 → 150, рост 1,8 → 3,6),
+  // а правило «долг раунда N = старт × рост^(N−1), округлённый до 10» остаётся.
+  for (let round = 1; round <= 12; round++) {
+    const exact = GAME_CONFIG.debtStart * GAME_CONFIG.debtGrowth ** (round - 1);
+    const expected = Math.round(exact / RULES.DEBT_ROUND_TO) * RULES.DEBT_ROUND_TO;
+    assert.equal(RULES.debtForRound(round), expected, `раунд ${round}: долг = старт × рост^(N−1), округлённый до 10`);
+    assert.equal(RULES.debtForRound(round) % RULES.DEBT_ROUND_TO, 0, `раунд ${round}: долг кратен ${RULES.DEBT_ROUND_TO}`);
+  }
+  // Рост строгий: долг растёт каждый раунд. Во сколько именно раз — это решение баланса (ручка debtGrowth в
+  // gameConfig), а не свойство формулы, поэтому порог «не меньше ×1,5» здесь не проверяем.
+  for (let round = 1; round <= 11; round++) {
+    assert.ok(RULES.debtForRound(round + 1) > RULES.debtForRound(round), `раунд ${round}: долг растёт`);
+  }
+});
+
 test('мягкий сброс серии: череп оставляет треть, но не ниже серии 0 (×1)', () => {
   assert.equal(RULES.streakAfterSkull(9), 3, '×10 → ×4');
   assert.equal(RULES.streakAfterSkull(3), 1, '×4 → ×2');
