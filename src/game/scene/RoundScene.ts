@@ -2,6 +2,7 @@ import type Phaser from 'phaser';
 import {
   amuletPatternWin,
   amuletsOnWin,
+  bellSkullDelta,
   bellSpins,
   BONES_BONUS,
   earlyPayTickets,
@@ -114,6 +115,8 @@ export abstract class RoundScene extends MachineScene {
   private tookExtraThisSpin = false; // второе «забрать» уже потрачено (больше двух за прокрутку нельзя)
   private lastTakeAmount = 0; // сколько дало первое забирание: от него считается второе
   private bankKeptThisRound = false; // сделка №10: первый череп в этом раунде кон уже не сжёг
+  // Колокольчик: сколько к доле черепов набежало срабатываниями 🔔 в этом раунде (amulets.bellSkullDelta).
+  private bellSkull = 0;
   // Поколение показа выигрыша: пока идёт каскад рамок, оно не меняется; сброс состояния его двигает,
   // и запоздавшие шаги старого показа молча гаснут (сцена перезапустилась — показывать уже нечего).
   private revealId = 0;
@@ -133,6 +136,7 @@ export abstract class RoundScene extends MachineScene {
     this.tookExtraThisSpin = false;
     this.lastTakeAmount = 0;
     this.bankKeptThisRound = false;
+    this.bellSkull = 0; // колокольчик: в новом забеге 🔔 ещё не срабатывал
     this.revealId += 1; // новый забег: недосмотренный каскад не должен вернуться в него своим колбэком
     this.revealShown = null;
     this.fadeWinPopup(); // попап прошлого показа не должен пережить сброс забега
@@ -208,14 +212,15 @@ export abstract class RoundScene extends MachineScene {
   /**
    * Всё, от чего зависит вес символа, плюс поправки сделок: №11 — выбранный символ (+2 / −0,5), доля черепов (±):
    * множитель веса черепа выводим из доли, которую видит игрок (dealerGame.skullShareWeightMul), поэтому прокрутка
-   * и плашка «💀 N%» показывают одно число.
+   * и плашка «💀 N%» показывают одно число. Колокольчик добавляет к той же доле свою поправку за раунд (поле bellSkull,
+   * его считает amulets.bellSkullDelta).
    */
   protected override weightContext(): WeightContext {
     const base = super.weightContext();
     const effects = pactEffects(this.pacts, this.round);
     const withLuck: WeightContext = effects.symbolLuck ? { ...base, symbolLuck: effects.symbolLuck } : base;
-    // Сделки Дилера двигают долю черепов каждая по-своему (может выйти и минус).
-    const delta = effects.skullShareDelta;
+    // Сделки Дилера и колокольчик двигают долю черепов каждый по-своему (может выйти и минус).
+    const delta = effects.skullShareDelta + this.bellSkull;
     if (delta === 0 || !Number.isFinite(delta)) return withLuck;
     const mul = skullShareWeightMul(skullShareOf(this.round, this.diceDrought, withLuck), delta);
     return mul === 1 ? withLuck : { ...withLuck, skullMul: mul };
@@ -573,7 +578,8 @@ export abstract class RoundScene extends MachineScene {
 
   /**
    * Выигрыш паттернов (с амулетами) × множитель серии × множитель амулетов и автомата идёт на кон.
-   * Колокольчик добавляет прокрутки (не выше потолка раунда). Кон прибавляется сразу (t0): числа те же, что были,
+   * Колокольчик добавляет прокрутки (не выше потолка раунда) и на столько же срабатываний греет черепа
+   * (bellSkullDelta). Кон прибавляется сразу (t0): числа те же, что были,
    * а вот показ теперь поэтапный — рамки загораются по одной (showWinReveal), и done() зовётся, когда каскад кончился.
    * Звук итога здесь не играет: по звуку на каждый паттерн и один итоговый — в каскаде, в самом его конце.
    */
@@ -592,6 +598,9 @@ export abstract class RoundScene extends MachineScene {
     // Колокольчик: прокрутки, но не выше потолка. Показываем, сколько добавилось на самом деле: у потолка бывает и 0.
     const extra = spinsAfterBonus(this.spinsLeft, bellSpins(result.hits, ids)) - this.spinsLeft;
     this.spinsLeft += extra;
+    // Колокольчик греет черепа: поправку копим по всем срабатываниям раунда, даже когда прокрутки уже у потолка
+    // (сработало же). Дальше она живёт в weightContext — и в прокрутке, и на плашке «💀 N%».
+    this.bellSkull = bellSkullDelta(result.hits, ids, this.bellSkull);
     if (extra > 0) {
       this.effects.popupAt(CENTER_X, SPIN_LAMPS_Y - 20, `+${extra}`, GOLD_TEXT);
       this.panel.winkSpinLamps(this.spinsLeft);
@@ -995,6 +1004,7 @@ export abstract class RoundScene extends MachineScene {
     clearRoundEffects(this.itemEffects); // бусты и флаги прошлого раунда не переходят в новый
     this.insuranceSaves = 0; // страховка снова готова: сработок на новый раунд — по числу копий
     this.bankKeptThisRound = false; // сделка №10: «первый череп не жжёт кон» — снова первый
+    this.bellSkull = 0; // колокольчик: поправка к доле черепов живёт один раунд
     this.tookThisSpin = false; // сделка №15: в новом раунде «забрать» ещё не было
     this.tookExtraThisSpin = false;
     this.lastTakeAmount = 0;

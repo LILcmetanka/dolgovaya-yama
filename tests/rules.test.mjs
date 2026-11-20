@@ -78,3 +78,76 @@ test('мягкий сброс серии: череп оставляет трет
   assert.equal(RULES.streakAfterSkull(Number.NaN), 0, 'NaN — мусор, серия 0');
   assert.equal(RULES.streakAfterSkull(Number.POSITIVE_INFINITY), 0, 'Infinity — мусор, серия 0');
 });
+
+// ---------- Колокольчик греет черепа (шаг 25) ----------
+// Правило: каждое срабатывание 🔔 в раунде добавляет BELL_SKULL_STEP за копию к доле черепов, но не выше BELL_SKULL_MAX.
+// hits — только то, что важно функции: symbol.id (как у настоящих паттернов, см. bellSpins).
+const bellHits = (count) => Array.from({ length: count }, () => ({ symbol: { id: 'bell' } }));
+const near = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-9, `${message}: ${actual} ≈ ${expected}`);
+
+test('колокольчик: без амулета поправки нет, чужая current не тянет', () => {
+  assert.equal(AMULETS.bellSkullDelta(bellHits(3), [], 0), 0, 'без амулета — 0');
+  assert.equal(AMULETS.bellSkullDelta(bellHits(3), ['cherryPit', 'boost'], 0.5), 0, 'чужие амулеты не считаются');
+});
+
+test('колокольчик: одно срабатывание — +1 п.п. за копию', () => {
+  near(AMULETS.bellSkullDelta(bellHits(1), ['bell'], 0), AMULETS.BELL_SKULL_STEP, 'одна копия, одно 🔔');
+  near(AMULETS.bellSkullDelta(bellHits(2), ['bell'], 0), AMULETS.BELL_SKULL_STEP * 2, 'два 🔔 в одной прокрутке');
+  near(AMULETS.bellSkullDelta(bellHits(1), ['bell'], 0.05), 0.05 + AMULETS.BELL_SKULL_STEP, 'поправка копится от current');
+});
+
+test('колокольчик: без срабатываний current не меняется', () => {
+  near(AMULETS.bellSkullDelta([], ['bell'], 0.07), 0.07, 'паттернов нет — поправка на месте');
+  near(AMULETS.bellSkullDelta([{ symbol: { id: 'cherry' } }], ['bell'], 0.07), 0.07, 'не-🔔 паттерн поправку не двигает');
+});
+
+test('колокольчик: потолок BELL_SKULL_MAX не превышается', () => {
+  const big = AMULETS.bellSkullDelta(bellHits(100), ['bell'], 0);
+  near(big, AMULETS.BELL_SKULL_MAX, 'сто срабатываний упираются в потолок');
+  near(AMULETS.bellSkullDelta(bellHits(100), ['bell'], 10), AMULETS.BELL_SKULL_MAX, 'мусорная current сверх потолка тоже режется');
+  let delta = 0;
+  for (let i = 0; i < 200; i++) delta = AMULETS.bellSkullDelta(bellHits(1), ['bell'], delta);
+  near(delta, AMULETS.BELL_SKULL_MAX, 'пошаговое накопление не перелезает потолок');
+});
+
+test('колокольчик: NaN, Infinity и минус в current — безопасно', () => {
+  for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -0.4]) {
+    const value = AMULETS.bellSkullDelta(bellHits(1), ['bell'], bad);
+    assert.ok(Number.isFinite(value), `мусор ${bad} не протекает: ${value}`);
+    near(value, AMULETS.BELL_SKULL_STEP, `мусор ${bad} считается с нуля`);
+  }
+  assert.ok(Number.isFinite(AMULETS.bellSkullDelta([], ['bell'], Number.NaN)), 'без срабатываний мусор тоже не протекает');
+});
+
+test('колокольчик: копии усиливают правило, но потолок общий', () => {
+  near(AMULETS.bellSkullDelta(bellHits(1), ['bell', 'bell'], 0), AMULETS.BELL_SKULL_STEP * 2, 'две копии — вдвое');
+  near(AMULETS.bellSkullDelta(bellHits(2), ['bell', 'bell'], 0), AMULETS.BELL_SKULL_STEP * 4, 'две копии и два 🔔');
+  near(AMULETS.bellSkullDelta(bellHits(100), ['bell', 'bell'], 0), AMULETS.BELL_SKULL_MAX, 'потолок один для любых копий');
+});
+
+test('колокольчик: шаг срабатывания — ручка симулятора', () => {
+  near(AMULETS.bellSkullDelta(bellHits(1), ['bell'], 0, 0), 0, 'step = 0 — поправка не растёт (правило выключено)');
+  near(AMULETS.bellSkullDelta(bellHits(3), ['bell', 'bell'], 0.02, 0), 0.02, 'step = 0 — накопленное как есть');
+  near(AMULETS.bellSkullDelta(bellHits(1), ['bell'], 0, 0.02), 0.02, 'step = 0.02 — ровно шаг за срабатывание');
+  near(AMULETS.bellSkullDelta(bellHits(2), ['bell'], 0, 0.02), 0.04, 'step = 0.02 — за каждое срабатывание');
+  near(AMULETS.bellSkullDelta(bellHits(1), ['bell', 'bell'], 0, 0.1), 0.2, 'step = 0.1 — за срабатывание и за копию');
+  near(AMULETS.bellSkullDelta(bellHits(1), ['bell'], 0, 0.5), AMULETS.BELL_SKULL_MAX, 'step = 0.5 — потолок режет и чужой шаг');
+  near(AMULETS.bellSkullDelta(bellHits(100), ['bell'], 0, 0.5), AMULETS.BELL_SKULL_MAX, 'потолок держит и чужой шаг');
+});
+
+test('колокольчик: мусор в step — работает константой игры', () => {
+  for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -0.5]) {
+    near(AMULETS.bellSkullDelta(bellHits(1), ['bell'], 0, bad), AMULETS.BELL_SKULL_STEP, `step ${bad} — как дефолт`);
+  }
+});
+
+test('колокольчик: константы правила не ползут', () => {
+  assert.equal(AMULETS.BELL_SKULL_STEP, 0.01, 'шаг — 1 п.п. за срабатывание за копию');
+  assert.equal(AMULETS.BELL_SKULL_MAX, 0.3, 'потолок — +30 п.п. за раунд');
+});
+
+test('колокольчик: описание амулета называет рост черепов', () => {
+  const bell = AMULETS.AMULETS.find((amulet) => amulet.id === 'bell');
+  assert.ok(bell.description.ru.includes('череп'), 'в русском описании — про черепа: ' + bell.description.ru);
+  assert.ok(bell.description.en.toLowerCase().includes('skull'), 'в английском — про skulls: ' + bell.description.en);
+});

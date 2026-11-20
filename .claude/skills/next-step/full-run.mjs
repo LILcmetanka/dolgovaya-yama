@@ -20,6 +20,8 @@
 //   SIM_LC_BUY_MAX / _START / _STEP / _MAX_SHARE — числа докупки (lastChance.ts: 3 докупки, доли 0,25/0,15/0,55);
 //                        это ручки замера, по умолчанию — числа игры
 //   SIM_LC_BUY_GOAL=frozen — диагностика: цель после докупки не растёт (не правило игры, а замер)
+//   SIM_BELL_SKULL=<шаг> — шаг поправки колокольчика к доле черепов за срабатывание (amulets.BELL_SKULL_STEP, 0,01);
+//                        0 — правило выключено (как до шага 25), потолок всегда из amulets.BELL_SKULL_MAX
 //   SIM_SKULL_SHARE=constant — старая доля черепов (26/121 ≈ 0,215) вместо роста 18→30% по раундам (замечание 19)
 //   SIM_PHASE_STEP=2 — старый шаг множителя в фазе 2 (+1 к шагу); без него в фазе 2 шаг 1 (×1, ×2, ×3)
 //   SIM_PHASE_SPINS=0 — фаза 2 без +1 прокрутки (как до замечания 19)
@@ -166,6 +168,21 @@ function swapChanceFromEnv() {
 }
 
 /**
+ * SIM_BELL_SKULL=<число 0…1> — шаг колокольчика к доле черепов за срабатывание (amulets.BELL_SKULL_STEP по умолчанию);
+ * 0 — правило выключено, так замеряют «до». Не число — падаем сразу, иначе доля молча стала бы NaN.
+ */
+const BELL_SKULL_STEP = bellSkullStepFromEnv();
+function bellSkullStepFromEnv() {
+  const raw = process.env.SIM_BELL_SKULL;
+  if (raw === undefined || raw === '') return A.BELL_SKULL_STEP;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`SIM_BELL_SKULL должен быть числом 0…1, получено «${raw}»`);
+  }
+  return value;
+}
+
+/**
  * Политика билета за фишки (шаг 13) для замера: цена — доля фишек на руках, и потолок покупок за магазин.
  * По умолчанию всё из игры (items.ts), ручки окружения нужны, чтобы снять сетку вариантов без правки items.ts.
  */
@@ -299,6 +316,7 @@ function newRun() {
     secondWindLeft: S.SECOND_WIND_START, // сколько провалов последнего шанса простят (failLastChance); кассета не пополняет, сделка №9 даёт ещё
     breathTaken: false, // сделка №9 уже бралась: одна на забег, откат этой памяти не снимает
     bankKeptThisRound: false, // сделка №10: первый череп в этом раунде кон уже не сжёг
+    bellSkull: 0, // колокольчик (шаг 25): сколько к доле черепов набежало срабатываниями 🔔 в этом раунде
     slotBase: 0, // сколько предметов стояло в столбике с начала раунда: сделка №13 новых сверх предела не даёт
     insuranceSaves: 0, // сколько раз страховка сработала в раунде (копий до двух — столько и спасений)
     pacts: [], // сделки Дилера (dealerGame.Pact): что действует в раунде, решает D.pactEffects
@@ -310,8 +328,8 @@ function newRun() {
 /** Веса символов следующей прокрутки: автомат, амулеты, предметы, риск/фарт и фаза (как skullShare.ts). */
 function weightOf(s, isFree) {
   const raw = rawWeightOf(s, isFree);
-  // Доля черепов: + у одних сделок, − у «тише черепа» (RoundScene.weightContext).
-  const delta = D.pactEffects(s.pacts, s.round).skullShareDelta;
+  // Доля черепов: + у одних сделок, − у «тише черепа» (RoundScene.weightContext), плюс колокольчик за раунд.
+  const delta = D.pactEffects(s.pacts, s.round).skullShareDelta + s.bellSkull;
   if (delta === 0 || !Number.isFinite(delta) || isFree) return raw;
   // Долю черепов считаем по тем же весам, что и прокрутку (как RoundScene.weightContext), и берём тот же
   // множитель веса черепа из dealerGame: числа сделки в симуляторе не повторяются.
@@ -486,6 +504,7 @@ function startRound(s, st, g) {
   s.isBloodNext = false; // кровь не переходит в новый раунд
   s.insuranceSaves = 0; // страховка снова готова: сработок на раунд — по числу копий
   s.bankKeptThisRound = false; // сделка №10: «первый череп не жжёт кон» — снова первый
+  s.bellSkull = 0; // колокольчик: поправка к доле черепов живёт один раунд (RoundScene.startRound)
   g.freeSpinsGiven = 0; // потолок бесплатных прокруток — на раунд
   g.freeInRound = 0;
   g.roundPaid = 0;
@@ -720,6 +739,9 @@ function roll(s, st, g, isFree) {
           * D.pactEffects(s.pacts, s.round).winMul; // сделка «выигрыш паттернов +N%» — только паттерны
         s.pot += Math.round(win * mult * factor);
         s.spinsLeft = R.spinsAfterBonus(s.spinsLeft, A.bellSpins(result.hits, owned)); // потолок прокруток за раунд
+        // Колокольчик (шаг 25): каждое срабатывание до конца раунда делает черепа чаще — тот же amulets.bellSkullDelta,
+        // что зовёт RoundScene.addToPot. Копится и тогда, когда прокрутки уже у потолка (сработало же).
+        s.bellSkull = A.bellSkullDelta(result.hits, owned, s.bellSkull, BELL_SKULL_STEP);
       } else s.pot += A.piggyCoins(mult, owned);
       s.pot -= E.spiderBite(s.pot, E.cellsOf(grid, 'spider').length);
     }
@@ -863,6 +885,9 @@ function rewind(s, g) {
   g.recordCounters = null;
   g.ticketsLedger = back.tickets; // билеты вернулись к записи — сверка табло начинается заново
   s.rustyColumn = null; s.lastGrid = null; s.freeSpins = 0; // заморозок и прошлой сетки в записи нет
+  // Колокольчик живёт в раунде и на плёнку не пишется (save.ts шаг 25 не трогал): в игре откат перезапускает сцену,
+  // resetState обнуляет поправку — здесь так же, иначе после отката черепов было бы больше, чем в игре.
+  s.bellSkull = 0;
   return s;
 }
 

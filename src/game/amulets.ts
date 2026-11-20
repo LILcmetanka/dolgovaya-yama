@@ -48,6 +48,10 @@ export function ticketPrice(price: number, mul = 1): number {
 /** Числа амулетов. Подобраны симуляцией. */
 export const CHERRY_PIT_FACTOR = 2; // косточка: паттерны из 🍒 платят во столько раз больше за каждую копию
 export const BELL_SPINS = 2; // колокольчик: столько прокруток за каждый паттерн из 🔔 за каждую копию
+// Колокольчик греет черепа: каждое срабатывание (паттерн из 🔔) до конца раунда делает долю черепов больше на
+// BELL_SKULL_STEP за копию — так цепочка бесплатных прокруток сама себя ограничивает. Потолок — BELL_SKULL_MAX за раунд.
+export const BELL_SKULL_STEP = 0.01; // 1 процентный пункт за срабатывание за копию
+export const BELL_SKULL_MAX = 0.3; // больше 30 п.п. за раунд колокольчик не добавляет
 export const PIGGY_COINS = 2; // копилка: прокрутка без выигрыша кладёт на кон столько × множитель (в степени копий)
 export const INSURANCE_SHARE = 0.75; // страховка: такая доля сгоревшего кона всё равно уходит на табло (один раз за копию за раунд)
 /** Сделка №5 «страховка возвращает 100%»: каждая следующая копия страховки вдвое дороже предыдущей. */
@@ -74,7 +78,10 @@ export const AMULETS: Amulet[] = [
   {
     id: 'bell', sign: '🔔',
     name: { ru: 'Колокольчик', en: 'Little bell' },
-    description: { ru: 'Каждая копия: паттерн из 🔔 даёт +2 прокрутки', en: 'Each copy: a 🔔 pattern gives +2 spins' },
+    description: {
+      ru: `Каждая копия: паттерн из 🔔 даёт +${BELL_SPINS} прокрутки и +${Math.round(BELL_SKULL_STEP * 100)} п.п. к доле черепов до конца раунда (вместе не больше +${Math.round(BELL_SKULL_MAX * 100)} п.п.)`,
+      en: `Each copy: a 🔔 pattern gives +${BELL_SPINS} spins and +${Math.round(BELL_SKULL_STEP * 100)} pp to the skull share until the end of the round (at most +${Math.round(BELL_SKULL_MAX * 100)} pp in total)`,
+    },
     rarity: 'common',
     maxCopies: 2,
   },
@@ -285,6 +292,24 @@ export function spinsPerRound(base: number, owned: AmuletId[]): number {
 export function bellSpins(hits: PatternHit[], owned: AmuletId[]): number {
   if (!owns(owned, 'bell')) return 0;
   return hits.filter((hit) => hit.symbol.id === 'bell').length * BELL_SPINS * copiesOf(owned, 'bell');
+}
+
+/**
+ * Поправка доли черепов от колокольчика: каждое срабатывание в раунде (сколько паттернов из 🔔 в hits — как bellSpins)
+ * прибавляет BELL_SKULL_STEP за копию, но не выше BELL_SKULL_MAX. current — сколько уже набежало в этом раунде.
+ * Срабатываний нет — current как есть (поправка живёт до конца раунда); без колокольчика — 0.
+ * current — мусор (NaN, бесконечность, минус) — считаем с нуля, чтобы вес черепа не стал NaN.
+ * step — ручка замера (симулятор): по умолчанию константа игры. 0 — правило выключено (эталон «до»), поэтому ноль
+ * остаётся нулём; мусор (NaN, бесконечность, минус) — считаем константой игры, чтобы вес черепа не стал NaN.
+ */
+export function bellSkullDelta(hits: PatternHit[], owned: AmuletId[], current: number, step = BELL_SKULL_STEP): number {
+  const copies = copiesOf(owned, 'bell');
+  if (copies <= 0) return 0;
+  const safe = Number.isFinite(current) && current > 0 ? Math.min(current, BELL_SKULL_MAX) : 0;
+  const fired = hits.filter((hit) => hit.symbol.id === 'bell').length;
+  if (fired <= 0) return safe;
+  const grow = Number.isFinite(step) && step >= 0 ? step : BELL_SKULL_STEP;
+  return Math.min(BELL_SKULL_MAX, safe + grow * fired * copies);
 }
 
 /** Какие амулеты сработали на выигрыше — их значки на корпусе подпрыгнут. */
