@@ -81,7 +81,13 @@ const CARD_LINE = 2;
 const CARD_LINE_ALPHA = 0.45;
 const CARD_DIM_LINE_ALPHA = 0.22; // неполученная ачивка: рамка вполсилы, как и текст
 const CARD_PAD = 12; // поле карточки слева
-const COUNTER_FONT = 16; // «‹ 1/2 ›» в нижнем правом углу содержимого
+const COUNTER_FONT = 22; // «‹ 1/2 ›» в нижнем правом углу содержимого: 16 было мелко — не прочесть и не попасть пальцем
+// Листание у счётчика: по бокам от надписи две невидимые зоны 44×44 — под палец, а не под мышь.
+// 44 px в полосу PAD (20) не влезают, поэтому шапка и ряды карточек подняты: под рядами остаётся полоса под зоны.
+const PAGE_ZONE = 44; // зона нажатия «назад»/«вперёд»: не меньше 44×44
+const PAGE_ZONE_LIFT = 4; // центр зон выше центра счётчика: снизу зоны остаётся 0,5 px до нижней обводки
+const HEADER_LIFT = 8; // шапка вкладок выше на столько: шапка не налезает на первый ряд, который поднялся вместе с ROWS_LIFT
+const ROWS_LIFT = 22; // ряды карточек выше на столько: последний ряд кончается над зонами листания (запас 6 px вместо 2)
 // Панель подробностей ачивки (клик по карточке): внутри стекла, над вкладками и содержимым, под подсказкой.
 const DETAIL_WIDTH = 620;
 const DETAIL_HEIGHT = 380;
@@ -219,8 +225,9 @@ function symbolNote(symbol: SlotSymbol, round: number): string {
  * Цель забега — на записке над экраном на стене (GOAL_NOTE, Collector).
  * В шапке справа от вкладок — ⚙: настройки (громкость и язык) открываются отсюда. Рядом с ним — маленький раздел
  * «?»: строка с кодом (hookster) включает режим разработчика, и раздел становится вкладкой «ТЕСТ» (devmode.ts).
- * Строк больше, чем влезает в панель, поэтому у «Предметов» и «Кто есть кто» страницы: клик по панели
- * или по счётчику «‹ 1/2 ›» листает, «???» — на тех же страницах. Закрыть — клик мимо, ✕, Esc, Пробел или →.
+ * Строк больше, чем влезает в панель, поэтому у «Предметов» и «Кто есть кто» страницы: клик по панели —
+ * вперёд, у счётчика «‹ 1/2 ›» — зона слева (назад) и справа (вперёд), «???» — на тех же страницах.
+ * Закрыть — клик мимо, ✕, Esc, Пробел или →.
  * Вид не поворачивается; что можно сейчас, решает сцена (пока открыт, крутить нельзя).
  */
 export class WallScreen {
@@ -377,7 +384,7 @@ export class WallScreen {
     this.overlay.push(shade, panel);
     const top = WALL_PANEL.y - WALL_PANEL.height / 2;
     const left = WALL_PANEL.x - WALL_PANEL.width / 2;
-    const tabY = top + PAD + TAB_HEIGHT / 2;
+    const tabY = top + PAD + TAB_HEIGHT / 2 - HEADER_LIFT;
     TABS.forEach((tab, index) => {
       const x = left + PAD + TAB_WIDTH / 2 + index * (TAB_WIDTH + 8);
       const box = scene.add.rectangle(x, tabY, TAB_WIDTH, TAB_HEIGHT, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.5).setRounded(PANEL_RADIUS);
@@ -439,7 +446,8 @@ export class WallScreen {
     this.content = this.scene.add.container(0, 0).setDepth(OVERLAY_DEPTH).setScrollFactor(0).setVisible(this.isOpen);
     const left = WALL_PANEL.x - WALL_PANEL.width / 2 + PAD;
     // −2: ряды начинаются чуть выше, а сколько их влезет в панель, считает buildRows по её нижней рамке.
-    const top = WALL_PANEL.y - WALL_PANEL.height / 2 + 2 * PAD + TAB_HEIGHT - 2;
+    // −ROWS_LIFT: под последним рядом остаётся полоса под зоны листания у счётчика (addPageCounter).
+    const top = WALL_PANEL.y - WALL_PANEL.height / 2 + 2 * PAD + TAB_HEIGHT - 2 - ROWS_LIFT;
     if (tab === 'symbols') this.buildSymbols(left, top);
     else if (tab === 'items') this.buildItems(left, top);
     else if (tab === 'who') this.buildWho(left, top);
@@ -448,10 +456,17 @@ export class WallScreen {
     else this.buildDev(left, top);
   }
 
-  /** Клик по панели или по счётчику: следующая страница. Одна страница — ничего не происходит. */
+  /** Клик по панели или по правой зоне счётчика: следующая страница (с последней — снова первая). Одна страница — ничего. */
   private nextPage(): void {
     if (!this.isOpen || this.pages <= 1) return;
     this.page = (this.page + 1) % this.pages;
+    this.showTab(this.tab);
+  }
+
+  /** Клик по левой зоне счётчика: страница назад. На первой — упор, без закольцовывания. */
+  private prevPage(): void {
+    if (!this.isOpen || this.pages <= 1 || this.page === 0) return;
+    this.page -= 1;
     this.showTab(this.tab);
   }
 
@@ -502,7 +517,7 @@ export class WallScreen {
    * Строки в два столбца — одними карточками (addCard): значок слева, название и описание справа. Под ними — плитки
    * «???» по числу ещё не встреченного (что именно, не видно). Нечего показать совсем — «Пока ничего не встретил».
    * Рядов бывает больше страницы, поэтому в панель влезает столько, сколько помещается по высоте,
-   * а остальные — по клику на панель или на счётчик «‹ 1/2 ›» в нижнем правом углу.
+   * а остальные — по клику на панель (вперёд) или на зоны у счётчика «‹ 1/2 ›» в нижнем правом углу (назад и вперёд).
    */
   private buildRows(left: number, top: number, rows: Row[], hidden: number): void {
     const scene = this.scene;
@@ -577,16 +592,41 @@ export class WallScreen {
     if (dim) for (const part of [picture, title, note]) part.setAlpha(ACH_DIM_ALPHA);
   }
 
-  /** «‹ 1/2 ›» — нижний правый угол содержимого, в полосе PAD над нижней обводкой панели: с шапкой не спорит. */
+  /**
+   * «‹ 1/2 ›» — нижний правый угол содержимого, в полосе PAD над нижней обводкой панели: с шапкой не спорит.
+   * По бокам надписи — две невидимые зоны нажатия PAGE_ZONE×PAGE_ZONE: слева назад, справа вперёд (просьба автора:
+   * «очень маленькая кнопка»). Сама надпись тоже листает: её левая половина «‹» — назад, правая «›» — вперёд.
+   */
   private addPageCounter(): void {
     if (this.pages <= 1) return;
-    const counter = addText(this.scene, WALL_PANEL.x + WALL_PANEL.width / 2 - PAD, WALL_PANEL.y + WALL_PANEL.height / 2 - PAD, `‹ ${this.page + 1}/${this.pages} ›`, {
+    const scene = this.scene;
+    const right = WALL_PANEL.x + WALL_PANEL.width / 2 - PAD;
+    const bottom = WALL_PANEL.y + WALL_PANEL.height / 2 - PAD;
+    const counter = addText(scene, right, bottom, `‹ ${this.page + 1}/${this.pages} ›`, {
       fontSize: `${COUNTER_FONT}px`,
       color: DIM_INK,
     }).setOrigin(1, 0.5);
     counter.setInteractive({ useHandCursor: true });
-    counter.on('pointerdown', () => this.nextPage());
+    // Сплит надписи: левая половина — назад, правая — вперёд. Правая половина целиком перекрыта зоной «вперёд»
+    // (она добавлена после надписи и выше её, поэтому забирает клик себе): до деления справа клик не доходит,
+    // «вперёд» от надписи фактически даёт зона. Живая часть сплита — только левая: клик по ней уводит назад.
+    // Оговорка: целиком правая половина перекрыта, пока ширина надписи ≤ 2 × PAGE_ZONE; если станет шире,
+    // середина правой половины снова живая — поведение не меняется (вперёд).
+    counter.on('pointerdown', (_pointer: Phaser.Input.Pointer, localX: number) => {
+      if (localX < counter.width / 2) this.prevPage();
+      else this.nextPage();
+    });
     this.content.add(counter);
+    // Зоны — невидимые Zone (ничего не рисуют) и на PAGE_ZONE_LIFT выше счётчика: так 44 px влезают
+    // между последним рядом карточек и нижней обводкой, не налезая ни на карточку, ни на рамку.
+    const zoneY = bottom - PAGE_ZONE_LIFT;
+    const back = scene.add.zone(right - counter.width - PAGE_ZONE / 2, zoneY, PAGE_ZONE, PAGE_ZONE);
+    back.setInteractive({ useHandCursor: true });
+    back.on('pointerdown', () => this.prevPage());
+    const forward = scene.add.zone(right - PAGE_ZONE / 2, zoneY, PAGE_ZONE, PAGE_ZONE);
+    forward.setInteractive({ useHandCursor: true });
+    forward.on('pointerdown', () => this.nextPage());
+    this.content.add([back, forward]); // после надписи: зона выше текста и забирает клик себе
   }
 
   /**

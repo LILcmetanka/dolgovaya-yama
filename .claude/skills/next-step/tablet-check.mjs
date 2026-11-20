@@ -20,6 +20,12 @@
  *    в правом нижнем углу стекла (в PAD от краёв) и не налезает на карточки, карточки внутри стекла, панель
  *    подробностей и её крестик не выходят за стекло; клик «мимо панели» — по точке из геометрии, а не по константе;
  *  - счётчик листает страницы, после возврата карточки на месте;
+ *  - у счётчика две зоны нажатия 44×44 (назад слева, вперёд справа): ровно PAGE_ZONE, стоят у надписи на её
+ *    высоте, не налезают на карточки и на обводку стекла, и листают в обе стороны (проверяется число
+ *    wallScreen.page, а не надпись); края: левая зона на первой странице упирается, правая с последней
+ *    закольцовывает на первую;
+ *  - надпись счётчика листает по сплиту: клик в неперекрытую зонами левую часть — назад, в правую (её накрывает
+ *    зона «вперёд») — вперёд;
  *  - то же на английском: EARNED / NOT EARNED и Condition hidden.
  */
 import { spawn } from 'node:child_process';
@@ -87,6 +93,17 @@ const CARD_TEXT_X = CARD_PAD + ROW_ICON + ROW_ICON_GAP; // от левого к�
 const DETAIL_WIDTH = wallNumber('DETAIL_WIDTH');
 const DETAIL_HEIGHT = wallNumber('DETAIL_HEIGHT');
 const PAD = wallNumber('PAD'); // поле стекла: счётчик прижат к нему в правом нижнем углу содержимого
+const PAGE_ZONE = wallNumber('PAGE_ZONE'); // зона нажатия у счётчика «назад»/«вперёд»: не меньше 44×44
+/**
+ * Сдвиг зон надписи из addPageCounter (zoneY = bottom − PAGE_ZONE_LIFT): зоны на PAGE_ZONE_LIFT выше центра
+ * счётчика. Разбираем константу из исходника, чтобы сверять со сдвигом, а не допуском «±4», который стоит
+ * ровно на фактическом значении 4,00 и не заметит ни подъёма, ни съезда зон. Разобрать не удалось (константу
+ * перепишут выражением, которое проверка не знает) — оставляем прежний допуск 4.5: он покрывает фактический
+ * |Δy| = 4 и всё ещё ловит съезд на несколько пикселей; молча считать по устаревшей копии нельзя.
+ */
+const PAGE_ZONE_LIFT = (() => {
+  try { return wallNumber('PAGE_ZONE_LIFT'); } catch { return null; } // null — константу разобрать не удалось
+})();
 const TAB_HEIGHT = wallNumber('TAB_HEIGHT'); // высота плашек шапки: под ними начинается содержимое вкладки
 /**
  * Числовые константы layout.ts с формулами (ZOOM = GAME_HEIGHT / VIEW_HEIGHT, VIEW_CENTER_X = VIEW_WIDTH / 2).
@@ -218,11 +235,15 @@ try {
     const counterObject = list.find((o) => o.type === 'Text' && /^‹ \\d+\\/\\d+ ›$/.test(o.text || ''));
     const box = counterObject ? bounds(counterObject) : null;
     const panel = panelObject ? bounds(panelObject) : null;
+    // Две зоны листания у счётчика — невидимые Zone с включённым вводом (addPageCounter).
+    const zones = list.filter((o) => o.type === 'Zone' && o.input && o.input.enabled)
+      .map((z) => { const r = bounds(z); return { x: z.x, y: z.y, left: r.left, top: r.top, right: r.right, bottom: r.bottom }; });
     return JSON.stringify({
       tab: m.tab, open: m.isOpen, page: m.page, pages: m.pages, items: list.length,
       cards: info, detailOpen: m.detail !== null,
       panel,
       counter: box ? { text: counterObject.text, x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2, ...box } : null,
+      zones,
     });
   })()`));
   /** Надписи открытой панели подробностей, её границы, точка крестика и границы его плашки. */
@@ -247,6 +268,21 @@ try {
   const counterInCorner = (panel, counter) => !!panel && !!counter
     && Math.abs(counter.right - (panel.right - PAD)) <= 1
     && Math.abs(counter.y - (panel.bottom - PAD)) <= 1;
+  /** Стекло без обводки: рамка 3 px рисуется по краю, её полоса — 1,5 px внутрь; зоны листания за неё не заходят. */
+  const insideBorder = (panel) => (panel ? { left: panel.left + 1.5, top: panel.top + 1.5, right: panel.right - 1.5, bottom: panel.bottom - 1.5 } : null);
+  /** Зоны нажатия у счётчика по порядку слева направо: первая — «назад», вторая — «вперёд». */
+  const pageZones = (state) => (state.zones || []).slice().sort((a, b) => a.left - b.left);
+  /**
+   * Обе зоны стоят на PAGE_ZONE_LIFT выше центра надписи — ровно со сдвигом из addPageCounter
+   * (zoneY = bottom − PAGE_ZONE_LIFT). Сверяем с константой из исходника, а не с допуском ±4: тот стоит
+   * ровно на фактическом Δy = 4,00 и не заметит ни подъёма, ни съезда зон. Константу разобрать не удалось
+   * (PAGE_ZONE_LIFT === null) — прежний допуск 4.5: покрывает факт 4,00 и ловит съезд на несколько пикселей,
+   * а формулу из устаревшей копии мы не подставляем.
+   */
+  const zonesOnCounterLine = (zones, counter) => !!counter && zones.length === 2
+    && (PAGE_ZONE_LIFT === null
+      ? zones.every((z) => Math.abs(z.y - counter.y) <= 4.5)
+      : zones.every((z) => Math.abs(z.y - (counter.y - PAGE_ZONE_LIFT)) <= 0.5));
   /**
    * Точка клика «мимо панели подробностей» — из геометрии, а не числом 120×80: первая в стекле ниже шапки,
    * что не попадает ни в панель, ни в карточку. Панель или карточки переедут — точка сдвинется, а не промахнётся
@@ -364,6 +400,40 @@ try {
   check(counterInCorner(st.panel, st.counter), 'счётчик «‹ 1/4 ›» в правом нижнем углу стекла: правый край ' + (st.counter ? Math.round(st.counter.right) : '—') + ' = ' + (st.panel ? Math.round(st.panel.right - PAD) : '—') + ' (стекло справа − PAD ' + PAD + '), середина y ' + (st.counter ? Math.round(st.counter.y) : '—') + ' = ' + (st.panel ? Math.round(st.panel.bottom - PAD) : '—') + ' (стекло снизу − PAD)');
   check(!!st.counter && st.cards.every((c) => !overlaps(st.counter, c)), 'счётчик не налезает ни на одну карточку' + (st.counter ? '' : ' — счётчика нет, проверять нечего'));
 
+  // У счётчика две зоны нажатия: «назад» слева, «вперёд» справа. Каждая не меньше PAGE_ZONE×PAGE_ZONE (44×44 —
+  // под палец), не налезает на карточки и не заходит на обводку стекла.
+  const zonePair = pageZones(st);
+  check(zonePair.length === 2, 'у счётчика две зоны нажатия — назад и вперёд: ' + zonePair.length);
+  // Допуск −0.5 только на дробное округление координат: зона ровно PAGE_ZONE проходит, а на PAGE_ZONE − 1
+  // (старый допуск) пропускалась зона на PAGE_ZONE − 1 px по стороне.
+  check(zonePair.length === 2 && zonePair.every((z) => z.right - z.left >= PAGE_ZONE - 0.5 && z.bottom - z.top >= PAGE_ZONE - 0.5),
+    'каждая зона нажатия не меньше ' + PAGE_ZONE + '×' + PAGE_ZONE + ': '
+      + (zonePair.length ? zonePair.map((z) => Math.round(z.right - z.left) + '×' + Math.round(z.bottom - z.top)).join(', ') : 'зон нет'));
+  // Позиция зон относительно надписи: «назад» кончается не правее левого края надписи, «вперёд» начинается
+  // не левее её левого края (иначе зона уезжает от надписи влево и перестаёт её накрывать), и обе зоны —
+  // на высоте самой надписи (по y), но не вплотную: со сдвигом PAGE_ZONE_LIFT из исходника (zonesOnCounterLine).
+  check(zonePair.length === 2 && !!st.counter && zonePair[0].right <= st.counter.left + 1 && zonePair[1].right >= st.counter.right - 1
+    && zonePair[1].left >= st.counter.left
+    && zonesOnCounterLine(zonePair, st.counter),
+    'зона «назад» слева от надписи, «вперёд» — у её правого края и не раньше левого края надписи, обе на высоте надписи со сдвигом PAGE_ZONE_LIFT: '
+      + (zonePair.length === 2 && st.counter
+        ? Math.round(zonePair[0].right) + ' ≤ ' + Math.round(st.counter.left) + ', ' + Math.round(zonePair[1].right) + ' ≥ ' + Math.round(st.counter.right)
+          + ', ' + Math.round(zonePair[1].left) + ' ≥ ' + Math.round(st.counter.left)
+          + ', Δy ' + zonePair.map((z) => (z.y - st.counter.y).toFixed(2)).join('/')
+          + (PAGE_ZONE_LIFT === null ? ' (сдвиг не разобрал, допуск 4.5)' : ' (ждём −' + PAGE_ZONE_LIFT + ' ± 0.5)')
+        : 'зон или счётчика нет'));
+  check(zonePair.length === 2 && zonePair.every((z) => st.cards.every((c) => !overlaps(z, c))),
+    'зоны нажатия не налезают ни на одну карточку');
+  check(zonePair.length === 2 && zonePair.every((z) => inside(z, insideBorder(st.panel))),
+    'зоны нажатия внутри стекла и не заходят на его обводку');
+  // Слева направо (pageZones): первая — «назад», вторая — «вперёд». Налезание означало бы, что точка
+  // сплита надписи попадает не в ту зону, и клик в «назад» уходил бы в «вперёд». +1 — на дробное
+  // округление координат, как у соседних проверок границ.
+  check(zonePair.length === 2 && zonePair[0].right <= zonePair[1].left + 1,
+    'зоны не налезают друг на друга: ' + (zonePair.length === 2
+      ? Math.round(zonePair[0].right) + ' ≤ ' + Math.round(zonePair[1].left)
+      : 'зон нет'));
+
   // Клик по неполученной: в панели ровно «❓», «???», «Условие скрыто», статус и «✕» крестика — больше ничего.
   await click(hidden.x, hidden.y);
   d = await detail();
@@ -404,30 +474,95 @@ try {
   check(d.open === false && st.open === true && st.tab === 'achievements', 'клик мимо панели закрыл только её');
 
   /**
-   * Клик по счётчику страниц: его может не быть (counter: null) — тогда честно проваливаем проверку, а не падаем
-   * TypeError мимо check() и не умираем без строки «итог N из N».
+   * Точка на неперекрытой левой части надписи счётчика: между зоной «назад» (она кончается у левого края надписи)
+   * и зоной «вперёд» (её правые PAGE_ZONE px накрывают надпись). Середина просвета всегда левее сплита надписи:
+   * просвет шириной width − PAGE_ZONE, его середина — width/2 − PAGE_ZONE/2. Центр надписи кликать нельзя —
+   * он перекрыт зоной «вперёд», клик ушёл бы в зону, а не в надпись.
    */
+  const counterGapPoint = (state) => {
+    const pair = pageZones(state);
+    if (!state.counter || pair.length !== 2) return null;
+    const x = (Math.max(pair[0].right, state.counter.left) + Math.min(pair[1].left, state.counter.right)) / 2;
+    return { x, y: state.counter.y };
+  };
+  /** Клик в неперекрытую зонами левую часть надписи: доходит до надписи и листает назад (prevPage). */
   const clickCounter = async (state) => {
-    if (state.counter) await click(state.counter.x, state.counter.y);
+    const point = counterGapPoint(state);
+    if (point) await click(point.x, point.y);
+    else check(false, 'нет счётчика или зон — клик по неперекрытой части надписи невозможен');
+  };
+  /** Клик в правую часть надписи: её накрывает зона «вперёд», клик листает вперёд (nextPage). */
+  const clickCounterNext = async (state) => {
+    if (state.counter) await click(state.counter.right - 6, state.counter.y);
     else check(false, 'нет счётчика страниц — клик по нему невозможен');
   };
+  /** Клик по зоне листания: 0 — «назад» слева, 1 — «вперёд» справа. */
+  const clickPageZone = async (state, index) => {
+    const pair = pageZones(state);
+    if (pair.length === 2) await click(pair[index].x, pair[index].y);
+    else check(false, 'нет ' + (index ? 'правой' : 'левой') + ' зоны нажатия — клик по ней невозможен');
+  };
 
-  // Счётчик в нижнем правом углу: вторая страница, другие карточки; назад — снова первая.
-  await clickCounter(st);
+  // Прежде чем кликать надпись — проверяем, что точка клика на самой надписи, левее её сплита и вне обеих зон:
+  // иначе «клик по надписи» ушёл бы в зону и проверял зону, а не сплит надписи.
+  const gap = counterGapPoint(st);
+  check(!!gap && !!st.counter && gap.x > st.counter.left && gap.x < st.counter.x && gap.x < st.counter.right
+    && gap.y > st.counter.top && gap.y < st.counter.bottom
+    && pageZones(st).every((z) => gap.x < z.left || gap.x > z.right),
+    'кликаем надпись в её неперекрытой зонами левой части: ' + (gap ? Math.round(gap.x) + '×' + Math.round(gap.y) : 'точки нет')
+      + (st.counter ? ', надпись ' + Math.round(st.counter.left) + '…' + Math.round(st.counter.right) + ', сплит по центру ' + Math.round(st.counter.x) : ''));
+
+  // Счётчик в нижнем правом углу: правая часть надписи (её накрывает зона «вперёд») листает вперёд —
+  // вторая страница, другие карточки; с последней страницы клик по правой зоне закольцовывает на первую.
+  await clickCounterNext(st);
   st = await tablet();
-  check(st.page === 1 && st.counter && st.counter.text === '‹ 2/4 ›', 'счётчик перелистнул на «' + (st.counter && st.counter.text) + '»');
+  check(st.page === 1 && st.counter && st.counter.text === '‹ 2/4 ›', 'клик по правой части надписи перелистнул на «' + (st.counter && st.counter.text) + '»');
   check(st.cards.length === 14 && st.cards[0].title !== obtained.title, 'на второй странице другие карточки');
   check(inside(st.counter, st.panel) && st.cards.every((c) => !overlaps(st.counter, c)), 'на второй странице счётчик тоже внутри стекла и не налезает на карточки');
   await shot('after-ach-page2.png');
-  await clickCounter(st);
+  await clickCounterNext(st);
   st = await tablet();
   check(st.page === 2 && st.counter && st.counter.text === '‹ 3/4 ›', 'счётчик листает дальше: «' + (st.counter && st.counter.text) + '»');
-  await clickCounter(st);
+  await clickCounterNext(st);
   st = await tablet();
   check(st.page === 3 && st.counter && st.counter.text === '‹ 4/4 ›', 'последняя страница: «' + (st.counter && st.counter.text) + '»');
-  await clickCounter(st);
+  await clickCounterNext(st);
   st = await tablet();
   check(st.page === 0 && st.counter && st.counter.text === '‹ 1/4 ›' && st.cards[0].title === RU.name, 'счётчик вернулся на первую страницу');
+
+  // Зоны листают в обе стороны: «вперёд» — вторая страница, «назад» с неё — первая, «вперёд» — снова вторая.
+  // Страницу проверяем числом wallScreen.page, а не надписью счётчика.
+  await clickPageZone(st, 1);
+  st = await tablet();
+  check(st.page === 1, 'клик по правой зоне: страница ' + st.page + ' (ждали 1)');
+  await clickPageZone(st, 0);
+  st = await tablet();
+  check(st.page === 0, 'клик по левой зоне: страница ' + st.page + ' (ждали 0)');
+  // Края: левая зона на первой странице упирается, а не закольцовывает (prevPage без закольцовывания).
+  await clickPageZone(st, 0);
+  st = await tablet();
+  check(st.page === 0 && st.counter && st.counter.text === '‹ 1/4 ›', 'клик по левой зоне на первой странице упёрся: страница ' + st.page + ' (ждали 0)');
+  await clickPageZone(st, 1);
+  st = await tablet();
+  check(st.page === 1, 'клик по правой зоне снова: страница ' + st.page + ' (ждали 1)');
+  // Надпись: левая её часть (неперекрытая зонами) уводит назад.
+  await clickCounter(st);
+  st = await tablet();
+  check(st.page === 0 && st.counter && st.counter.text === '‹ 1/4 ›', 'клик по левой части надписи увёл назад: страница ' + st.page + ' (ждали 0)');
+  // Правая часть надписи (её накрывает зона «вперёд») — вперёд.
+  await clickCounterNext(st);
+  st = await tablet();
+  check(st.page === 1 && st.counter && st.counter.text === '‹ 2/4 ›', 'клик по правой части надписи увёл вперёд: страница ' + st.page + ' (ждали 1)');
+  // Края: с последней страницы клик по правой зоне заворачивает на первую (nextPage по модулю pages).
+  await clickPageZone(st, 1);
+  st = await tablet();
+  check(st.page === 2, 'правая зона со второй: страница ' + st.page + ' (ждали 2)');
+  await clickPageZone(st, 1);
+  st = await tablet();
+  check(st.page === 3, 'правая зона с третьей: страница ' + st.page + ' (ждали 3)');
+  await clickPageZone(st, 1);
+  st = await tablet();
+  check(st.page === 0 && st.counter && st.counter.text === '‹ 1/4 ›', 'клик по правой зоне с последней страницы завернул на 0: страница ' + st.page + ' (ждали 0)');
 
   // Вкладки переключаются мышью (с «Символов» на «Ачивки» и назад), Esc не трогает шапку.
   await openTab('symbols');
