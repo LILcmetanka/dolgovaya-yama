@@ -3,30 +3,57 @@
  * Запуск: node .claude/skills/next-step/atm-who-check.mjs <scratchpad>, где <scratchpad>/dist — сборка с хуком
  * window.__g (см. hookbuild.sh: «bash .claude/skills/next-step/hookbuild.sh <scratchpad> .»). Снимки и профиль Chrome — в scratchpad.
  *
- * Что проверяет банкомат: выехал и показывает долг — число по центру экрана, значка фишки на экране нет,
- * число внутри экрана, монетоприёмник ниже экрана; не хватает фишек — GOOD LUCK тоже по центру экрана;
- * шестизначный долг ужимается по ширине.
+ * Что проверяет банкомат: выехал и показывает долг — число по центру экрана (по мировым координатам, от рамки экрана
+ * в корпусе), на экране нет ни одного объекта с текстурой фишки (CHIP_TEXTURE из decor.ts), число внутри экрана,
+ * монетоприёмник ниже экрана; не хватает фишек — GOOD LUCK тоже по центру экрана; шестизначный долг ужимается по ширине.
+ * Размеры экрана, приёмника и предел ширины числа берутся из src/game/parts/atm.ts: смена чисел в коде роняет проверку.
+ * Деталей нужного размера в корпусе должно быть ровно по одной (рамка экрана, накладка приёмника, его щель), а
+ * slotPosition() — указывать в середину щели: иначе «нашлось по размеру» — тавтология, а не проверка.
  * «Кто есть кто»: когда встречены Коллектор, Дилер и все автоматы, в панели пять рядов, нет плиток «???»,
  * описания не налезают на названия следующего ряда, не влезают в соседнюю колонку и не выходят за ряд.
  * Всё повторяется на втором языке (L): русский длиннее английского, там описания переносятся на вторую строку.
  * Порт 8770 — свой, dev-сервер на 5173 и порты 8766/8767 из других сценариев не трогаем.
  */
 import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 const SP = process.argv[2];
 if (!SP) {
   console.log('нужен scratchpad: node atm-who-check.mjs <scratchpad> (там dist с хуком window.__g)');
   process.exit(2);
 }
+
+/**
+ * Константы — из исходников, а не из головы: сценарий запускается обычным node (без ts-resolve), поэтому читаем текст
+ * модулей и достаём числа регэкспом. Не разобрали — падаем до запуска Chrome, а не проверяем по устаревшим числам.
+ */
+const SRC = (rel) => readFileSync(new URL('../../../' + rel, import.meta.url), 'utf8');
+const ATM_SRC = SRC('src/game/parts/atm.ts');
+const atmNumber = (name) => {
+  const match = ATM_SRC.match(new RegExp('^const ' + name + ' = (-?\\d+(?:\\.\\d+)?);', 'm'));
+  if (!match) throw new Error('в src/game/parts/atm.ts не нашёл const ' + name);
+  return Number(match[1]);
+};
+const SCREEN_Y = atmNumber('SCREEN_Y'); // экран на корпусе: по центру него — число долга и GOOD LUCK
+const SCREEN_WIDTH = atmNumber('SCREEN_WIDTH');
+const SCREEN_HEIGHT = atmNumber('SCREEN_HEIGHT');
+const DEMAND_MAX_WIDTH = atmNumber('DEMAND_MAX_WIDTH'); // шире число не бывает: дальше шрифт уменьшается
+const COIN_SLOT_DY = atmNumber('COIN_SLOT_DY'); // середина накладки монетоприёмника относительно середины корпуса
+/** Размер пары width×height из atm.ts: COIN_BODY и COIN_SLIT записаны одной строкой const. */
+const atmBox = (name) => {
+  const match = ATM_SRC.match(new RegExp('^const ' + name + ' = \\{ width: (\\d+), height: (\\d+) \\};', 'm'));
+  if (!match) throw new Error('в src/game/parts/atm.ts не разобрал ' + name);
+  return { width: Number(match[1]), height: Number(match[2]) };
+};
+const COIN_BODY = atmBox('COIN_BODY');
+const COIN_SLIT = atmBox('COIN_SLIT'); // внутренняя щель: slotPosition() обязан указывать в неё, а не рядом
+const COIN_TOP = COIN_SLOT_DY - COIN_BODY.height / 2; // верх накладки приёмника относительно середины корпуса
+const chipMatch = SRC('src/game/decor.ts').match(/^export const CHIP_TEXTURE = '([^']+)';/m);
+if (!chipMatch) throw new Error('в src/game/decor.ts не нашёл export const CHIP_TEXTURE');
+const CHIP_TEXTURE = chipMatch[1]; // 'chip' в игре знает только decor.ts — здесь то же имя оттуда же
+
 const srv = spawn('python3', ['-m', 'http.server', '8770', '--directory', SP + '/dist', '--bind', '127.0.0.1'], { stdio: 'ignore' });
 const chrome = spawn('google-chrome-stable', ['--headless=new', '--remote-debugging-port=9337', '--window-size=1280,720', '--user-data-dir=' + SP + '/prof-atm', '--no-sandbox', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=gl', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// Константы из atm.ts: экран на корпусе и предел ширины числа.
-const SCREEN_Y = -82; // SCREEN_Y: на этой высоте стоит экран и по центру него — число и GOOD LUCK
-const SCREEN_HEIGHT = 66; // SCREEN_HEIGHT
-const SCREEN = { left: -80, right: 80, top: SCREEN_Y - SCREEN_HEIGHT / 2, bottom: SCREEN_Y + SCREEN_HEIGHT / 2 }; // ±SCREEN_WIDTH/2 по ширине
-const DEMAND_MAX_WIDTH = 136; // DEMAND_MAX_WIDTH
-const COIN_TOP = -38; // COIN_SLOT_DY −10 − COIN_BODY.height/2: верх накладки приёмника
 try {
   let tabs;
   for (let i = 0; i < 30; i++) { try { tabs = await (await fetch('http://127.0.0.1:9337/json')).json(); if (tabs.length) break; } catch {} await sleep(300); }
@@ -55,7 +82,11 @@ try {
   await val('window.__g.finishTutorial(); 1');
   await sleep(900);
 
-  /** Банкомат с долгом debt и балансом balance: выехал и что на экране (координаты — от центра корпуса). */
+  /**
+   * Банкомат с долгом debt и балансом balance: что на экране — в мировых координатах.
+   * Экран, накладку приёмника и его щель ищем объектами в корпусе (по размерам из atm.ts) — проверяем настоящую геометрию,
+   * а не число в константе. Фишки ищем по текстуре CHIP_TEXTURE во всей сцене, включая содержимое контейнеров.
+   */
   const atm = async (debt, balance) => {
     await val('window.__g.collector.atm.hide(); 1');
     await sleep(250);
@@ -64,41 +95,129 @@ try {
     for (let i = 0; i < 30; i++) { if (await val('window.__g.collector.atm.isOut')) break; await sleep(150); }
     await sleep(150);
     const raw = await val(`(() => {
-      const a = window.__g.collector.atm, b = a.box, d = a.demand, slot = a.slotPosition();
-      const rel = (o) => { const g = o.getBounds(); return { x: Math.round(g.x - b.x), y: Math.round(g.y - b.y), right: Math.round(g.right - b.x), bottom: Math.round(g.bottom - b.y) }; };
-      // 'chip' — зеркало export const CHIP_TEXTURE из src/game/decor.ts:71; импортировать decor.ts сюда не надо.
-      const chipInBox = b.list.some((o) => o.texture && o.texture.key === 'chip');
-      // hasChip — булево, а не сам объект: JSON.stringify на Phaser.Image падает на циклических ссылках.
-      return JSON.stringify({ out: a.isOut, text: d.text, hasChip: ('chip' in a), chipInBox, demandY: Math.round(d.y), demand: rel(d), slotY: Math.round(slot.y - b.y) });
+      const g = window.__g, a = g.collector.atm, b = a.box, d = a.demand, body = a.body;
+      const CHIP = ${JSON.stringify(CHIP_TEXTURE)};
+      const bounds = (o) => { const r = o.getBounds(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
+      const round = (r) => ({ left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom) });
+      const round2 = (r) => ({ left: +r.left.toFixed(2), top: +r.top.toFixed(2), right: +r.right.toFixed(2), bottom: +r.bottom.toFixed(2) });
+      // Детали корпуса ищем по размерам из atm.ts, но каждую отдельно и со счётом: 0 рамок (размер в atm.ts поменяли)
+      // и 2 рамки (совпала чужая деталь) — тоже провал, иначе «рамка нашлась» ничего не значит и размер не проверен.
+      const sameSize = (w, h) => b.list.filter((o) => o.type === 'Rectangle' && Math.abs(o.width - w) < 0.5 && Math.abs(o.height - h) < 0.5);
+      const screenFrames = sameSize(${SCREEN_WIDTH}, ${SCREEN_HEIGHT});
+      const coinPlates = sameSize(${COIN_BODY.width}, ${COIN_BODY.height});
+      const slits = sameSize(${COIN_SLIT.width}, ${COIN_SLIT.height});
+      const screenFrame = screenFrames[0], coinPlate = coinPlates[0], slit = slits[0];
+      const screen = screenFrame ? bounds(screenFrame) : null;
+      const slot = a.slotPosition(); // куда летят фишки: должно быть ровно внутри щели приёмника
+      const bodyRect = bounds(body);
+      const bodyCenterX = (bodyRect.left + bodyRect.right) / 2;
+      const bodyCenterY = (bodyRect.top + bodyRect.bottom) / 2;
+      const scanChips = () => {
+        const found = [];
+        const walk = (list) => {
+          for (const o of list) {
+            if (o.list) walk(o.list); // фишка может лежать в контейнере (корпус, табло, окошко выплаты)
+            if (o.texture && o.texture.key === CHIP && o.visible !== false) found.push(bounds(o));
+          }
+        };
+        walk(g.children.list);
+        return found;
+      };
+      const overlapsScreen = (r) => !!screen && r.right > screen.left && r.left < screen.right && r.bottom > screen.top && r.top < screen.bottom;
+      const chipsOnScreen = scanChips().filter(overlapsScreen).map(round);
+      // Положительный контроль: подложенные фишки — у самой сцены и внутри корпуса — детектор обязан найти.
+      // Иначе «на экране нет фишек» ничего не значит: мог бы просто не уметь их искать.
+      // Нет рамки экрана — контроля нет: −1, и проверка провалится, а не умрёт на null.
+      let probedOnScreen = -1;
+      if (screen) {
+        const probeRoot = g.add.image((screen.left + screen.right) / 2, (screen.top + screen.bottom) / 2, CHIP).setDepth(9999);
+        const probeBox = g.add.image(0, ${SCREEN_Y}, CHIP);
+        b.add(probeBox);
+        probedOnScreen = scanChips().filter(overlapsScreen).length;
+        probeRoot.destroy();
+        probeBox.destroy();
+      }
+      return JSON.stringify({
+        out: a.isOut, text: d.text, demand: round(bounds(d)),
+        screen: screen ? round(screen) : null,
+        body: round(bodyRect),
+        bodyCenterX: Math.round(bodyCenterX), bodyCenterY: Math.round(bodyCenterY),
+        screenFrames: screenFrames.length, coinPlates: coinPlates.length, slits: slits.length,
+        // Рамка экрана на корпусе — только положение её центра: размер уже сверен отдельно, тем, что деталь нужного
+        // размера в корпусе ровно одна. Размерные конъюнкты здесь были бы тавтологией (рамку искали по тем же числам).
+        screenMatchesSource: !!screen && Math.abs((screen.left + screen.right) / 2 - bodyCenterX) <= 1
+          && Math.abs((screen.top + screen.bottom) / 2 - (bodyCenterY + ${SCREEN_Y})) <= 1,
+        chipsOnScreen, probedOnScreen, chipsInScene: scanChips().length,
+        coinPlate: coinPlate ? round(bounds(coinPlate)) : null,
+        slit: slit ? round2(bounds(slit)) : null,
+        slot: { x: +slot.x.toFixed(2), y: +slot.y.toFixed(2) },
+      });
     })()`);
-    return raw === undefined ? undefined : JSON.parse(raw);
+    const parsed = raw === undefined ? undefined : JSON.parse(raw);
+    return parsed;
   };
 
-  /** Число (или GOOD LUCK) стоит по центру экрана: середина по y — на SCREEN_Y, середина по x — на оси корпуса. */
-  const centered = (r) => r && Math.abs(r.demandY - SCREEN_Y) <= 1 && Math.abs((r.demand.x + r.demand.right) / 2) <= 1;
+  /**
+   * Есть ли в добыче экран и число: без них проверка «по центру» — обычный FAIL с текстом, а не TypeError мимо check()
+   * (рамку экрана не нашли — значит, размер в atm.ts разошёлся с корпусом, и об этом скажет отдельная проверка).
+   */
+  const withScreen = (r) => !!r && !!r.screen && !!r.demand;
+  /** Середина сторон прямоугольника — для сообщений; нет прямоугольника — прочерк, а не исключение. */
+  const midX = (r) => (r ? Math.round((r.left + r.right) / 2) : '—');
+  const midY = (r) => (r ? Math.round((r.top + r.bottom) / 2) : '—');
+  const show = (v) => (v ? JSON.stringify(v) : 'нет');
+  /** Точка внутри прямоугольника — по мировым границам. */
+  const insideBox = (point, box) => !!point && !!box && point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom;
+  /** Прямоугольник a целиком внутри b — по мировым границам. */
+  const insideRect = (a, b) => !!a && !!b && a.left >= b.left && a.right <= b.right && a.top >= b.top && a.bottom <= b.bottom;
+  /** Число (или GOOD LUCK) стоит по центру экрана: середина текста в мире — середина рамки экрана в мире. */
+  const centered = (r) => withScreen(r) && Math.abs((r.demand.left + r.demand.right) / 2 - (r.screen.left + r.screen.right) / 2) <= 1
+    && Math.abs((r.demand.top + r.demand.bottom) / 2 - (r.screen.top + r.screen.bottom) / 2) <= 1;
+  /** Текст целиком внутри рамки экрана — тоже по мировым границам. */
+  const insideScreen = (r) => withScreen(r) && r.demand.left >= r.screen.left && r.demand.right <= r.screen.right && r.demand.top >= r.screen.top && r.demand.bottom <= r.screen.bottom;
+  /** Верх накладки приёмника — ниже низа экрана: в мире, по настоящим границам объектов. */
+  const plateBelowScreen = (r) => withScreen(r) && !!r.coinPlate && r.coinPlate.top >= r.screen.bottom;
 
   // 5.1: число долга по центру экрана, значка фишки на экране нет, число внутри экрана.
   const debt = await atm(30, 5000);
   await shot('atm-debt.png');
-  const demandOk = debt && debt.demand.x >= SCREEN.left && debt.demand.right <= SCREEN.right && debt.demand.y >= SCREEN.top && debt.demand.bottom <= SCREEN.bottom;
   check(debt && debt.out, 'банкомат выехал к игроку');
   check(debt && debt.text === '30', 'на экране долг: ' + (debt && debt.text));
-  check(debt && debt.hasChip === false && !debt.chipInBox, 'значка фишки на экране нет (объекта-фишки в банкомате нет)');
-  check(centered(debt), 'число по центру экрана (y ' + (debt && debt.demandY) + ' ≈ ' + SCREEN_Y + ', центр x ' + (debt && (debt.demand.x + debt.demand.right) / 2) + ')');
-  check(demandOk, 'число целиком внутри экрана ' + JSON.stringify(debt && debt.demand));
-  check(debt && debt.slotY - 28 >= SCREEN.bottom, 'накладка монетоприёмника ниже экрана (верх накладки ' + (debt && debt.slotY - 28) + ' ≥ ' + SCREEN.bottom + ')');
+  // Размер — не тавтологией: рамку искали по числам из atm.ts, поэтому отдельно считаем, что такая деталь в корпусе одна.
+  // Поменяли SCREEN_WIDTH/SCREEN_HEIGHT в atm.ts — здесь 0, и это FAIL, а не «рамка на месте».
+  check(debt && debt.screenFrames === 1, 'в корпусе ровно одна рамка экрана ' + SCREEN_WIDTH + '×' + SCREEN_HEIGHT + ' (нашлось: ' + (debt && debt.screenFrames) + ')');
+  check(debt && debt.coinPlates === 1, 'в корпусе ровно одна накладка приёмника ' + COIN_BODY.width + '×' + COIN_BODY.height + ' (нашлось: ' + (debt && debt.coinPlates) + ')');
+  check(debt && debt.slits === 1, 'в корпусе ровно одна щель приёмника ' + COIN_SLIT.width + '×' + COIN_SLIT.height + ' (нашлось: ' + (debt && debt.slits) + ')');
+  check(debt && debt.screenMatchesSource, 'рамка экрана на корпусе там, где написано в atm.ts: центр = середина корпуса + ' + SCREEN_Y + ' (x ' + midX(debt?.screen) + ' = ' + (debt && debt.bodyCenterX) + ', y ' + midY(debt?.screen) + ' = ' + (debt && debt.bodyCenterY) + ' + ' + SCREEN_Y + ')');
+  check(debt && debt.chipsOnScreen.length === 0, 'на экране нет ни одного объекта с текстурой фишки «' + CHIP_TEXTURE + '»' + (debt && debt.chipsOnScreen.length ? ': ' + JSON.stringify(debt.chipsOnScreen) : '') + ' (фишек в сцене всего: ' + (debt && debt.chipsInScene) + ')');
+  check(debt && debt.probedOnScreen === 2, 'поиск фишек работает: подложенные фишки на экране найдены (' + (debt && debt.probedOnScreen) + ' из 2)');
+  check(centered(debt), 'число по центру экрана по мировым координатам (y ' + midY(debt?.demand) + ' = ' + midY(debt?.screen) + ', x ' + midX(debt?.demand) + ' = ' + midX(debt?.screen) + ')');
+  check(insideScreen(debt), 'число целиком внутри экрана ' + show(debt?.demand) + ' в рамке ' + show(debt?.screen));
+  check(plateBelowScreen(debt), 'накладка монетоприёмника ниже экрана (верх ' + (debt?.coinPlate?.top ?? '—') + ' ≥ низ экрана ' + (debt?.screen?.bottom ?? '—') + ')');
+  check(debt?.coinPlate != null && Math.abs(debt.coinPlate.top - (debt.bodyCenterY + COIN_TOP)) <= 1, 'монетоприёмник там, где написано в atm.ts: верх накладки = середина корпуса ' + COIN_TOP);
+  // slotPosition() — не мёртвые данные: туда летят фишки, значит это середина щели приёмника и точка внутри неё.
+  check(insideBox(debt?.slot, debt?.slit), 'slotPosition() — внутри щели приёмника: ' + show(debt?.slot) + ' в ' + show(debt?.slit));
+  check(debt?.slot != null && debt.slit != null && Math.abs(debt.slot.x - (debt.slit.left + debt.slit.right) / 2) <= 1 && Math.abs(debt.slot.y - (debt.slit.top + debt.slit.bottom) / 2) <= 1,
+    'slotPosition() — середина щели, а не край: ' + show(debt?.slot) + ' и середина ' + (debt?.slit ? Math.round((debt.slit.left + debt.slit.right) / 2) + '×' + Math.round((debt.slit.top + debt.slit.bottom) / 2) : '—'));
+  check(insideRect(debt?.slit, debt?.coinPlate), 'щель приёмника целиком внутри накладки ' + show(debt?.slit) + ' в ' + show(debt?.coinPlate));
+  // Границы деталей — по корпусу, а не по самим размерам из atm.ts: это независимая геометрия (BODY_WIDTH/BODY_HEIGHT),
+  // поэтому заведомо неверный размер экрана или приёмника здесь виден, даже если его число в atm.ts поменяли на любое.
+  check(insideRect(debt?.screen, debt?.body), 'рамка экрана не выходит за корпус: ' + show(debt?.screen) + ' в ' + show(debt?.body));
+  check(insideRect(debt?.coinPlate, debt?.body), 'накладка приёмника не выходит за корпус: ' + show(debt?.coinPlate) + ' в ' + show(debt?.body));
 
   // 5.2: не хватает фишек — GOOD LUCK по центру экрана, значка фишки тоже нет.
   const luck = await atm(30, 0);
   await shot('atm-good-luck.png');
-  check(luck && luck.text === 'GOOD LUCK' && luck.hasChip === false && !luck.chipInBox, 'не хватило фишек: GOOD LUCK без фишки');
-  check(centered(luck), 'GOOD LUCK по центру экрана (y ' + (luck && luck.demandY) + ' ≈ ' + SCREEN_Y + ', центр x ' + (luck && (luck.demand.x + luck.demand.right) / 2) + ')');
-  check(luck && luck.demand.x >= SCREEN.left && luck.demand.right <= SCREEN.right && luck.demand.y >= SCREEN.top && luck.demand.bottom <= SCREEN.bottom, 'GOOD LUCK целиком внутри экрана');
+  check(luck && luck.text === 'GOOD LUCK' && luck.chipsOnScreen.length === 0, 'не хватило фишек: GOOD LUCK без фишки на экране' + (luck && luck.chipsOnScreen.length ? ': ' + JSON.stringify(luck.chipsOnScreen) : ''));
+  check(centered(luck), 'GOOD LUCK по центру экрана по мировым координатам (y ' + midY(luck?.demand) + ' = ' + midY(luck?.screen) + ')');
+  check(insideScreen(luck), 'GOOD LUCK целиком внутри экрана ' + show(luck?.demand));
 
   // 5.3: шестизначный долг ужимается, за ширину экрана не вылезает.
   const big = await atm(999999, 1000000);
   await shot('atm-six-digits.png');
-  check(big && big.text === '999999' && big.demand.right - big.demand.x <= DEMAND_MAX_WIDTH, 'шестизначный долг ужат до ' + (big && big.demand.right - big.demand.x) + ' ≤ ' + DEMAND_MAX_WIDTH);
+  check(big?.demand != null && big.text === '999999' && big.demand.right - big.demand.left <= DEMAND_MAX_WIDTH, 'шестизначный долг ужат до ' + (big?.demand ? big.demand.right - big.demand.left : '—') + ' ≤ ' + DEMAND_MAX_WIDTH);
+  check(insideScreen(big), 'шестизначный долг целиком внутри экрана ' + show(big?.demand));
+  check(centered(big), 'шестизначный долг тоже по центру экрана (x ' + midX(big?.demand) + ' = ' + midX(big?.screen) + ')');
 
   // «Кто есть кто»: встретить Коллектора, Дилера и оба других автомата — только методами сцены.
   await val('window.__g.openShop(); 1');
