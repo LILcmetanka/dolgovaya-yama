@@ -105,6 +105,7 @@ export class GameScene extends CollectorScene {
     // Полоса последнего шанса — после полки: иконки перемешки и подмены уже нарисованы (createItemTextures).
     this.lastChanceBar = new LastChanceBar(this, (action) => this.onLastChanceButton(action), this.tooltip);
     this.amuletRack = new AmuletRack(this, this.sockets, this.tooltip);
+    if (!data.tape) this.grantMemoryAmulet(); // новый забег: амулет, выбранный на прошлой смерти, — сразу в гнездо
     // Полка с включёнными предметами и гнёзда амулетов — до Коллектора: его банкомат, GOOD LUCK и экран KABOOM ложатся поверх всего, что нарисовано раньше.
     this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
     this.chipCase = new ChipCase(this);

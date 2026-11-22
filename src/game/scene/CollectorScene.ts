@@ -1,4 +1,5 @@
 import { interestCoins, TICKETS_PER_DEBT, winFactor } from '../amulets';
+import { amuletTexture, TICKET_TEXTURE } from '../decor';
 import { pactEffects, shiftPacts } from '../dealerGame';
 import { diceWeight } from '../evil';
 import { CHIP_RECORD } from '../gameConfig';
@@ -17,9 +18,11 @@ import {
 import { t } from '../lang';
 import { CENTER_X, DISPLAY, GRID_Y } from '../layout';
 import { machineWinFactor } from '../machines';
+import { memoryOptions, type MemoryOption } from '../memory';
 import { evaluateGrid } from '../patterns';
+import { setRememberedAmulet } from '../progress';
 import { FAILED_DEBT_ROUND_STEP, GRID_ROWS, JOKER, randomSymbol, weightsForRound, WON_DEBT_ROUND_STEP, type Grid, type SlotSymbol, type WeightOf } from '../rules';
-import { GOLD_TEXT, GREEN_TEXT, LAMP_OFF, LAMP_RED } from '../theme';
+import { addText, fitTextWidth, GAME_OVER_DEPTH, GOLD_TEXT, GREEN_TEXT, LAMP_OFF, LAMP_RED } from '../theme';
 import type { LastChanceAction } from '../parts/lastChanceBar';
 import { SaveScene } from './SaveScene';
 
@@ -36,6 +39,19 @@ const INSTANT_WIN_PAUSE = 1200; // входная сетка уже бьёт ц�
 // Победа (набрано CHIP_GOAL).
 const VICTORY_SETTLE_TIME = 400; // после прибавки фишек столько ждём: текущее действие успевает доиграть
 const VICTORY_PAUSE = 1400; // лампы погасли, новое число на табло видно — пауза, потом затемнение
+// Витрина памяти после смерти (шаг 26): слот внутри чёрного экрана автомата, под мигающим заголовком и над счётом.
+const MEMORY_PANEL_Y = 406; // середина панели: заголовок KABOOM стоит на 314, счёт — на 500
+const MEMORY_PANEL_HEIGHT = 96;
+const MEMORY_PANEL_MIN_WIDTH = 260;
+const MEMORY_PANEL_PAD = 16; // поле панели до крестика и края
+const MEMORY_CHIP_STEP = 54; // от значка амулета до значка
+const MEMORY_TITLE_DY = -36; // от середины панели до строки заголовка
+const MEMORY_ICON_DY = -4; // значок амулета; под ним — цена в билетах
+const MEMORY_PRICE_DY = 32;
+const MEMORY_ICON_SCALE = 1.2; // значок 36 px из гнезда чуть крупнее: в витрине виднее
+const MEMORY_DEPTH = GAME_OVER_DEPTH + 1; // над затемнением и заголовком экрана смерти, как кнопка «ЗАНОВО»
+const MEMORY_FILL = 0x0b0b0b;
+const MEMORY_BORDER = 0xfbbf24;
 
 /**
  * Слой Коллектора: в конце раунда к автомату приходит Коллектор. Хватает фишек — из темноты выезжает банкомат, отдаёшь долг,
@@ -60,6 +76,12 @@ export abstract class CollectorScene extends SaveScene {
   private wasShoppingAtVictory = false; // победа застала магазин на экране: «ДАЛЬШЕ» доиграет его выход
   private victoryReached = false; // цель уже взята (порог сверен и пройден): падение баланса ниже chipGoal её не отменяет
   private endScreenCleanup: (() => void) | null = null; // уборка экрана победы: её зовёт «ДАЛЬШЕ»
+  // Витрина памяти (шаг 26): что предложено и что нарисовано на экране смерти. Сценарий проверки читает эти поля.
+  protected memoryOptions: MemoryOption[] = [];
+  private memoryPanel: Phaser.GameObjects.GameObject[] = []; // всё нарисованное в слоте: уборка по крестику
+  protected memoryChips: Phaser.GameObjects.Image[] = []; // значки амулетов: клик по ним и переносит
+  protected memoryBox: Phaser.GameObjects.Rectangle | null = null;
+  protected memoryTitleText: Phaser.GameObjects.Text | null = null;
 
   /** Новый забег: последний шанс не идёт, заморозки нет. */
   protected resetState(): void {
@@ -75,6 +97,11 @@ export abstract class CollectorScene extends SaveScene {
     this.wasShoppingAtVictory = false;
     this.victoryReached = false; // новый забег — цель снова не взята
     this.endScreenCleanup = null;
+    this.memoryOptions = [];
+    this.memoryPanel = [];
+    this.memoryChips = [];
+    this.memoryBox = null;
+    this.memoryTitleText = null;
   }
 
   /** В последнем шансе сердце в музыке бьётся быстрее всего. */
@@ -590,6 +617,103 @@ export abstract class CollectorScene extends SaveScene {
     this.pumpAchievements(); // «ДАЛЬШЕ»: очередь, что ждала под экраном победы, доезжает до игрока
   }
 
+  /**
+   * Витрина памяти (DONTLIKE §2, вариант А): после смерти — один амулет погибшего забега за билеты.
+   * Список и цены считает memory.ts: только уникальные амулеты забега и только те, на которые хватает билетов,
+   * поэтому при нехватке билетов слота нет совсем. Копии не переносятся. Выбор кликом уходит в progress
+   * (setRememberedAmulet) и сработает в начале следующего забега (BaseScene.grantMemoryAmulet).
+   */
+  private showMemorySlot(): void {
+    const options = memoryOptions(this.amulets.map((amulet) => amulet.id), this.tickets);
+    if (options.length === 0) return; // амулетов не было или билетов не хватает — слот не показываем
+    this.memoryOptions = options;
+    const width = Math.max(MEMORY_PANEL_MIN_WIDTH, options.length * MEMORY_CHIP_STEP + MEMORY_PANEL_PAD * 2);
+    const box = this.createMemoryBox(width);
+    this.memoryBox = box;
+    const title = t('memoryTitle');
+    const titleText = this.memoryTitle(title, GOLD_TEXT);
+    fitTextWidth(titleText, title, width - MEMORY_PANEL_PAD * 4, 15, 10);
+    // Крестик — отказ: слот просто убирается, память не пишется.
+    const close = addText(this, CENTER_X + width / 2 - MEMORY_PANEL_PAD, MEMORY_PANEL_Y + MEMORY_TITLE_DY, '✕', {
+      fontSize: '16px',
+      fontStyle: 'bold',
+      color: GOLD_TEXT,
+    }).setOrigin(0.5).setDepth(MEMORY_DEPTH);
+    close.setInteractive({ useHandCursor: true });
+    close.on('pointerdown', () => this.clearMemoryPanel());
+    this.memoryPanel = [box, titleText, close];
+    this.memoryTitleText = titleText;
+    this.memoryChips = [];
+    const start = CENTER_X - ((options.length - 1) * MEMORY_CHIP_STEP) / 2;
+    options.forEach((option, index) => {
+      const x = start + index * MEMORY_CHIP_STEP;
+      const icon = this.add.image(x, MEMORY_PANEL_Y + MEMORY_ICON_DY, amuletTexture(option.amulet)).setScale(MEMORY_ICON_SCALE).setDepth(MEMORY_DEPTH);
+      icon.setInteractive({ useHandCursor: true });
+      icon.on('pointerover', () => icon.setScale(MEMORY_ICON_SCALE * 1.15));
+      icon.on('pointerout', () => icon.setScale(MEMORY_ICON_SCALE));
+      icon.on('pointerdown', () => this.rememberAmulet(option));
+      // Цена в билетах под значком: красный билет и число — так же, как ценники в магазине.
+      const ticket = this.add.image(x - 7, MEMORY_PANEL_Y + MEMORY_PRICE_DY, TICKET_TEXTURE).setScale(0.5).setDepth(MEMORY_DEPTH);
+      const price = addText(this, x + 3, MEMORY_PANEL_Y + MEMORY_PRICE_DY, String(option.price), {
+        fontSize: '13px',
+        fontStyle: 'bold',
+        color: GOLD_TEXT,
+      }).setOrigin(0, 0.5).setDepth(MEMORY_DEPTH);
+      this.memoryPanel.push(icon, ticket, price);
+      this.memoryChips.push(icon);
+    });
+  }
+
+  /** Тёмная панель витрины с золотой рамкой — над экраном автомата и затемнением смерти. */
+  private createMemoryBox(width: number): Phaser.GameObjects.Rectangle {
+    return this.add
+      .rectangle(CENTER_X, MEMORY_PANEL_Y, width, MEMORY_PANEL_HEIGHT, MEMORY_FILL, 0.94)
+      .setRounded(10)
+      .setStrokeStyle(2, MEMORY_BORDER)
+      .setDepth(MEMORY_DEPTH);
+  }
+
+  /** Строка заголовка панели: по центру, тем же золотом, что у кнопок конца забега. */
+  private memoryTitle(text: string, color: string): Phaser.GameObjects.Text {
+    return addText(this, CENTER_X, MEMORY_PANEL_Y + MEMORY_TITLE_DY, text, { fontSize: '15px', fontStyle: 'bold', color })
+      .setOrigin(0.5)
+      .setDepth(MEMORY_DEPTH);
+  }
+
+  /**
+   * Клик по амулету: билеты списываются здесь же (цена — за редкость), выбор пишется в прогресс, витрина
+   * превращается в строку «В ПАМЯТИ: …» с выбранным амулетом. Забег начинается только по «ЗАНОВО».
+   */
+  private rememberAmulet(option: MemoryOption): void {
+    // Двойной клик: слот уже сработал (витрины нет) — второй раз билеты не списываем.
+    if (this.memoryOptions.length === 0) return;
+    if (this.tickets < option.price) return; // не хватает билетов — вариант и не предлагался
+    this.tickets -= option.price; // билеты забега на момент смерти: с этой минуты их меньше на цену
+    setRememberedAmulet(option.amulet.id);
+    this.refreshHud();
+    this.sfx.play('payment');
+    this.clearMemoryPanel();
+    const width = MEMORY_PANEL_MIN_WIDTH;
+    const box = this.createMemoryBox(width);
+    const kept = t('memoryKept', t(option.amulet.name));
+    const titleText = this.memoryTitle(kept, GREEN_TEXT);
+    fitTextWidth(titleText, kept, width - MEMORY_PANEL_PAD * 2, 15, 10);
+    const icon = this.add.image(CENTER_X, MEMORY_PANEL_Y + MEMORY_ICON_DY, amuletTexture(option.amulet)).setScale(MEMORY_ICON_SCALE).setDepth(MEMORY_DEPTH);
+    this.memoryPanel = [box, titleText, icon];
+    this.memoryBox = box;
+    this.memoryTitleText = titleText;
+  }
+
+  /** Убрать слот с экрана смерти: всё нарисованное уничтожается, память не пишется. */
+  private clearMemoryPanel(): void {
+    for (const part of this.memoryPanel) part.destroy();
+    this.memoryPanel = [];
+    this.memoryChips = [];
+    this.memoryOptions = [];
+    this.memoryBox = null;
+    this.memoryTitleText = null;
+  }
+
   /** Конец забега: на экране автомата KABOOM, потом автомат взрывается, всё темнеет, и на нём — KABOOM, счёт, «ЗАНОВО». */
   private kaboom(): void {
     this.isGameOver = true;
@@ -612,6 +736,7 @@ export abstract class CollectorScene extends SaveScene {
         this.collector.clearGoodLuck(); // KABOOM погас: под экраном DEATH не должно остаться старого мигающего заголовка
         this.collector.blackout(() => {
           this.collector.showDeath(this.closedDebts(), this.record, () => this.restartGame(), 'KABOOM');
+          this.showMemorySlot(); // после смерти — один амулет из забега за билеты (шаг 26); после победы его нет
           this.time.delayedCall(RESTART_SPACE_DELAY, () => {
             this.canRestartWithSpace = true;
           });

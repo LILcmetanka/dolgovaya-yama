@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { achievementById, earnedAchievements, type AchievementId, type AchievementState } from '../achievements';
-import { amuletIdsFrom, multiplierStep, START_SOCKETS, type Amulet, type AmuletCounts, type AmuletId } from '../amulets';
+import { amuletIdsFrom, AMULETS, addCopy, multiplierStep, START_SOCKETS, type Amulet, type AmuletCounts, type AmuletId } from '../amulets';
 import { resetCodex } from '../codex';
 import { isDevMode } from '../devmode';
 import type { Pact } from '../dealerGame';
@@ -10,7 +10,7 @@ import { formatChips, t } from '../lang';
 import { PHASES, type Phase } from '../phases';
 import type { MachineId } from '../machines';
 import type { Pattern } from '../patterns';
-import { grantAchievement, hasPattern, markPatternOpen, markTutorialDone, openedPatterns } from '../progress';
+import { grantAchievement, hasPattern, markPatternOpen, markTutorialDone, openedPatterns, rememberedAmulet, setRememberedAmulet } from '../progress';
 import { debtForRound, multiplierForStreak, SPINS_PER_ROUND } from '../rules';
 import { skullShareOf, type WeightContext } from '../skullShare';
 import { SECOND_WIND_START, type RunSave, type TapeState } from '../save';
@@ -261,6 +261,24 @@ export abstract class BaseScene extends Phaser.Scene {
     this.isPaused = false;
     this.isAtMonitor = false;
     this.canRestartWithSpace = false;
+  }
+
+  /**
+   * Память амулетов (шаг 26): амулет, выбранный на экране смерти, стоит в свободном гнезде с первого кадра
+   * нового забега и билетов не стоит — они списаны на смерти (CollectorScene.rememberAmulet). Память читается
+   * один раз и сразу стирается: иначе один и тот же амулет выдавался бы бесплатно в каждом следующем забеге.
+   */
+  protected grantMemoryAmulet(): void {
+    const id = rememberedAmulet();
+    if (id === null) return;
+    // Гнёзд не хватает — амулет подождёт следующего забега: память НЕ стираем, иначе выбор пропал бы впустую.
+    if (this.amulets.length >= this.sockets) return;
+    setRememberedAmulet(null); // прочитано — память чиста, следующий выбор будет после следующей смерти
+    const amulet = AMULETS.find((item) => item.id === id);
+    if (!amulet || this.amulets.some((owned) => owned.id === id)) return; // чужое id или амулет уже есть
+    this.amulets.push(amulet);
+    addCopy(this.amuletCounts, id);
+    this.amuletRack.setAmulets(this.amulets, this.amuletCounts);
   }
 
   /** Обновить табло, окошко множителя, лампочки прокруток, окошко выплаты и записку (светится ли) по текущему состоянию. */
