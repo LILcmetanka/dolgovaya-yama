@@ -1,7 +1,7 @@
 import { INSURANCE_SHARE } from './amulets';
 import type { Words } from './lang';
 import { LOW_PATTERN_MULTIPLIER, TOP_MULTIPLIER, type Pattern } from './patterns';
-import { DEBT_ROUND_TO, isPaying, isUnlocked, streakAfterSkull, SYMBOLS, type SlotSymbol } from './rules';
+import { DEBT_ROUND_TO, debtForRound, isPaying, isUnlocked, streakAfterSkull, SYMBOLS, type SlotSymbol } from './rules';
 
 /**
  * Сделка Дилера (решение автора 15.11.2026, QUESTIONS.md): на экране выпал кубик 🎲 — Дилер кладёт на сукно
@@ -11,9 +11,11 @@ import { DEBT_ROUND_TO, isPaying, isUnlocked, streakAfterSkull, SYMBOLS, type Sl
  * Шаг 10 — ещё три: №4 «тише черепа / потолок серии», №14 «мягкий череп / −1 прокрутка», №17 «выигрыш +25% / черепа навсегда».
  * Шаг 11 — пять: №2 «−20% цен / долг +8%», №5 «страховка 100% / каждая копия вдвое дороже»,
  * №7 «вес джекпота +50% / вес чёрных паттернов +1», №11 «выбранный символ +2 веса / остальным −0,5», №12 «долг −10% / +20%».
- * Шаг 11, партия Б — последние пять: №8 «смена автомата отложена / черепа +2 п.п. навсегда»,
- * №9 «ещё одно второе дыхание / серия −1 ступень», №10 «первый череп не жжёт кон / кон не идёт в цель»,
+ * Шаг 11, партия Б — ещё пять: №8 «смена автомата отложена / черепа +2 п.п. навсегда»,
+ * №10 «первый череп не жжёт кон / кон не идёт в цель»,
  * №13 «бесплатный амулет / −2 места в столбике», №15 «забрать дважды / второе забирание дешевле на 20%».
+ * №9 «ещё один запас прощения» удалена целиком 22.11.2026 (шаг 33, решение автора); прощение провала
+ * убрано шагом 34 — провал спасения сразу кончает забег. В пуле осталось 15 карт.
  * Остальные связки автора добавляются так же: поле в PactEffects и ветка в pactEffects + карта в PACTS.
  * Сделка живёт на кассете как запись { id, untilRound, symbol? } — сколько раундов действует, столько и лежит.
  * Без Phaser — только числа и маленькие функции.
@@ -23,7 +25,7 @@ export type PactId =
   | 'tickets-shop' | 'quiet-round' | 'double-step'
   | 'skull-calm' | 'soft-skull' | 'price-up'
   | 'cheap-shop' | 'full-insurance' | 'jackpot-weight' | 'symbol-weight' | 'debt-cut'
-  | 'machine-delay' | 'extra-breath' | 'safe-bank' | 'free-amulet' | 'double-take';
+  | 'machine-delay' | 'safe-bank' | 'free-amulet' | 'double-take';
 
 /** Карта-сделка: id, сколько раундов живёт и две строки на карте — баф зелёным, дебаф красным. */
 export interface PactSpec {
@@ -145,16 +147,6 @@ export const DEBT_CUT_ROUNDS = 1;
 export const NO_SWAP_ROUNDS = 4;
 /** №8 «черепа +2 п.п. навсегда»: доля черепов выше до конца забега (срок сделки — PACT_LAST_ROUNDS). */
 export const MACHINE_DELAY_SKULL_DELTA = 0.02;
-/** №9 «+1 запас второго дыхания»: сколько запасов даёт карта (разово, но не выше потолка) и сколько ступеней серии снимает. */
-export const EXTRA_BREATH_COUNT = 1;
-export const EXTRA_BREATH_STREAK_COST = 1;
-/** №9: потолок запасов «второго дыхания» — базовый и один от карты; больше двух не даёт ни одна карта. */
-export const SECOND_WIND_MAX = 2;
-/**
- * №9: числа разовые, а срок — до конца забега: запись сделки остаётся маркером «уже брал» (pactLive не даёт взять
- * второй раз), эффекта в раунде у неё нет (ветка в pactEffects без действия).
- */
-export const EXTRA_BREATH_ROUNDS = PACT_LAST_ROUNDS;
 /** №10: столько раундов первый череп не жжёт кон (и собранное за раунд не идёт в цель). */
 export const SAFE_BANK_ROUNDS = 1;
 /** №13 «бесплатный случайный амулет»: столько раундов у столбика предметов на два места меньше. */
@@ -312,18 +304,6 @@ export const PACTS: readonly PactSpec[] = [
     },
   },
   {
-    id: 'extra-breath',
-    rounds: EXTRA_BREATH_ROUNDS,
-    bonus: {
-      ru: `+${EXTRA_BREATH_COUNT} запас «второго дыхания» (не больше ${SECOND_WIND_MAX})`,
-      en: `+${EXTRA_BREATH_COUNT} second wind (max ${SECOND_WIND_MAX})`,
-    },
-    cost: {
-      ru: `серия −${EXTRA_BREATH_STREAK_COST} ступень прямо сейчас`,
-      en: `streak −${EXTRA_BREATH_STREAK_COST} step right now`,
-    },
-  },
-  {
     id: 'safe-bank',
     rounds: SAFE_BANK_ROUNDS,
     bonus: { ru: 'первый череп в раунде не жжёт кон', en: 'first skull spares the pot' },
@@ -431,10 +411,11 @@ export function pactLive(pacts: readonly Pact[], id: PactId, round: number): boo
 }
 
 /**
- * Сдвинуть сроки сделок на delta раундов — когда счёт раундов идёт назад (провал спасения) или вперёд.
- * Сделка живёт не «до номера раунда», а столько раундов, сколько их реально сыграно: без сдвига откат счёта
- * спрятал бы сделку (firstRoundOf > round) — закрытый магазин открылся бы, а сделка потом «реанимировалась» сама.
- * Сроки, ушедшие за нулевой раунд, снимаются.
+ * Сдвинуть сроки сделок на delta раундов: сделка живёт не «до номера раунда», а столько раундов, сколько их реально
+ * сыграно. В игре функцию больше никто не зовёт — счёт раундов в спасении не откатывается (раунд переигрывается тем же
+ * номером, CollectorScene.winRescue/failRescue передают его магазину), поэтому сроки сделок и не сдвигаются.
+ * Живёт для `dealer-sim.mjs` (и старых сценариев с откатом счёта): без сдвига откат спрятал бы сделку
+ * (firstRoundOf > round), и закрытый магазин открылся бы. Сроки, ушедшие за нулевой раунд, снимаются.
  */
 export function shiftPacts(pacts: readonly Pact[], delta: number): Pact[] {
   const step = Number.isFinite(delta) ? Math.trunc(delta) : 0;
@@ -531,10 +512,6 @@ export function pactEffects(pacts: readonly Pact[], round: number): PactEffects 
         effects.skullShareDelta += MACHINE_DELAY_SKULL_DELTA;
         if (round - firstRoundOf(pact) < NO_SWAP_ROUNDS) effects.noMachineSwap = true;
         break;
-      case 'extra-breath':
-        // Запас дыхания и минус ступень серии — разовые (DealerScene.applyPactOnce): в раунде эффекта нет.
-        // Запись живёт до конца забега только маркером «уже брал» — pactLive не даёт взять карту второй раз.
-        break;
       case 'safe-bank':
         // Первый череп в раунде кон не жжёт, но собранное за раунд сгорает вместо автозабора (RoundScene.closeRound).
         effects.bankSurvivesSkull = true;
@@ -559,6 +536,33 @@ export function pactEffects(pacts: readonly Pact[], round: number): PactEffects 
 export function pactDebt(debt: number, mul: number): number {
   if (!Number.isFinite(debt) || !Number.isFinite(mul)) return debt;
   return Math.round((debt * mul) / DEBT_ROUND_TO) * DEBT_ROUND_TO;
+}
+
+/** Долг магазина и множитель, который останется: одно правило для ShopScene (openShop/skipClosedShop) и тестов. */
+export interface ShopDebt {
+  debt: number;
+  debtNextMul: number;
+}
+
+/**
+ * Номер раунда, перед которым встаёт магазин: обычный заход — следующий (round + 1), повтор раунда (выжил в спасении
+ * или провалил его со «вторым дыханием») — тот самый раунд, который переигрывается. Считает его ShopScene.openShop,
+ * и по нему же проверяется сделка «магазин закрыт»: по счёту после отката сделка, взятая в N, потерялась бы в N − 1.
+ */
+export function shopRoundOf(round: number, replayRound?: number): number {
+  return replayRound ?? round + 1;
+}
+
+/**
+ * Долг нового магазина. keepDebt — раунд играется заново (выжил в спасении): долг остаётся РОВНО тем же числом,
+ * а «следующий долг +20%» (№12) не тратится — раунд по номеру не сменился, и разовые «−10% сейчас» / «+8% сейчас»
+ * уже сидят в текущем долге. Иначе — долг следующего раунда по формуле debtForRound с множителем №12, и множитель
+ * сбрасывается: он живёт ровно один долг.
+ * growthMul — улучшение №7 (шаг 28): рост долга ×3,4 вместо ×3,6; на повтор раунда не влияет.
+ */
+export function shopDebt(currentDebt: number, round: number, nextMul: number, keepDebt = false, growthMul = 1): ShopDebt {
+  if (keepDebt) return { debt: currentDebt, debtNextMul: nextMul };
+  return { debt: pactDebt(debtForRound(round, growthMul), nextMul), debtNextMul: 1 };
 }
 
 /**

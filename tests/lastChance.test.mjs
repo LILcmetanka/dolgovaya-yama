@@ -1,11 +1,13 @@
-// Тесты раунда спасения (шаг 27): 5 прокруток, паттерн = выжил, долг не меняется, заморозка блокирует прокрутку.
-// Без Phaser и DOM. Запуск: npm run test:achievements (загрузчик TypeScript — .claude/skills/next-step/ts-resolve.mjs).
+// Тесты раунда спасения (шаг 27): 5 прокруток, паттерн = выжил, долг тот же и раунд заново, заморозка блокирует прокрутку,
+// спасение одно за забег. Без Phaser и DOM. Запуск: npm run test:achievements (загрузчик TypeScript — .claude/skills/next-step/ts-resolve.mjs).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const RESCUE = await import('../src/game/lastChance.ts');
 const RULES = await import('../src/game/rules.ts');
+const DEALER = await import('../src/game/dealerGame.ts');
+const SAVE = await import('../src/game/save.ts');
 
 const symbol = (id) => {
   const found = RULES.SYMBOLS.find((candidate) => candidate.id === id);
@@ -137,23 +139,109 @@ test('первая прокрутка строится с пустой сетк�
   }
 });
 
-test('долг после спасения остаётся тем же: множитель даёт ровно текущий долг', () => {
-  const debt = RULES.debtForRound(4);
-  const nextDebt = RULES.debtForRound(5);
-  assert.equal(debt, 7000);
-  assert.equal(nextDebt, 25190);
-  const mul = RESCUE.rescueDebtMul(debt, nextDebt);
-  // ShopScene.takeDebtForRound делает pactDebt: Math.round(debt * mul / 10) * 10 — долг должен совпасть с текущим.
-  assert.equal(Math.round((nextDebt * mul) / 10) * 10, debt, 'следующий долг не откатился и не вырос');
-  assert.equal(Math.round((RULES.debtForRound(2) * RESCUE.rescueDebtMul(150, RULES.debtForRound(2))) / 10) * 10, 150, 'на первом раунде то же правило');
-  for (const junk of [NaN, 0, -100, Infinity]) assert.equal(RESCUE.rescueDebtMul(junk, nextDebt), 1, `мусор в долге ${junk}`);
-  assert.equal(RESCUE.rescueDebtMul(debt, 0), 1, 'нулевой следующий долг — обычная формула');
+test('долг после выживания ровно тот же: «−10%» и «+8%» не теряются, «+20%» не тратится', () => {
+  // Раунд 4: debtForRound(4) = 7000. Сделка №12 сначала режет текущий долг на 10%, потом ставит +20% следующему.
+  const round = 4;
+  const base = RULES.debtForRound(round);
+  assert.equal(base, 7000, 'долг 4-го раунда не поехал');
+  const cut = DEALER.pactDebt(base, DEALER.DEBT_CUT_MUL);
+  assert.equal(cut, 6300, '«−10% сейчас» дало 6300');
+  const replay = DEALER.shopDebt(cut, round, DEALER.DEBT_NEXT_MUL, true);
+  assert.deepEqual(replay, { debt: 6300, debtNextMul: 1.2 }, 'повтор раунда: долг тот же, «+20%» ждёт следующего долга');
+  assert.notEqual(replay.debt, 8400, 'не 8400: пересчёт стёр бы «−10%»');
+  assert.equal(DEALER.shopDebt(base, round, DEALER.DEBT_NEXT_MUL).debt, 8400, 'пересчёт с «+20%» дал бы 8400 — так было до правки');
+  // №2 «долг +8% сейчас»: повтором раунда долг тоже не двигается.
+  const cheap = DEALER.pactDebt(base, DEALER.CHEAP_SHOP_DEBT_MUL);
+  assert.deepEqual(DEALER.shopDebt(cheap, round, 1, true), { debt: cheap, debtNextMul: 1 }, '«+8%» сохранилось до спасения и после');
+  // Новый раунд (не повтор) по-прежнему считает долг по формуле и тратит множитель ровно на один долг.
+  assert.deepEqual(DEALER.shopDebt(cut, round + 1, DEALER.DEBT_NEXT_MUL), {
+    debt: DEALER.pactDebt(RULES.debtForRound(round + 1), DEALER.DEBT_NEXT_MUL), debtNextMul: 1,
+  });
 });
 
-test('режим долга после спасения: в игре curve, испорченная ручка — frozen', () => {
-  assert.equal(RESCUE.RESCUE_DEBT_MODE, 'curve', 'замер выбрал кривую: долг не замирает, а считается от номера раунда');
-  assert.equal(RESCUE.rescueDebtModeOf(), 'curve', 'по умолчанию — число игры');
-  assert.equal(RESCUE.rescueDebtModeOf('curve'), 'curve', 'ручка curve проходит');
-  assert.equal(RESCUE.rescueDebtModeOf('frozen'), 'frozen', 'ручка frozen проходит');
-  for (const junk of [null, 1, NaN, 'x']) assert.equal(RESCUE.rescueDebtModeOf(junk), 'frozen', `мусор ${String(junk)}`);
+test('shiftPacts(−1): сделка на 1 раунд не исчезает, длинная сдвигается вместе со счётом', () => {
+  const round = 5;
+  const one = DEALER.pactOf('debt-cut', round); // живёт ровно раунд 5
+  const long = DEALER.pactOf('tickets-shop', round); // 4 раунда: 5–8
+  assert.equal(one.untilRound, 5);
+  assert.equal(long.untilRound, 8);
+  const shifted = DEALER.shiftPacts([one, long], -1);
+  assert.deepEqual(shifted.find((pact) => pact.id === 'debt-cut'), { id: 'debt-cut', untilRound: 4 }, 'срок на 1 раунд сдвинулся на 4');
+  assert.deepEqual(shifted.find((pact) => pact.id === 'tickets-shop'), { id: 'tickets-shop', untilRound: 7 }, 'длинный срок сдвинулся на 7');
+  assert.equal(DEALER.pactLive(shifted, 'debt-cut', 4), true, 'в раунде, куда сдвинули счёт, сделка на 1 раунд ещё действует');
+  assert.equal(DEALER.pactEffects(shifted, 4).shopClosed, true, 'и долгая сделка в сдвинутом раунде тоже жива');
+  assert.equal(DEALER.pactLive(shifted, 'debt-cut', 5), false, 'за своим сроком она уже не живёт');
+  assert.deepEqual(DEALER.shiftPacts([{ id: 'debt-cut', untilRound: 1 }], -1), [], 'срок ушёл за нулевой раунд — снимается');
+});
+
+test('переигранный раунд — тот же: сделка на 1 раунд в нём действует, второй раз её не берут', () => {
+  // CollectorScene.winRescue возвращает счёт на 1, магазин прибавляет 1 — номер раунда не меняется, и сроки
+  // сделок не сдвигаются. Сделка, взятая в N, остаётся живой в N, а «текущий долг −10%» второй раз не выдаётся.
+  const round = 6;
+  const pacts = [DEALER.pactOf('debt-cut', round), DEALER.pactOf('skull-calm', round)];
+  const replayed = round; // winRescue: счёт −1, а магазин встаёт перед исходным раундом (openShop(true, replayRound))
+  assert.equal(replayed, round, 'магазин возвращает тот же номер раунда');
+  assert.equal(DEALER.pactLive(pacts, 'debt-cut', replayed), true, '«долг −10%» ещё жив, значит второй раз его не взять');
+  assert.ok(DEALER.pactEffects(pacts, replayed).skullShareDelta < 0, 'короткая «тише черепа» действует в переигранном раунде');
+});
+
+test('«магазин закрыт» проверяется по переигранному раунду, а не по предыдущему', () => {
+  // CollectorScene.winRescue: счёт отступает на 1, а магазину отдаётся ИСХОДНЫЙ номер (ShopScene.openShop(true, replayRound)).
+  const round = 6;
+  const shop = DEALER.pactOf('tickets-shop', round); // 4 раунда: 6–9
+  assert.equal(shop.untilRound, round + DEALER.TICKETS_SHOP_ROUNDS - 1, 'сделка живёт 4 раунда, считая раунд взятия');
+  const stepBack = Math.max(0, round - RESCUE.WON_RESCUE_ROUND_STEP); // счёт после отката, как в winRescue
+  const shopRound = DEALER.shopRoundOf(stepBack, round); // номер магазина: openShop получает исходный раунд
+  assert.equal(shopRound, round, 'магазин встаёт перед переигранным раундом N');
+  assert.equal(DEALER.pactEffects([shop], stepBack).shopClosed, false, 'по счёту после отката сделка ещё не началась — так магазин открывался зря');
+  assert.equal(DEALER.pactEffects([shop], shopRound).shopClosed, true, 'в переигранном N сделка живёт — магазин закрыт, а не открыт');
+  // Обратная ошибка того же счёта: сделка, кончившаяся перед N, закрыла бы магазин лишний раз.
+  const expired = DEALER.pactOf('tickets-shop', round - DEALER.TICKETS_SHOP_ROUNDS); // 2–5
+  assert.equal(DEALER.pactEffects([expired], round - 1).shopClosed, true, 'в N − 1 она ещё жива');
+  assert.equal(DEALER.pactEffects([expired], round).shopClosed, false, 'в переигранном N кончилась — магазин открыт');
+  // Повтор раунда не воскрешает и не съедает сделку: сроки те же, номер тот же.
+  const debtCut = DEALER.pactOf('debt-cut', round); // ровно раунд 6
+  assert.equal(DEALER.pactLive([debtCut], 'debt-cut', round), true, 'сделка на 1 раунд в переигранном раунде действует — второй раз её не взять');
+  assert.equal(DEALER.shopRoundOf(round), round + 1, 'обычный заход (долг отдан) — магазин перед следующим раундом');
+});
+
+test('shopDebt: крайние раунды и мусор в «+20%»', () => {
+  // Раунды 0 и 1: формула не упирается в ноль и не отдаёт мусор — долг обычное положительное число, кратное шагу.
+  for (const round of [0, 1]) {
+    const next = DEALER.shopDebt(1234, round, 1);
+    assert.deepEqual(next, { debt: RULES.debtForRound(round), debtNextMul: 1 }, `раунд ${round}: долг по формуле, множитель сброшен`);
+    assert.ok(Number.isFinite(next.debt) && next.debt > 0, `раунд ${round}: долг — обычное положительное число`);
+    assert.equal(next.debt % RULES.DEBT_ROUND_TO, 0, `раунд ${round}: долг округлён до ${RULES.DEBT_ROUND_TO}`);
+  }
+  assert.ok(RULES.debtForRound(0) < RULES.debtForRound(1), 'раунд 0 дешевле первого: откат счёта долг не растит');
+  // Мусор в множителе «следующий долг +20%» (dealerGame.pactDebt): долг считается без него, а множитель тратится.
+  for (const junk of [NaN, Infinity, -Infinity]) {
+    const next = DEALER.shopDebt(7000, 4, junk);
+    assert.deepEqual(next, { debt: RULES.debtForRound(4), debtNextMul: 1 }, `множитель ${junk}: долг как есть, множитель сброшен`);
+  }
+  // Повтор раунда мусор не роняет: долг возвращается как есть, ничего не пересчитывается.
+  for (const junk of [NaN, Infinity, -Infinity]) {
+    const replay = DEALER.shopDebt(6300, 4, junk, true);
+    assert.equal(replay.debt, 6300, `повтор раунда с множителем ${junk}: долг ровно тот же`);
+  }
+});
+
+test('флаг спасения липкий на кассете: старая плёнка — «не было», плёнка до ямы не снимает текущий', () => {
+  assert.equal(SAVE.rescueUsedOf({}), false, 'старая плёнка без поля — спасения не было');
+  assert.equal(SAVE.rescueUsedOf({}, true), true, 'текущий флаг сильнее плёнки');
+  assert.equal(SAVE.rescueUsedOf({ rescueUsed: true }, false), true, 'плёнка с ямой');
+  assert.equal(SAVE.rescueUsedOf({ rescueUsed: false }, true), true, 'запись до ямы не возвращает вторую яму');
+  assert.equal(SAVE.rescueUsedOf({ rescueUsed: 'да' }, false), false, 'мусор в поле — «не было»');
+});
+
+test('вторая нехватка фишек: спасения больше не дают, провал спасения — сразу смерть', () => {
+  // Так же, как CollectorScene.callCollector: флаг с плёнки/текущий -> rescueAllowed решает, идти в спасение.
+  assert.equal(RESCUE.rescueAllowed(SAVE.rescueUsedOf({}, false)), true, 'первая яма за забег даёт раунд спасения');
+  assert.equal(RESCUE.rescueAllowed(SAVE.rescueUsedOf({}, true)), false, 'вторая яма — сразу KABOOM, без GOOD LUCK');
+  assert.equal(RESCUE.rescueAllowed(SAVE.rescueUsedOf({ rescueUsed: true }, false)), false, 'плёнка до ямы тоже не прощает');
+  // Провал спасения прощения не имеет (шаг 34): прокрутки кончились без паттерна — смерть, запаса нет.
+  assert.equal(RESCUE.rescueOutcome(checker(), 0), 'dead', 'провал спасения — KABOOM сразу');
+  assert.equal(Object.keys(SAVE).some((key) => key.toLowerCase().includes('secondwind')), false, 'в save.ts нет запаса прощения');
+  // Старая плёнка с полем счётчика читается: лишнее поле игнорируется, флаг спасения работает как прежде.
+  assert.equal(SAVE.rescueUsedOf({ rescueUsed: true, ['second' + 'WindLeft']: 0 }), true, 'плёнка со старым полем — прочитана');
 });

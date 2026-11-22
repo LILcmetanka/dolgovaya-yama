@@ -4,15 +4,12 @@ import {
   CHEAP_SHOP_DEBT_MUL,
   DEBT_CUT_MUL,
   DEBT_NEXT_MUL,
-  EXTRA_BREATH_COUNT,
-  EXTRA_BREATH_STREAK_COST,
   offerPacts,
   PACT_TICKETS,
   pactDebt,
   pactLive,
   pactOf,
   pactSymbols,
-  SECOND_WIND_MAX,
   type PactSpec,
   type PactId,
 } from '../dealerGame';
@@ -79,14 +76,6 @@ export abstract class DealerScene extends RoundScene {
       this.sfx.play('deny');
       return;
     }
-    // №9: запас дыхания даётся один раз за забег. Пока сделка на кассете, её отсекает pactLive; после отката кассетой
-    // записи уже нет, и второй раз карту не взять только по флагу breathTaken (он откат переживает).
-    if (spec.id === 'extra-breath' && this.breathTaken) {
-      this.sfx.play('deny');
-      this.tooltip.show(t('pactAlreadyTaken'), '');
-      this.time.delayedCall(PACT_DENY_HINT_TIME, () => this.tooltip.hide());
-      return;
-    }
     // №13: бесплатный амулет некуда поставить (нет свободного сосуда или брать уже нечего) — карта не берётся,
     // стол остаётся, а игроку у курсора всплывает короткая надпись: стекло под сукном не видно.
     if (spec.id === 'free-amulet' && !this.freeAmuletCandidate()) {
@@ -106,8 +95,8 @@ export abstract class DealerScene extends RoundScene {
 
   /**
    * Что сделка делает один раз, в момент взятия (в PactEffects этого нет — там только то, что живёт раундами):
-   * №6 — билет, №2 — долг +8%, №12 — текущий долг −10% и следующий +20%, №9 — ещё один запас «второго дыхания»
-   * и −1 ступень серии, №13 — бесплатный случайный амулет.
+   * №6 — билет, №2 — долг +8%, №12 — текущий долг −10% и следующий +20%, №13 — бесплатный случайный амулет.
+   * (№9 «ещё один запас прощения» удалена 22.11.2026 шагом 33; сам запас прощения убран шагом 34.)
    */
   private applyPactOnce(id: PactId): void {
     switch (id) {
@@ -121,12 +110,6 @@ export abstract class DealerScene extends RoundScene {
         this.debt = pactDebt(this.debt, DEBT_CUT_MUL);
         this.debtNextMul = DEBT_NEXT_MUL; // следующий долг дороже: применит и сбросит ShopScene.takeDebtForRound
         break;
-      case 'extra-breath':
-        // Запас дыхания — навсегда, но не выше SECOND_WIND_MAX; ступень серии — сразу: панель множителя обновит refreshHud.
-        this.secondWindLeft = Math.min(SECOND_WIND_MAX, this.secondWindLeft + EXTRA_BREATH_COUNT);
-        this.streak = Math.max(0, this.streak - EXTRA_BREATH_STREAK_COST);
-        this.breathTaken = true; // карта одна на забег: откат кассетой этой памяти не снимает
-        break;
       case 'free-amulet':
         this.gainFreeAmulet();
         break;
@@ -137,16 +120,16 @@ export abstract class DealerScene extends RoundScene {
 
   /**
    * №13: можно ли взять карту «бесплатный случайный амулет» — нужен свободный сосуд и хоть один кандидат
-   * (randomAmuletOffer уважает maxCopies). Нет — карта не берётся, как отказ Дилера.
+   * (randomAmuletOffer уважает maxCopies, поднятый улучшением №27). Нет — карта не берётся, как отказ Дилера.
    */
   private freeAmuletCandidate(): boolean {
     if (this.amulets.length >= this.sockets) return false;
-    return randomAmuletOffer(this.amuletIds()).length > 0;
+    return randomAmuletOffer(this.amuletIds(), this.upgradeEffects.amuletMaxCopies).length > 0;
   }
 
   /** №13: случайный амулет из пула (maxCopies) — сразу в свободное гнездо, без билетов. Копия — в гнездо своего амулета. */
   private gainFreeAmulet(): void {
-    const [amulet] = randomAmuletOffer(this.amuletIds());
+    const [amulet] = randomAmuletOffer(this.amuletIds(), this.upgradeEffects.amuletMaxCopies);
     if (!amulet) return;
     if (!this.amulets.some((owned) => owned.id === amulet.id)) this.amulets.push(amulet); // гнездо занято сразу
     addCopy(this.amuletCounts, amulet.id);

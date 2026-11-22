@@ -36,11 +36,12 @@ import {
   type SlotEffectId,
 } from '../items';
 import { t } from '../lang';
+import { jackpotWinFactor, keepsHammerAfter, skullCancelAllowed, startGridOf } from '../upgrades';
 import { RESCUE_SKULL_SHARE } from '../lastChance';
-import { machineAtRoundStart, machineWinFactor } from '../machines';
+import { machineAtRoundStart, machineWinFactor, MACHINE_SWAP_CHANCE } from '../machines';
 import { phaseAt } from '../phases';
 import { skullShareOf, symbolWeightOf, type WeightContext } from '../skullShare';
-import { CENTER_X, cellX, cellY, DISPLAY, GRID_Y, PAYOUT_WINDOW, SPIN_LAMPS_Y } from '../layout';
+import { CENTER_X, cellX, cellY, DISPLAY, GRID_Y, PAYOUT_WINDOW, SCREEN, SPIN_LAMPS_Y } from '../layout';
 import { evaluateGrid, lockedColumns, ticketCells, type SpinResult } from '../patterns';
 import { revealStepMs, revealSteps, WIN_REVEAL_FADE_SHARE, WIN_REVEAL_HOLD, winGain, type RevealStep } from '../reveal';
 import {
@@ -60,7 +61,7 @@ import {
   type WeightOf,
 } from '../rules';
 import { effectPosition } from '../parts/itemShelf';
-import { BLUE_TEXT, GOLD_TEXT, LAMP_BLUE, LAMP_GOLD, LAMP_GREEN, LAMP_RED, PURPLE_TEXT, RED_TEXT } from '../theme';
+import { addText, BLUE_TEXT, GOLD_TEXT, LAMP_BLUE, LAMP_GOLD, LAMP_GREEN, LAMP_RED, PURPLE_TEXT, RED_TEXT } from '../theme';
 import { MachineScene } from './MachineScene';
 
 const COLLECT_DELAY = 1300; // после последней прокрутки: пусть фишки долетят до табло, потом расплата, мс
@@ -76,6 +77,15 @@ const TICKET_BORDER = 0xf59e0b; // рамки на клетках с билет�
 const SPIDER_BORDER = 0xa855f7; // рамки на пауках, когда они съели часть кона
 const REVEAL_NOTE_SPIN = 3; // после третьей прокрутки из тьмы проступает долг (первый забег)
 const MIN_ROUND_SPINS = 1; // сделка «−1 прокрутка» не может оставить раунд без прокруток вовсе
+// Улучшение №50 (28г): плашка «ОТМЕНИТЬ ЧЕРЕП» рядом с полем — видна, только пока череп можно отменить.
+const SKULL_CANCEL_TIME = 1600; // столько висит плашка: не нажали — череп срабатывает как обычно, мс
+const SKULL_CANCEL_Y = SCREEN.y + SCREEN.height / 2 + 16; // между окном сетки (456) и лампочками прокруток (492)
+const SKULL_CANCEL_WIDTH = 260;
+const SKULL_CANCEL_HEIGHT = 26;
+const SKULL_CANCEL_FILL = 0x1f0a0a;
+const SKULL_CANCEL_BORDER = LAMP_RED;
+const SKULL_CANCEL_DEPTH = 12; // над сеткой и всплывашками, под подсказкой (25) и паузой (30)
+const SKULL_CANCEL_FONT = '13px';
 // Прошлый попап шага гаснет к следующему; POPUP_TIME не трогаем — он для прочих надписей.
 const WIN_POPUP_FADE_MS = 90;
 
@@ -126,6 +136,12 @@ export abstract class RoundScene extends MachineScene {
   private revealShown: number | null = null;
   // Последний попап шага каскада: его гасим к следующему шагу, чтобы надписи не копились.
   private winPopup: Phaser.GameObjects.Text | null = null;
+  // Улучшение №4 (шаг 28): бесплатная прокрутка за первый паттерн черепов в раунде — одна на раунд.
+  private skullFreeSpinGiven = false;
+  // Улучшение №50 (28г): череп выпал, отмена ещё доступна — итог ждёт нажатия плашки или конца её таймера.
+  private pendingSkull: { grid: Grid; result: SpinResult; isBloody: boolean } | null = null;
+  private skullCancelTimer: Phaser.Time.TimerEvent | null = null;
+  private skullCancelBox: Phaser.GameObjects.GameObject[] | null = null;
 
   /** Новый забег: прокруток ещё не было, решения по перемешке не висит, сделок Дилера нет. */
   protected resetState(): void {
@@ -137,6 +153,8 @@ export abstract class RoundScene extends MachineScene {
     this.tookExtraThisSpin = false;
     this.lastTakeAmount = 0;
     this.bankKeptThisRound = false;
+    this.skullFreeSpinGiven = false; // №4: в новом забеге бесплатная прокрутка за черепа ещё не выдана
+    this.clearSkullCancel(); // №50: плашка отмены не должна пережить сброс забега
     this.bellSkull = 0; // колокольчик: в новом забеге 🔔 ещё не срабатывал
     this.revealId += 1; // новый забег: недосмотренный каскад не должен вернуться в него своим колбэком
     this.revealShown = null;
@@ -195,7 +213,12 @@ export abstract class RoundScene extends MachineScene {
     const weightOf = (symbol: SlotSymbol): number => this.symbolWeight(symbol, base, isFree);
     // Результат известен сразу (после клевера — с паттерном), анимация только показывает его.
     // Клевер на сетку и ржавый столбец работают всегда: спокойного режима больше нет.
-    const grid = this.rollGrid(weightOf, true, true);
+    let grid = this.rollGrid(weightOf, true, true);
+    // Улучшения №32/33 (шаг 28в): первая сетка забега — с джокером и выбранным символом. Один раз за забег.
+    if (!this.startGridGiven) {
+      grid = startGridOf(grid, this.upgradeEffects, this.startSymbolId);
+      this.startGridGiven = true;
+    }
     this.screen.spin(grid, weightOf, () => this.finishSpin(grid, weightOf, multiplier, isFree));
   }
 
@@ -220,8 +243,8 @@ export abstract class RoundScene extends MachineScene {
     const base = super.weightContext();
     const effects = pactEffects(this.pacts, this.round);
     const withLuck: WeightContext = effects.symbolLuck ? { ...base, symbolLuck: effects.symbolLuck } : base;
-    // Сделки Дилера и колокольчик двигают долю черепов каждый по-своему (может выйти и минус).
-    const delta = effects.skullShareDelta + this.bellSkull;
+    // Сделки Дилера, колокольчик и улучшение №31 (шаг 28в) двигают долю черепов каждый по-своему (может выйти и минус).
+    const delta = effects.skullShareDelta + this.bellSkull + this.upgradeEffects.skullShareDelta;
     if (delta === 0 || !Number.isFinite(delta)) return withLuck;
     const mul = skullShareWeightMul(skullShareOf(this.round, this.diceDrought, withLuck), delta);
     return mul === 1 ? withLuck : { ...withLuck, skullMul: mul };
@@ -308,6 +331,12 @@ export abstract class RoundScene extends MachineScene {
     if (locked.length > 0) this.sfx.play('lock');
     if (this.isBloodNext) this.sfx.play('blood');
     if (result.kind === 'skull') {
+      // Улучшение №50 (28г): если череп действительно сжёг бы кон — сначала плашка «ОТМЕНИТЬ ЧЕРЕП»,
+      // и только потом обычный итог (его вызовет resolveSkullCancel). Отменили — ни кона, ни серии.
+      if (this.canCancelSkull()) {
+        this.offerSkullCancel(grid, result, isBloody);
+        return;
+      }
       this.onSkulls(result, isBloody);
       this.finishSpinOutcome(grid, result); // черепам показывать нечего: итог идёт сразу, как раньше
     } else {
@@ -340,9 +369,10 @@ export abstract class RoundScene extends MachineScene {
     // «Везунчик» и «Я играю не туда» должны их видеть (после сброса флагов эти ачивки не выпадали бы никогда).
     // «50 на 50» тоже получает долю именно этой прокрутки — ту, с которой она крутилась.
     this.checkAchievements(result.kind === 'win');
-    // Риск, молот и фарт действуют на одну прокрутку — она прошла, гаснут.
+    // Риск, молот и фарт действуют на одну прокрутку — она прошла, гаснут. Молот с улучшением №25 (28б)
+    // переживает прокрутку без выигрыша: у замка не было что блокировать, предмет ждёт следующей.
     this.itemEffects.risk = false;
-    this.itemEffects.hammer = false;
+    if (!keepsHammerAfter(result.kind, this.upgradeEffects.keepsHammerOnEmpty)) this.itemEffects.hammer = false;
     this.itemEffects.luckSpin = false;
     // Перемешка и подмена здесь не гаснут: выбор их уже погасил (applyShuffle/applySwap). Если заряжены оба,
     // подмена осталась на следующую платную прокрутку — до конца раунда её снимет clearRoundEffects.
@@ -489,32 +519,117 @@ export abstract class RoundScene extends MachineScene {
     this.payout.addWin(this.pot, this.debt); // сумма в окошке — по новому кону
   }
 
-  /** Паттерн из черепов: первым его отбивает бронежилет, потом щит, иначе кон сгорает. Коллекционер костей их считает. */
-  private onSkulls(result: SpinResult, isBloody: boolean): void {
-    this.bones += 1;
-    if (owns(this.amuletIds(), 'bones')) this.amuletRack.trigger('bones');
-    this.showBones();
-    if (this.roundShields > 0) {
-      this.roundShields -= 1;
-      this.amuletRack.trigger('vest');
-      this.blockSkulls(result);
-    } else if (this.itemEffects.shields > 0) {
-      this.itemEffects.shields -= 1;
-      this.itemShelf.spend('shield', CENTER_X, GRID_Y); // щит летит на сетку и тает
-      this.itemShelf.refreshPulses(); // щит потрачен: место у экрана могло освободиться — второй щит на полке снова годен
-      this.blockSkulls(result);
-    } else {
-      // Сделка №10: первый череп в этом раунде кон не жжёт (потом жжёт как обычно). Серия падает в любом случае.
-      const keepsPot = pactEffects(this.pacts, this.round).bankSurvivesSkull && !this.bankKeptThisRound;
-      if (keepsPot) this.bankKeptThisRound = true;
-      this.burnPot(result, keepsPot);
-      if (isBloody) this.burnBoard();
+  /**
+   * Улучшение №50 (28г): можно ли сейчас отменить череп. Только если улучшение куплено и в этом забеге ещё не
+   * тратилось, и только когда череп правда сжёг бы кон: щит и бронежилет его и так отобьют, сделка №10 «первый
+   * череп не жжёт» — тоже, а в раунде спасения свои правила (черепа там не жгут кон вовсе).
+   */
+  private canCancelSkull(): boolean {
+    if (this.isRescue) return false;
+    if (!skullCancelAllowed(this.upgradeEffects, this.skullCancelUsedThisRun)) return false;
+    if (this.roundShields > 0 || this.itemEffects.shields > 0) return false;
+    const pact = pactEffects(this.pacts, this.round);
+    return !(pact.bankSurvivesSkull && !this.bankKeptThisRound);
+  }
+
+  /**
+   * Плашка «ОТМЕНИТЬ ЧЕРЕП» рядом с полем: маленькая, висит SKULL_CANCEL_TIME. Нажали — череп отменяется,
+   * не нажали — срабатывает как обычно (resolveSkullCancel(false)). Пока плашка висит, ввод закрыт: прокрутка
+   * ещё не осела, второй рычаг нажать нельзя.
+   */
+  private offerSkullCancel(grid: Grid, result: SpinResult, isBloody: boolean): void {
+    this.pendingSkull = { grid, result, isBloody };
+    this.isSpinning = true;
+    this.sfx.play('warning', 0.25);
+    const box = this.add
+      .rectangle(CENTER_X, SKULL_CANCEL_Y, SKULL_CANCEL_WIDTH, SKULL_CANCEL_HEIGHT, SKULL_CANCEL_FILL, 0.94)
+      .setRounded(7)
+      .setStrokeStyle(2, SKULL_CANCEL_BORDER)
+      .setDepth(SKULL_CANCEL_DEPTH);
+    box.setInteractive({ useHandCursor: true }); // клик — отмена; мимо плашки кликать некуда (ввод и так закрыт)
+    box.on('pointerdown', () => this.resolveSkullCancel(true));
+    const label = addText(this, CENTER_X, SKULL_CANCEL_Y, t('skullCancel'), {
+      fontSize: SKULL_CANCEL_FONT,
+      fontStyle: 'bold',
+      color: GOLD_TEXT,
+    }).setOrigin(0.5).setDepth(SKULL_CANCEL_DEPTH);
+    this.skullCancelBox = [box, label];
+    this.skullCancelTimer = this.time.delayedCall(SKULL_CANCEL_TIME, () => this.resolveSkullCancel(false));
+    this.refreshHud();
+  }
+
+  /**
+   * Итог черепа после плашки: cancelled — игрок отменил. Отмена одноразовая за забег (флаг липкий: откат кассетой
+   * вторую не даёт), кон и серия остаются как были; иначе — обычный onSkulls. Дальше всегда finishSpinOutcome,
+   * чтобы короны, клевер, ачивки и продолжение раунда отработали как после любой прокрутки.
+   */
+  protected resolveSkullCancel(cancelled: boolean): void {
+    const pending = this.pendingSkull;
+    if (!pending) return;
+    this.pendingSkull = null;
+    this.clearSkullCancel();
+    if (cancelled) {
+      this.skullCancelUsedThisRun = true;
+      this.sfx.play('shield');
+      this.effects.popup(t('skullCancelled'), BLUE_TEXT);
     }
+    this.isSpinning = false;
+    this.onSkulls(pending.result, pending.isBloody, cancelled);
+    this.finishSpinOutcome(pending.grid, pending.result);
+  }
+
+  /** Убрать плашку и её таймер: решение снято (нажали, время вышло или забег начинается заново). */
+  private clearSkullCancel(): void {
+    this.skullCancelTimer?.remove();
+    this.skullCancelTimer = null;
+    for (const part of this.skullCancelBox ?? []) part.destroy();
+    this.skullCancelBox = null;
+    this.pendingSkull = null;
+  }
+
+  /** Паттерн из черепов: первым его отбивает бронежилет, потом щит, иначе кон сгорает. Коллекционер костей их считает. */
+  private onSkulls(result: SpinResult, isBloody: boolean, cancelled = false): void {
+    this.bones += 1; // паттерн из черепов выпал в любом случае — его и считает Коллекционер костей
+    if (owns(this.amuletIds(), 'bones')) this.amuletRack.trigger('bones');
+    if (!cancelled) {
+      this.grantSkullFreeSpin(); // улучшение №4: первый паттерн черепов в раунде даёт бесплатную прокрутку
+      if (this.roundShields > 0) {
+        this.roundShields -= 1;
+        this.amuletRack.trigger('vest');
+        this.blockSkulls(result);
+      } else if (this.itemEffects.shields > 0) {
+        this.itemEffects.shields -= 1;
+        this.itemShelf.spend('shield', CENTER_X, GRID_Y); // щит летит на сетку и тает
+        this.itemShelf.refreshPulses(); // щит потрачен: место у экрана могло освободиться — второй щит на полке снова годен
+        this.blockSkulls(result);
+      } else {
+        // Сделка №10: первый череп в этом раунде кон не жжёт (потом жжёт как обычно). Серия падает в любом случае.
+        const keepsPot = pactEffects(this.pacts, this.round).bankSurvivesSkull && !this.bankKeptThisRound;
+        if (keepsPot) this.bankKeptThisRound = true;
+        this.burnPot(result, keepsPot);
+        if (isBloody) this.burnBoard();
+      }
+    }
+    this.showBones();
+  }
+
+  /**
+   * Улучшение №4 (шаг 28): первый паттерн черепов в раунде даёт бесплатную прокрутку — она крутится сама и по правилам
+   * бесплатных (без черепов, кубика, пауков), как прокрутки за короны. За раунд такая одна: счётчик skullFreeSpinGiven.
+   * Почему в onSkulls, а не в burnPot: черепа отбил щит — это всё равно «первый череп раунда», подарок он не отменяет.
+   */
+  private grantSkullFreeSpin(): void {
+    if (!this.upgradeEffects.freeSpinAfterFirstSkull || this.skullFreeSpinGiven) return;
+    this.skullFreeSpinGiven = true;
+    this.freeSpins += 1;
+    this.freeSpinsAwarded += 1; // считаем и её: предохранитель FREE_SPINS_GUARD видит все бесплатные прокрутки раунда
+    this.panel.showFreeSpins(this.freeSpins);
+    this.effects.popupAt(CENTER_X, SPIN_LAMPS_Y - 20, '+1', GOLD_TEXT);
+    this.sfx.play('news', 0.3);
   }
 
   /** Кровавая прокрутка с черепами: сгорает ещё и часть фишек на табло. */
-  private burnBoard(): void {
-    const burned = bloodBurn(this.balance);
+  private burnBoard(): void {    const burned = bloodBurn(this.balance);
     if (burned === 0) return;
     this.balance -= burned;
     this.effects.popupAt(DISPLAY.x, DISPLAY.y + 50, `−${burned}`, RED_TEXT);
@@ -525,12 +640,14 @@ export abstract class RoundScene extends MachineScene {
   /**
    * Черепа сжигают кон вместе с выигрышем этой прокрутки, серия падает до трети. Страховка возвращает на табло
    * `INSURANCE_SHARE` сгоревшего — по разу за копию: каждая копия даёт в раунде ещё одно спасение (`insuranceSaves`).
-   * Сделка №5 «страховка возвращает 100%» поднимает долю возврата до всего кона (pactEffects.insuranceShare).
+   * Сделка №5 «страховка возвращает 100%» поднимает долю возврата до всего кона (pactEffects.insuranceShare),
+   * улучшение №15 — до 80%: берём большую из двух, чтобы улучшение не отменило сделку.
    * keepsPot (сделка №10) — кон остаётся: сгорать нечему, страховка не тратится, но серия падает как обычно.
    */
   private burnPot(result: SpinResult, keepsPot = false): void {
     const lost = keepsPot ? 0 : this.pot;
-    const refund = insuranceRefund(lost, this.amuletIds(), this.insuranceSaves, pactEffects(this.pacts, this.round).insuranceShare);
+    const share = Math.max(pactEffects(this.pacts, this.round).insuranceShare, this.upgradeEffects.insuranceShare);
+    const refund = insuranceRefund(lost, this.amuletIds(), this.insuranceSaves, share);
     if (!keepsPot) this.pot = 0;
     // Сделки с черепом: «череп в ×1» обнуляет серию, «мягкий череп» снимает одну ступень (одно очко серии),
     // иначе остаётся треть (SKULL_KEEPS_STREAK).
@@ -587,17 +704,20 @@ export abstract class RoundScene extends MachineScene {
   private addToPot(result: SpinResult, multiplier: number, isBloody: boolean, done: () => void): void {
     const ids = this.amuletIds();
     const win = amuletPatternWin(result.hits, ids);
+    const jackpot = result.hits.some((hit) => hit.pattern.id === 'jackpot'); // №34: только джекпот, не все ×100
     const factor =
       winFactor(ids, this.bones) *
       (isBloody ? BLOOD_WIN : 1) * // кровавая прокрутка — ×3
       machineWinFactor(this.machineId) *
       (this.itemEffects.risk ? RISK_WIN_FACTOR : 1) * // риск: выигрыш ×10 (видно в подсказке как ×10)
-      pactEffects(this.pacts, this.round).winMul; // сделка «выигрыш паттернов +N%» — только паттерны, не «забрать»
+      pactEffects(this.pacts, this.round).winMul * // сделка «выигрыш паттернов +N%» — только паттерны, не «забрать»
+      this.upgradeEffects.winMul * // улучшение №12 «выигрыш паттернов +5%» (шаг 28) — тоже только паттерны
+      jackpotWinFactor(jackpot, this.upgradeEffects); // улучшение №34: джекпот ×1,2 (×120 вместо ×100)
     const gain = winGain(result.hits, ids, multiplier, factor); // та же формула, что в показе по шагам (revealSteps)
     const potBefore = this.pot; // от него окошко выплаты показывает, как кон растёт по шагам
     this.pot += gain;
     // Колокольчик: прокрутки, но не выше потолка. Показываем, сколько добавилось на самом деле: у потолка бывает и 0.
-    const extra = spinsAfterBonus(this.spinsLeft, bellSpins(result.hits, ids)) - this.spinsLeft;
+    const extra = spinsAfterBonus(this.spinsLeft, bellSpins(result.hits, ids), this.spinCap()) - this.spinsLeft;
     this.spinsLeft += extra;
     // Колокольчик греет черепа: поправку копим по всем срабатываниям раунда, даже когда прокрутки уже у потолка
     // (сработало же). Дальше она живёт в weightContext — и в прокрутке, и на плашке «💀 N%».
@@ -718,9 +838,9 @@ export abstract class RoundScene extends MachineScene {
     this.winPopup = null;
   }
 
-  /** Прокрутка без выигрыша: копилка кладёт на кон немного фишек (× множитель). */
+  /** Прокрутка без выигрыша: копилка кладёт на кон немного фишек (× множитель), с улучшением №14 — ещё +1 фишку. */
   private feedPiggy(multiplier: number): void {
-    const coins = piggyCoins(multiplier, this.amuletIds());
+    const coins = piggyCoins(multiplier, this.amuletIds(), this.upgradeEffects.piggyBonus);
     if (coins === 0) return;
     this.pot += coins;
     this.sfx.play('coin');
@@ -841,7 +961,7 @@ export abstract class RoundScene extends MachineScene {
   private denyReason(item: Item): 'conflict' | 'busy' | 'full' | null {
     // Риск с фартом несовместимы — попытка включить один при другом и есть «Неа».
     if (conflictsWith(item.id, this.itemEffects)) return 'conflict';
-    if (isItemOn(item.id, this.itemEffects) || (item.id === 'cigarette' && this.spinsLeft >= MAX_SPINS_PER_ROUND)) return 'busy';
+    if (isItemOn(item.id, this.itemEffects) || (item.id === 'cigarette' && this.spinsLeft >= this.spinCap())) return 'busy';
     if (takesEffectSlot(item.id) && activeSlotEffects(this.itemEffects).length >= this.effectPlaces()) return 'full';
     return null;
   }
@@ -849,6 +969,14 @@ export abstract class RoundScene extends MachineScene {
   /** Сколько мест у экрана сейчас даёт столбик (сделка №13 короче: предел — effectSlotLimit). */
   private effectPlaces(): number {
     return effectSlotLimit(pactEffects(this.pacts, this.round).effectSlotsDelta);
+  }
+
+  /**
+   * Потолок прокруток в раунде: MAX_SPINS_PER_ROUND плюс улучшение №3 (шаг 28). Через него считаются все бонусные
+   * прокрутки (колокольчик, джекпот, фаза, сигарета) и запрет сигареты у потолка — иначе улучшение работало бы наполовину.
+   */
+  private spinCap(): number {
+    return MAX_SPINS_PER_ROUND + this.upgradeEffects.spinCapBonus;
   }
 
   /**
@@ -913,7 +1041,7 @@ export abstract class RoundScene extends MachineScene {
   private activateItem(item: Item): void {
     switch (item.id) {
       case 'cigarette':
-        this.spinsLeft = spinsAfterBonus(this.spinsLeft, CIGARETTE_SPINS);
+        this.spinsLeft = spinsAfterBonus(this.spinsLeft, CIGARETTE_SPINS, this.spinCap());
         this.cigarettesThisRound += 1; // третья за раунд — «Курильщик»
         if (this.cigarettesThisRound === CIGARETTES_FOR_ACHIEVEMENT) this.unlockAchievement('smoker');
         break;
@@ -983,7 +1111,9 @@ export abstract class RoundScene extends MachineScene {
     this.cigarettesThisRound = 0; // и сигареты тоже
     // Автомат сам редко меняется в начале раунда: первый раунд — всегда тот, что стоит с забега.
     // Сделка №8 держит автомат первые NO_SWAP_ROUNDS своих раундов: тогда он остаётся прежним и новости о смене нет.
-    const machine = pactEffects(this.pacts, this.round).noMachineSwap ? this.machineId : machineAtRoundStart(this.machineId, this.round);
+    // Улучшение №48 (28г) отключает смену совсем — шанс 0, как будто сделка держит автомат всегда.
+    const swapChance = this.upgradeEffects.noMachineSwap ? 0 : MACHINE_SWAP_CHANCE;
+    const machine = pactEffects(this.pacts, this.round).noMachineSwap ? this.machineId : machineAtRoundStart(this.machineId, this.round, swapChance);
     if (machine !== this.machineId) {
       this.machineId = machine;
       this.showNewMachine(); // корпус, значок и UPDATE на мониторе — сразу
@@ -1014,9 +1144,13 @@ export abstract class RoundScene extends MachineScene {
     this.spinsLeft = spinsPerRound(SPINS_PER_ROUND, ids);
     // Фаза 2: +1 прокрутка в раунде (замечание 19). Фазу берём по закрытым долгам сразу, а не this.phase:
     // checkPhase идёт в конце startRound (после зелёных огней), а прокрутки нужны уже сейчас.
-    this.spinsLeft = spinsAfterBonus(this.spinsLeft, phaseAt(this.closedDebts()).bonusSpins);
+    this.spinsLeft = spinsAfterBonus(this.spinsLeft, phaseAt(this.closedDebts()).bonusSpins, this.spinCap());
     // Сделка «−1 прокрутка в раунде»: после амулетов и фазы, но не меньше MIN_ROUND_SPINS — иначе раунд кончился бы сразу.
     this.spinsLeft = Math.max(MIN_ROUND_SPINS, this.spinsLeft + pactEffects(this.pacts, this.round).spinsDelta);
+    // Улучшение №1 «+1 прокрутка в первом раунде» (шаг 28): только раунд 1 и после всех поправок — это подарок,
+    // а не бонус, который потолок мог бы срезать.
+    if (this.round === 1) this.spinsLeft += this.upgradeEffects.firstRoundSpins;
+    this.skullFreeSpinGiven = false; // №4: в новом раунде бесплатная прокрутка за первый череп снова доступна
     this.roundShields = vestShields(ids);
     if (owns(ids, 'greed')) this.amuletRack.trigger('greed');
     // Сделка кончилась — одна короткая новость. Новый символ важнее, поэтому announceNewSymbols идёт следом

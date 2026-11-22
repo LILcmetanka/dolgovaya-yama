@@ -29,14 +29,17 @@ export function memoryPrice(rarity: Rarity): number {
 /**
  * Какие амулеты забега можно перенести: только уникальные (копии не считаются) и только те, на которые
  * хватает билетов. Пустой список — слота памяти нет. Порядок — как в AMULETS, чтобы витрина не прыгала.
+ * freeSaves > 0 — улучшение №30 (шаг 28б): один амулет не сгорает при смерти, поэтому витрина предлагает
+ * все амулеты забега по 0 билетов и без оглядки на кошелёк.
  */
-export function memoryOptions(owned: readonly AmuletId[], tickets: number): MemoryOption[] {
+export function memoryOptions(owned: readonly AmuletId[], tickets: number, freeSaves = 0): MemoryOption[] {
   // Билеты — целые; мусор (NaN, минус) считаем нулём: тогда не хватает на всё и слота нет.
   const budget = Number.isFinite(tickets) ? Math.max(0, Math.floor(tickets)) : 0;
+  const isFree = Number.isFinite(freeSaves) && freeSaves > 0;
   const options: MemoryOption[] = [];
   for (const amulet of AMULETS) {
     if (!owned.includes(amulet.id)) continue; // амулета в забеге не было
-    const price = memoryPrice(amulet.rarity);
+    const price = isFree ? 0 : memoryPrice(amulet.rarity);
     if (price > budget) continue; // копии не переносятся, а долговой слот не даём — просто не предлагаем
     options.push({ amulet, price });
   }

@@ -4,7 +4,7 @@ import { cellsOf } from '../evil';
 import { t } from '../lang';
 import { CENTER_X, cellX, cellY, GRID_Y, SPIN_LAMPS_Y } from '../layout';
 import type { SpinResult } from '../patterns';
-import { spinGrid, spinsAfterBonus, type Grid, type WeightOf } from '../rules';
+import { MAX_SPINS_PER_ROUND, spinGrid, spinsAfterBonus, type Grid, type WeightOf } from '../rules';
 import { GOLD_TEXT, GREEN_TEXT, LAMP_GOLD } from '../theme';
 import { PhaseScene } from './PhaseScene';
 
@@ -73,15 +73,17 @@ export abstract class BonusScene extends PhaseScene {
 
   /** Джекпот: кроме фишек — билеты (летят с сетки на табло) и прокрутки (над лампочками — «+N», лампочки подмигивают). */
   private collectJackpot(): void {
-    this.tickets += JACKPOT_TICKETS;
+    // №18 (28б): джекпот даёт на билет больше — только джекпот, не каждый паттерн.
+    const tickets = JACKPOT_TICKETS + this.upgradeEffects.jackpotTickets;
+    this.tickets += tickets;
     // У потолка прокруток добавляется меньше (или ничего) — показываем фактически добавленное, чтобы «+3» не врало.
-    const added = spinsAfterBonus(this.spinsLeft, JACKPOT_SPINS) - this.spinsLeft;
+    const added = spinsAfterBonus(this.spinsLeft, JACKPOT_SPINS, MAX_SPINS_PER_ROUND + this.upgradeEffects.spinCapBonus) - this.spinsLeft;
     this.spinsLeft += added;
     this.sfx.play('ticket', 0.3);
     // Строка «Джекпот: билеты +N, прокрутки +N» раньше висела внизу монитора на стене; оттуда её убрал автор
     // (DONTLIKE 9.2), и теперь она выходит новостью на стекле — ровно когда джекпот выпал.
-    this.screen.announceNews(t('jackpotNote', JACKPOT_TICKETS, added));
-    this.panel.flyTickets(JACKPOT_TICKETS, CENTER_X, GRID_Y);
+    this.screen.announceNews(t('jackpotNote', tickets, added));
+    this.panel.flyTickets(tickets, CENTER_X, GRID_Y);
     if (added > 0) {
       this.effects.popupAt(CENTER_X, SPIN_LAMPS_Y - 20, `+${added}`, GOLD_TEXT);
       this.panel.winkSpinLamps(this.spinsLeft);

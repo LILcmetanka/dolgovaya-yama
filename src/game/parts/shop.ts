@@ -30,9 +30,7 @@ import { addText, fitTextWidth, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TE
 import { fitBoardNumber } from './panel';
 import { attachHint, type Hint } from './tooltip';
 
-const ROWS = OFFER_SIZE + 1; // ряды торгового автомата: три с предметами и четвёртый — билеты за фишки (шаг 13)
-/** Ряд билетов: последний. Номера клавиши у него нет — все десять заняты, покупка только кликом. */
-export const TICKET_ROW = OFFER_SIZE;
+const DEFAULT_OFFER_ROWS = OFFER_SIZE; // три предмета и четвёртый ряд — билеты за фишки (шаг 13)
 // Что где в ряду: предмет слева, ценник справа.
 const GOOD_SCALE = 0.9; // предмет в спирали
 const TICKET_GOOD_WIDTH = 46; // билет в ряду — шириной с предмет в соседних рядах (он вытянутый, поэтому по ширине)
@@ -68,6 +66,9 @@ const TICKET_FLY_TIME = 600; // билет летит в шапку панели
 export class Shop {
   private readonly scene: Phaser.Scene;
   private readonly shopLayer: Phaser.GameObjects.Container; // панель: её вещи и вещи AmuletCase, Drum, Cassette
+  private readonly offerRows: number; // сколько рядов с предметами (№37 добавляет один)
+  /** Ряд билетов — последний. Номера клавиши у него нет: покупка только кликом, как и у лишнего ряда №37. */
+  readonly ticketRow: number;
   private readonly goods: Phaser.GameObjects.Image[] = []; // что лежит в ряду
   private readonly goodHeights: number[] = []; // высота товара в его итоговом масштабе — чтобы посадить низ на полку
   private readonly priceChips: Phaser.GameObjects.Image[] = []; // ценник: фишка…
@@ -85,26 +86,29 @@ export class Shop {
     return this.shopLayer;
   }
 
-  /** buy(row) — кликнули по ряду, leave — по кнопке выхода в шапке: назад к автомату. */
-  constructor(scene: Phaser.Scene, buy: (row: number) => void, leave: () => void, hint: Hint) {
+  /** buy(row) — кликнули по ряду, leave — по кнопке выхода в шапке: назад к автомату. offerRows — сколько рядов
+   *  с предметами (улучшение №37 даёт четвёртый). */
+  constructor(scene: Phaser.Scene, buy: (row: number) => void, leave: () => void, hint: Hint, offerRows = DEFAULT_OFFER_ROWS) {
     this.scene = scene;
+    this.offerRows = Math.max(1, offerRows);
+    this.ticketRow = this.offerRows;
     // Панель — первым: AmuletCase, Drum и Cassette создаются после Shop и кладут свои вещи в этот слой.
     this.shopLayer = scene.add.container(0, SHOP_CLOSED_Y).setDepth(SHOP_PANEL_DEPTH).setVisible(false);
     createChipTextures(scene);
     createTicketTexture(scene);
     createItemTextures(scene, ITEMS, ITEM_SIZE);
-    const [panelBackground, machine, spirals, glass] = drawShopPanel(scene, ROWS);
+    const [panelBackground, machine, spirals, glass] = drawShopPanel(scene, this.ticketRow + 1);
     panelBackground.setInteractive(); // панель ловит клики: они не проходят сквозь неё на рычаг, телевизор и полку
     this.shopLayer.add([panelBackground, machine]);
 
     // Порядок в витрине: корпус → товар → спираль → стекло. Предмет лежит за спиралью и стеклом, а не поверх корпуса.
-    for (let row = 0; row < ROWS; row++) {
-      const y = vendingRowY(row, ROWS);
-      const isTicket = row === TICKET_ROW;
+    for (let row = 0; row <= this.ticketRow; row++) {
+      const y = vendingRowY(row, this.ticketRow + 1);
+      const isTicket = row === this.ticketRow;
       const good = scene.add.image(VENDING_GOOD_X, y, isTicket ? TICKET_TEXTURE : itemTexture(ITEMS[0])).setVisible(false);
       good.setScale(isTicket ? TICKET_GOOD_WIDTH / good.width : GOOD_SCALE); // билет — размером с предмет в соседних рядах
       this.goodHeights.push(good.displayHeight); // высота — уже в выставленном масштабе, а не в 1
-      good.setY(vendingShelfY(row, ROWS) - good.displayHeight / 2); // низ товара — на линии полки, как у билета
+      good.setY(vendingShelfY(row, this.ticketRow + 1) - good.displayHeight / 2); // низ товара — на линии полки, как у билета
       good.setInteractive({ useHandCursor: true });
       attachHint(good, hint, () => this.hintFor(row), () => buy(row));
       this.goods.push(good);
@@ -168,7 +172,7 @@ export class Shop {
 
   /** Подсказка ряда: что за предмет и что он делает. У ряда билетов — что это за билет (или почему он погас). */
   private hintFor(row: number): [string, string] | null {
-    if (row === TICKET_ROW) {
+    if (row === this.ticketRow) {
       // Потолок покупок за заход выбран: ряд тусклый, а подсказка говорит, где взять следующий билет.
       if (this.ticketsExhausted) return [t('shopTicket'), t('shopTicketSold')];
       return [t('shopTicket'), t('shopTicketWhat')];
@@ -183,7 +187,7 @@ export class Shop {
     this.items = [];
     this.prices = [];
     this.ticketsExhausted = false; // новый заход — билеты за фишки снова продаются
-    for (let row = 0; row < OFFER_SIZE; row++) {
+    for (let row = 0; row < this.offerRows; row++) {
       const item = offer[row] ?? null;
       this.items.push(item);
       this.prices.push(item ? prices[row] : null);
@@ -191,21 +195,21 @@ export class Shop {
     }
     this.items.push(null); // ряд билетов: предмета нет, он на витрине всегда
     this.prices.push(null); // цену билета ставит refresh — она зависит от фишек на руках
-    for (let row = 0; row < ROWS; row++) this.showRow(row);
+    for (let row = 0; row <= this.ticketRow; row++) this.showRow(row);
     this.show(ready);
   }
 
   /** Ряд как есть: предмет в спирали и ценник справа; пустой ряд — ничего. Билет с витрины не пропадает никогда. */
   private showRow(row: number): void {
     const price = this.prices[row];
-    const isEmpty = price === null && row !== TICKET_ROW; // билет остаётся, даже когда цена ещё не посчитана
+    const isEmpty = price === null && row !== this.ticketRow; // билет остаётся, даже когда цена ещё не посчитана
     this.goods[row].setPosition(VENDING_GOOD_X, this.goodY(row)).setAlpha(1).setVisible(!isEmpty);
     this.setPriceShown(row, price);
   }
 
   /** Где стоит предмет ряда row: центр на полку минус половина высоты — низ товара лежит на линии полки, как у билета. */
   private goodY(row: number): number {
-    return vendingShelfY(row, ROWS) - this.goodHeights[row] / 2;
+    return vendingShelfY(row, this.ticketRow + 1) - this.goodHeights[row] / 2;
   }
 
   /** Значок ценника и «× 170» — только вместе: нет цены, нет и половины ценника (пустой значок читается как поломка). */
@@ -231,13 +235,13 @@ export class Shop {
    */
   refresh(balance: number, hasFreeSlot: boolean, ticketPrice: number): void {
     if (!this.ticketsExhausted) {
-      this.prices[TICKET_ROW] = ticketPrice; // ряд билетов: цена — доля банка, её считает сцена
-      this.setPriceShown(TICKET_ROW, ticketPrice);
+      this.prices[this.ticketRow] = ticketPrice; // ряд билетов: цена — доля банка, её считает сцена
+      this.setPriceShown(this.ticketRow, ticketPrice);
     }
     this.prices.forEach((price, row) => {
       if (price === null) return;
       this.priceTexts[row].setColor(price <= balance ? LED_COLOR : RED_TEXT);
-      if (row !== TICKET_ROW) this.goods[row].setAlpha(hasFreeSlot ? 1 : DIM_ALPHA); // билет на полку не ложится — он не тускнеет
+      if (row !== this.ticketRow) this.goods[row].setAlpha(hasFreeSlot ? 1 : DIM_ALPHA); // билет на полку не ложится — он не тускнеет
     });
   }
 
@@ -280,7 +284,7 @@ export class Shop {
    */
   sellTicket(): void {
     this.payChips();
-    this.flyTicket(VENDING_GOOD_X, this.goodY(TICKET_ROW));
+    this.flyTicket(VENDING_GOOD_X, this.goodY(this.ticketRow));
   }
 
   /**
@@ -289,9 +293,9 @@ export class Shop {
    */
   soldOutTickets(): void {
     this.ticketsExhausted = true;
-    this.prices[TICKET_ROW] = null;
-    this.goods[TICKET_ROW].setAlpha(DIM_ALPHA);
-    this.setPriceShown(TICKET_ROW, null); // ценника нет целиком: значок без числа читается как поломка
+    this.prices[this.ticketRow] = null;
+    this.goods[this.ticketRow].setAlpha(DIM_ALPHA);
+    this.setPriceShown(this.ticketRow, null); // ценника нет целиком: значок без числа читается как поломка
   }
 
   /** Фишки летят с табло панели (а не с закрытого корпусом) в щель торгового автомата. */

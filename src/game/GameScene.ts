@@ -3,9 +3,9 @@ import type { AchievementId } from './achievements';
 import { addCopy, AMULETS, countOf, MAX_SOCKETS, symbolPayout, type AmuletId } from './amulets';
 import { drawMachineBody, drawRoom } from './decor';
 import { DEV_CHIPS, DEV_TICKETS } from './devmode';
-import { lang, toggleLang, type Lang } from './lang';
+import { amuletKey, itemKey, machineKey, see } from './codex';
+import { lang, t, toggleLang, type Lang } from './lang';
 import { BODY, LEVER_GLOW, NOTE, WALL_PANEL, ZOOM } from './layout';
-import { amuletKey, itemKey, see } from './codex';
 import { AmuletCase } from './parts/amuletCase';
 import { AmuletRack } from './parts/amuletRack';
 import { Atmosphere } from './parts/atmosphere';
@@ -18,9 +18,9 @@ import { Drum } from './parts/drum';
 import { Effects } from './parts/effects';
 import { AchievementWindow } from './parts/achievementWindow';
 import { ItemShelf } from './parts/itemShelf';
-import { machineSpec, machineWinFactor, type MachineId } from './machines';
+import { machineSpec, machineWinFactor, machineSymbolAllowed, MACHINES, type MachineId } from './machines';
 import { MachineBadge } from './parts/machineBadge';
-import { RescueBar } from './parts/lastChanceBar';
+import { MachinePickScreen } from './parts/machinePickScreen';
 import { MiniShop } from './parts/miniShop';
 import { MachinePanel } from './parts/panel';
 import { PauseScreen } from './parts/pauseScreen';
@@ -30,11 +30,15 @@ import { addRotateHint } from './parts/rotateHint';
 import { SettingsPanel } from './parts/settingsPanel';
 import { Shop } from './parts/shop';
 import { SlotScreen } from './parts/slotScreen';
+import { SymbolPickScreen } from './parts/symbolPickScreen';
 import { WallScreen, type DevActions } from './parts/wallScreen';
 import { Tooltip } from './parts/tooltip';
+import { UpgradeScreen } from './parts/upgradeScreen';
 import { CollectorScene } from './scene/CollectorScene';
-import { ITEMS, MAX_SLOTS, type ItemId } from './items';
+import { ITEMS, MAX_SLOTS, offerRowCount, type ItemId } from './items';
 import { isTutorialDone, markTutorialDone } from './progress';
+import { symbolWeightOf } from './skullShare';
+import { isPaying, SYMBOLS, weightsForRound } from './rules';
 import type { RunSave } from './save';
 import { getVolumes, isSilent, setVolume, toggleSound, volumeShare, type VolumeKind } from './settings';
 
@@ -57,6 +61,8 @@ export class GameScene extends CollectorScene {
   private corner!: CornerButtons; // значки в углу: «звук выключен», на телефоне ⚙ (пауза) и во весь экран
   private pauseScreen!: PauseScreen; // экран паузы
   private settingsPanel!: SettingsPanel; // настройки на экране паузы
+  private symbolPick!: SymbolPickScreen; // выбор первого символа забега (улучшение №33, шаг 28в)
+  private machinePick!: MachinePickScreen; // выбор стартового автомата (улучшение №49, шаг 28г)
   private languageAtPause!: Lang; // язык, какой был, когда встали на паузу: после «▶» записка переворачивается, только если он другой
 
   constructor() {
@@ -69,6 +75,8 @@ export class GameScene extends CollectorScene {
    * ещё не увидел (прогресс записан, а окно и новость ждут показа в новой сцене).
    */
   create(data: { tape?: RunSave; tapesBought?: number; devUsed?: boolean; achievements?: AchievementId[] } = {}): void {
+    // Откат кассетой — тот же забег с того же места: resetState по этому флагу не двигает номер забега (улучшение №8).
+    this.isTapeRestart = Boolean(data.tape);
     this.resetState();
     // resetState() обнуляет след «ТЕСТ», а откат его не снимает: он приходит отдельным полем, помимо записи кассеты.
     if (data.devUsed) this.devUsedThisRun = true;
@@ -101,13 +109,11 @@ export class GameScene extends CollectorScene {
       (item) => this.canUseItem(item),
       this.tooltip,
     );
-    // Полоса спасения — после полки: иконки перемешки и подмены уже нарисованы (createItemTextures).
-    this.rescueBar = new RescueBar(this);
     this.amuletRack = new AmuletRack(this, this.sockets, this.tooltip);
     if (!data.tape) this.grantMemoryAmulet(); // новый забег: амулет, выбранный на прошлой смерти, — сразу в гнездо
     // Полка с включёнными предметами и гнёзда амулетов — до Коллектора: его банкомат, GOOD LUCK и экран KABOOM ложатся поверх всего, что нарисовано раньше.
     this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
-    this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip);
+    this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip, offerRowCount(this.upgradeEffects.offerRows));
     // Что из магазина открыто — по закрытым долгам: после отката кассетой раунд уже загружен (loadTape), и части строятся сразу видимыми.
     this.miniShop = new MiniShop(this, (row) => this.buyMini(row), this.tooltip, this.shop.layer);
     this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip, this.amuletsUnlocked(), this.shop.layer);
@@ -118,6 +124,9 @@ export class GameScene extends CollectorScene {
     this.dealerTable = new DealerTable(this, (id, symbol) => this.acceptPact(id, symbol), () => this.refusePacts());
     this.effects = new Effects(this);
     this.achievements = new AchievementWindow(this); // окно ачивки — после эффектов: оно ложится поверх сетки
+    this.upgradeScreen = new UpgradeScreen(this); // экран улучшений после смерти — ложится выше окна конца забега
+    this.symbolPick = new SymbolPickScreen(this); // выбор первого символа (№33) — выше всего: игра ждёт выбора
+    this.machinePick = new MachinePickScreen(this); // выбор стартового автомата (№49) — та же манера
     this.pumpAchievements(); // то, что выдано до постройки окна (или до рестарта), показываем теперь
     this.atmosphere = new Atmosphere(this);
     this.corner = new CornerButtons(this, () => this.togglePause(), () => this.toggleMute());
@@ -139,7 +148,75 @@ export class GameScene extends CollectorScene {
     this.setupPause();
     this.refreshHud();
     if (data.tape) this.playTape();
+    else this.startRunPicks(); // новый забег: №49 — выбор автомата, за ним №33 — выбор символа
+  }
+
+  /**
+   * Начало нового забега: улучшение №49 (28г) сначала даёт выбрать автомат, потом №33 — первый символ.
+   * Порядок именно такой: автомат решает, какие символы вообще есть в игре, поэтому выбирать символ раньше
+   * автомата было бы неправдой. Без улучшений всё как раньше — рычаг зовёт крутить.
+   */
+  private startRunPicks(): void {
+    if (this.upgradeEffects.startMachinePick) {
+      this.chooseStartMachine();
+      return;
+    }
+    this.startRunAfterPicks();
+  }
+
+  /** Выборы закончились (или их нет): №33 — символ, иначе рычаг зовёт крутить. */
+  private startRunAfterPicks(): void {
+    if (this.upgradeEffects.startSymbolPick) this.chooseStartSymbol();
     else this.panel.callLever(); // новый забег: пока ни разу не крутил — рычаг зовёт (после отката кассетой он не нужен)
+  }
+
+  /**
+   * Улучшение №49 (шаг 28г): перед первым раундом игрок выбирает стартовый автомат из трёх. Панель в стиле №33:
+   * затемнение, три строки со значком, названием и описанием. Отмены и таймаута нет — пока автомат не выбран,
+   * isChoosingMachine держит игру (canAct), а панель ловит клики. Дальше — выбор символа (№33), если он куплен.
+   */
+  private chooseStartMachine(): void {
+    this.isChoosingMachine = true;
+    this.machinePick.show(MACHINES, {
+      caption: t('machinePickWhat'),
+      onPick: (machine) => {
+        this.machineId = machine.id;
+        this.isChoosingMachine = false;
+        this.machinePick.close();
+        this.machineBadge.arrive(machine); // корпус его цвета и значок встают на место
+        see(machineKey(machine.id)); // выбранный автомат уже встречен: в «Кто есть кто» не «???»
+        this.sfx.play('news', 0.3);
+        this.refreshHud();
+        this.startRunAfterPicks();
+      },
+    });
+    this.refreshHud();
+  }
+
+  /**
+   * Улучшение №33 (шаг 28в): перед первым раундом игрок выбирает символ. Список — платящие символы, которые уже
+   * есть в автомате, с текущими весами (амулет-память и автомат учтены). Отмены и таймаута нет: пока символ
+   * не выбран, isChoosingSymbol держит игру (canAct), а панель ловит клики. Выбранный символ подставит startGridOf.
+   */
+  private chooseStartSymbol(): void {
+    const base = weightsForRound(1);
+    const options = SYMBOLS
+      .filter((symbol) => isPaying(symbol) && machineSymbolAllowed(this.machineId, symbol))
+      .map((symbol) => ({ symbol, weight: symbolWeightOf(symbol, base, this.weightContext(), false) }));
+    if (options.length === 0) return; // выбирать не из чего — игра идёт как обычно
+    this.isChoosingSymbol = true;
+    this.symbolPick.show(options, {
+      caption: t('symbolPickWhat'),
+      onPick: (symbol) => {
+        this.startSymbolId = symbol.id;
+        this.isChoosingSymbol = false;
+        this.symbolPick.close();
+        this.sfx.play('news', 0.3);
+        this.refreshHud();
+        this.panel.callLever(); // выбран символ — рычаг зовёт крутить
+      },
+    });
+    this.refreshHud();
   }
 
   /**
@@ -256,7 +333,6 @@ export class GameScene extends CollectorScene {
     this.monitor.relabel();
     this.shop.relabel(); // кнопка выхода из магазина: надпись на новом языке
     this.relabelReroll(); // висит решение по перемешке — новость на стекле заново на новом языке
-    if (this.isRescue) this.rescueBar.relabel(); // спасение идёт — полоса заново на новом языке
     if (!this.isPaused) this.collector.flipNote(this.debt);
   }
 
@@ -435,6 +511,7 @@ export class GameScene extends CollectorScene {
     this.onKey('M', () => this.toggleMute(), true);
     this.onKey('L', () => this.toggleLanguage(), true);
     this.onKey('R', () => {
+      if (this.upgradeScreen.isOpen || this.symbolPick.isOpen || this.machinePick.isOpen) return; // сначала обязательный выбор, потом «заново»
       if (this.isGameOver) this.restartGame();
     });
     NUMBER_KEYS.forEach((key, index) => this.onKey(key, () => this.onNumber(index)));
@@ -463,6 +540,9 @@ export class GameScene extends CollectorScene {
    */
   private onSpace(): void {
     if (this.isPaused) this.resumeGame();
+    else if (this.machinePick.isOpen) return; // №49: сначала автомат — Пробел игру не двигает
+    else if (this.symbolPick.isOpen) return; // №33: сначала символ — Пробел игру не двигает
+    else if (this.upgradeScreen.isOpen) return; // экран улучшений открыт: Пробел его не закрывает и забег не начинает
     else if (this.isAtMonitor) this.lookBack();
     else if (this.isShopping) this.leaveShop();
     // Сделка №15: кон уже забран, но второе забирание ещё доступно — Пробел берёт его, а не крутит.
@@ -477,6 +557,9 @@ export class GameScene extends CollectorScene {
    */
   private onEnter(): void {
     if (this.isPaused) this.resumeGame();
+    else if (this.machinePick.isOpen) return; // №49: сначала автомат
+    else if (this.symbolPick.isOpen) return; // №33: сначала символ
+    else if (this.upgradeScreen.isOpen) return; // экран улучшений открыт: выбор — только карточкой или 1–3
     else if (this.isAwaitingPayment) this.payDebt();
     else if (this.isDealing) this.refusePacts();
     // Кон на кону — Enter забирает; пусто — крутит, как пробел. Сделка №15: второе «забрать» тоже по Enter.
@@ -489,6 +572,21 @@ export class GameScene extends CollectorScene {
    * в игре 1–8 — включить предмет с полки.
    */
   private onNumber(index: number): void {
+    // Выбор стартового автомата (№49): 1–3 — строки списка; остальные клавиши игры молчат.
+    if (this.machinePick.isOpen) {
+      this.machinePick.press(index);
+      return;
+    }
+    // Выбор первого символа (№33): 1–5 — строки списка; остальные клавиши игры молчат.
+    if (this.symbolPick.isOpen) {
+      this.symbolPick.press(index);
+      return;
+    }
+    // Экран улучшений после смерти: 1–3 — карточки; остальные клавиши игры молчат, пока он открыт.
+    if (this.upgradeScreen.isOpen) {
+      this.upgradeScreen.press(index);
+      return;
+    }
     if (this.isRescue) return; // в спасении клавиш нет: столбец морозят кликом, прокрутку даёт рычаг
     if (this.isShopping) this.onShopNumber(index);
     else if (index === TAPE_KEY) this.useTape();

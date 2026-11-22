@@ -109,10 +109,21 @@ try {
     if (done !== ids.length) throw new Error('не удалось положить амулеты: ' + done);
     await sleep(150);
   };
-  /** Смерть: KABOOM идёт 1,8 с + 0,9 с, затемнение 0,7 с — экран смерти и витрина появляются на ~3,4 с. */
+  /** Смерть: KABOOM идёт 1,8 с + 0,9 с, затемнение 0,7 с — экран смерти появляется на ~3,4 с. */
   const die = async () => {
     await val('window.__g.kaboom(); 1');
     await sleep(4600);
+    // Шаг 28: после смерти сверху ложится экран улучшений. Берём одно бесплатное клавишей, экран закрывается
+    // (билетов здесь меньше 6 — второй фазы нет), и на экране смерти снова видна витрина памяти.
+    // №30 «амулет не сгорает при смерти» нарочно пропускаем: он делает перенос бесплатным, а здесь проверяются
+    // именно цены витрины. Если он единственный в предложении (так не бывает), берём его — сценарий не падает.
+    if (await val('window.__g.upgradeScreen.isOpen')) {
+      const safe = await val(`(() => { const list = window.__g.upgradeOfferList;
+        const index = list.findIndex((upgrade) => upgrade.id !== 'amulet-survives-death');
+        return index < 0 ? 0 : index; })()`);
+      await val(`window.__g.upgradeScreen.press(${safe}); 1`);
+      await sleep(600);
+    }
   };
   /** Новый забег: сцена перезапускается и строится заново. */
   const restart = async () => {

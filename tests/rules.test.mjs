@@ -41,10 +41,12 @@ test('бесплатная прокрутка: черепа весят 0, пла
   assert.equal(symbolWeightOf(paying, base, ctx, true), symbolWeightOf(paying, base, ctx, false), 'платный символ весит столько же');
 });
 
-test('провал спасения не растит долг: следующий раунд тот же', () => {
-  assert.equal(RULES.FAILED_DEBT_ROUND_STEP, 1, 'провал: счёт не двигаем');
+test('провал спасения — конец забега: отката счёта после провала в правилах нет', () => {
+  // Шаг 34 (решение автора 22.11.2026): «если я проиграл — проиграл, ВСЁ». Провал кончает забег сразу, поэтому
+  // константа «счёт на один назад после провала» удалена; повтором раунда остаётся только выживание.
+  assert.equal('FAILED_DEBT_ROUND_STEP' in RULES, false, 'константы провала в rules.ts нет');
   for (const round of [1, 3, 7, 12]) {
-    const next = Math.max(0, round - RULES.FAILED_DEBT_ROUND_STEP) + 1; // магазин прибавит единицу
+    const next = Math.max(0, round - 1) + 1; // выжил: счёт назад на 1, магазин прибавит единицу
     assert.equal(RULES.debtForRound(next), RULES.debtForRound(round), `раунд ${round}: долг не вырос`);
   }
 });

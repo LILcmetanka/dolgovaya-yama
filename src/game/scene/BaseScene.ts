@@ -5,17 +5,19 @@ import { resetCodex } from '../codex';
 import { isDevMode } from '../devmode';
 import type { Pact } from '../dealerGame';
 import { CHIP_GOAL } from '../gameConfig';
-import { garlicOn, noEffects, START_SLOTS, type Item, type ItemEffects, type ShopItem } from '../items';
+import { garlicOn, noEffects, type Item, type ItemEffects, type ShopItem } from '../items';
 import { formatChips, t } from '../lang';
+import { CENTER_X, PAYOUT_WINDOW } from '../layout';
 import { PHASES, type Phase } from '../phases';
 import type { MachineId } from '../machines';
 import type { Pattern } from '../patterns';
-import { grantAchievement, hasPattern, markPatternOpen, markTutorialDone, openedPatterns, rememberedAmulet, setRememberedAmulet } from '../progress';
-import { debtForRound, multiplierForStreak, SPINS_PER_ROUND } from '../rules';
+import { beginRun, grantAchievement, hasPattern, markPatternOpen, markTutorialDone, openedPatterns, purchasedUpgrades, rememberedAmulet, runNumber, setRememberedAmulet } from '../progress';
+import { multiplierForStreak, SPINS_PER_ROUND, startDebt } from '../rules';
 import { skullShareOf, type WeightContext } from '../skullShare';
-import { SECOND_WIND_START, type RunSave, type TapeState } from '../save';
+import type { RunSave, TapeState } from '../save';
 import { Sound } from '../sound';
 import { LAMP_ANGRY, LAMP_BLOOD, LAMP_GARLIC, LAMP_GOLD, LAMP_LUCK } from '../theme';
+import { forgivesDebt, neutralUpgrades, recordStartChips, startItemSlots, symbolWeightBonus, upgradeEffects, achievementTicket, type PurchasedUpgrades, type UpgradeEffects } from '../upgrades';
 import type { AmuletCase } from '../parts/amuletCase';
 import type { AmuletRack } from '../parts/amuletRack';
 import type { Atmosphere } from '../parts/atmosphere';
@@ -27,7 +29,6 @@ import type { Drum } from '../parts/drum';
 import type { Effects } from '../parts/effects';
 import type { AchievementWindow } from '../parts/achievementWindow';
 import type { ItemShelf } from '../parts/itemShelf';
-import type { RescueBar } from '../parts/lastChanceBar';
 import type { MachineBadge } from '../parts/machineBadge';
 import type { MiniShop } from '../parts/miniShop';
 import type { MachinePanel } from '../parts/panel';
@@ -37,6 +38,7 @@ import type { Shop } from '../parts/shop';
 import type { SlotScreen } from '../parts/slotScreen';
 import type { WallScreen } from '../parts/wallScreen';
 import type { Tooltip } from '../parts/tooltip';
+import type { UpgradeScreen } from '../parts/upgradeScreen';
 
 const RECORD_KEY = 'dolgovaya-yama-record'; // ключ рекорда в localStorage
 const CHIP_RECORD_KEY = 'dolgovaya-yama-chip-record'; // ключ рекорда набранных за забег фишек (отметка CHIP_RECORD)
@@ -57,10 +59,14 @@ function loadRecord(): number {
   }
 }
 
-/** Сохранить рекорд в localStorage. Не получилось — не страшно. */
+/**
+ * Сохранить рекорд в localStorage. Не получилось — не страшно.
+ * Пишем большее из двух: рекорд, уже записанный другой вкладкой, этим забегом не понижается.
+ */
 function saveRecord(record: number): void {
   try {
-    localStorage.setItem(RECORD_KEY, String(record));
+    const stored = Number(localStorage.getItem(RECORD_KEY));
+    localStorage.setItem(RECORD_KEY, String(Number.isFinite(stored) ? Math.max(stored, record) : record));
   } catch {
     // хранилище недоступно (например, запрещено настройками браузера) — играем без сохранения
   }
@@ -76,10 +82,14 @@ function loadChipRecord(): number {
   }
 }
 
-/** Сохранить рекорд набранных фишек. Не получилось — не страшно: экран победы покажет рекорд этого забега. */
+/**
+ * Сохранить рекорд набранных фишек. Не получилось — не страшно: экран победы покажет рекорд этого забега.
+ * Большее из двух, как у рекорда долгов: вкладка со старым снимком не понижает чужой рекорд.
+ */
 function saveChipRecord(record: number): void {
   try {
-    localStorage.setItem(CHIP_RECORD_KEY, String(record));
+    const stored = Number(localStorage.getItem(CHIP_RECORD_KEY));
+    localStorage.setItem(CHIP_RECORD_KEY, String(Number.isFinite(stored) ? Math.max(stored, record) : record));
   } catch {
     // хранилище недоступно — играем без сохранения
   }
@@ -135,6 +145,26 @@ export abstract class BaseScene extends Phaser.Scene {
   protected freeSpins = 0; // сколько бесплатных прокруток за короны ещё впереди — они крутятся сами
   protected freeSpinsAwarded = 0; // сколько бесплатных прокруток выдали за раунд — технический предохранитель FREE_SPINS_GUARD, игроку не виден
   protected devUsedThisRun = false; // забег трогали во вкладке «ТЕСТ» (devmode): рекорд фишек и ачивки из него не пишем
+  protected rescueUsedThisRun = false; // спасение уже было в этом забеге: второе не прощают (липкий, откат не снимает)
+  // Улучшения после смерти (шаг 28): что куплено и что из этого получается. Читаются один раз в resetState —
+  // купленное на экране смерти действует со СЛЕДУЮЩЕГО забега. Все правила улучшений — только через upgradeEffects.
+  protected upgrades: PurchasedUpgrades = {};
+  protected upgradeEffects: UpgradeEffects = neutralUpgrades();
+  protected runsPlayed = 0; // номер этого забега: улучшение №8 прощает первый долг каждый пятый
+  /** Сцена перезапущена откатом кассетой (data.tape): тот же забег, номер не растёт. Ставит GameScene.create до resetState. */
+  protected isTapeRestart = false;
+  protected deferredThisRun = false; // улучшение №10: отсрочка в этом забеге уже была (липкая, как rescueUsed)
+  protected amuletSavedThisRun = false; // улучшение №30 (28б): бесплатный перенос амулета при смерти уже был в этом забеге
+  protected amuletChipUsedThisRun = false; // улучшение №39 (28в): амулет за фишки уже брали — откат кассетой это не возвращает
+  protected freeGiftGiven = false; // улучшение №40 (28в): подарок первого магазина уже выдан
+  protected startSymbolId: string | null = null; // улучшение №33 (28в): выбранный первый символ забега
+  protected startGridGiven = false; // первая сетка забега уже получила джокера (№32) и выбранный символ (№33)
+  protected isChoosingSymbol = false; // висит выбор первого символа (№33): игра ждёт, крутить нельзя
+  protected isChoosingMachine = false; // висит выбор стартового автомата (№49, 28г): игра ждёт, крутить нельзя
+  protected skullCancelUsedThisRun = false; // №50 (28г): отмена черепа в этом забеге уже была (липкая, как rescueUsed)
+  protected achievementTicketGiven: string[] = []; // №47 (28г): ачивки, которые уже дали билет в этом забеге
+  protected ticketsSpentOnTape = 0; // №45 (28г): сколько билетов потрачено после записи на кассету — их вернёт откат
+  protected debtCarry = 0; // улучшение №10: неуплаченный долг, который прибавится к следующему (ShopScene.applyShopDebt)
   protected cigarettesThisRound = 0; // сколько сигарет включили в этом раунде — для «Курильщика»
   private achievementQueue: AchievementId[] = []; // ачивки, которые ещё не показали: выпало несколько — идут по очереди
   private achievementShown: AchievementId | null = null; // какая ачивка сейчас на экране (её тоже нельзя потерять при рестарте)
@@ -157,8 +187,6 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isAwaitingPayment = false; // банкомат выехал и фишек хватает — ждём «отдать» (клик по банкомату или Enter)
   protected isDealing = false; // идёт стол Дилера со сделками — крутить и забирать нельзя
   protected isRescue = false; // фишек не хватило: красный раунд спасения, 5 прокруток и заморозка столбцов (CollectorScene)
-  protected secondWindLeft = SECOND_WIND_START; // сколько провалов спасения ещё простят: обычный забег — 1 (сделка №9 даёт ещё)
-  protected breathTaken = false; // сделка №9 «+1 запас дыхания» уже бралась: второй раз её не берут, откат этого не снимает
   protected insuranceSaves = 0; // сколько раз страховка уже спасла кон в этом раунде: копий две — сработок две
   protected pacts: Pact[] = []; // сделки Дилера (dealerGame.Pact): что из них действует в раунде, решает pactEffects
   protected isGameOver = false; // долг не отдан — DEATH, конец забега
@@ -187,22 +215,43 @@ export abstract class BaseScene extends Phaser.Scene {
   protected dealerTable!: DealerTable; // стол Дилера поверх экрана
   protected atmosphere!: Atmosphere; // пыль, полосы на экране, мигание света, тёмные края от тревоги
   protected tooltip!: Tooltip; // подсказка при наведении мыши
-  protected rescueBar!: RescueBar; // полоса спасения: остаток прокруток, цель, «долг остаётся», подсказка
   protected monitor!: WallScreen; // экран на стене справа: символы, паттерны, как играть
   protected effects!: Effects; // брызги фишек, всплывающие надписи, вспышка с тряской
   protected achievements!: AchievementWindow; // окно полученной ачивки по центру сетки
+  protected upgradeScreen!: UpgradeScreen; // экран улучшений после смерти (шаг 28): три карточки поверх экрана DEATH
   protected reveal: Reveal | null = null; // тьма первого забега; null — обучение пройдено или его нет
 
   /** Начало забега: первый долг, пустое табло, 2 места на полке, ничего не включено, автомат обычный. */
   protected resetState(): void {
+    // Улучшения (шаг 28): что куплено в прошлых забегах, читаем здесь — раньше долга и всего остального.
+    this.upgrades = purchasedUpgrades();
+    this.upgradeEffects = upgradeEffects(this.upgrades);
+    this.runsPlayed = this.isTapeRestart ? runNumber() : beginRun(); // откат кассетой — тот же забег, номер не двигаем (№8)
+    this.deferredThisRun = false; // №10: отсрочка снова доступна
+    this.amuletSavedThisRun = false; // №30: перенос амулета при смерти снова доступен один раз
+    this.amuletChipUsedThisRun = false; // №39: амулет за фишки в новом забеге снова доступен
+    this.freeGiftGiven = false; // №40: подарок первого магазина ещё не выдан
+    this.startSymbolId = null; // №33: выбираем символ заново в каждом новом забеге
+    this.startGridGiven = false; // первая сетка ещё не получила джокера и выбранный символ
+    this.isChoosingSymbol = false;
+    this.isChoosingMachine = false; // №49: выбор автомата в новом забеге ещё впереди
+    this.skullCancelUsedThisRun = false; // №50: отмена черепа в новом забеге снова доступна
+    this.achievementTicketGiven = []; // №47: список ачивок, давших билет, свой у каждого забега
+    this.ticketsSpentOnTape = 0; // №45: на плёнке пока ничего не потрачено
+    this.debtCarry = 0; // неплатежа с прошлого забега нет
     this.round = 1;
-    this.debt = debtForRound(1);
+    // №6 «стартовый долг −5%»: только первый долг; дальше кривая от раунда. №8: каждый пятый забег — первый долг 0.
+    this.debt = forgivesDebt(this.upgradeEffects.debtForgiveEveryRuns, this.runsPlayed) ? 0 : startDebt(this.upgradeEffects.startDebtMul);
     this.debtNextMul = 1; // «следующий долг +20%» — только из сделки, в новом забеге его нет
     this.balance = 0;
     this.earned = 0;
     this.chipGoal = CHIP_GOAL; // новый забег снова идёт к миллиону; 10 000 000 — только после «ДАЛЬШЕ»
     this.chipRecord = loadChipRecord();
+    // №46 (28г): рекорд даёт +5% к стартовым фишкам. Только рекорд (лучший забег), а не каждый забег:
+    // в earned прибавка не идёт, поэтому рекорд не раздувается сам от себя.
+    this.balance = recordStartChips(this.chipRecord, this.upgradeEffects.recordStartShare);
     this.devUsedThisRun = false; // новый забег чистый: что было накручено в прошлом, к рекорду не относится
+    this.rescueUsedThisRun = false; // и спасение в новом забеге ещё не тратили
     this.cigarettesThisRound = 0;
     // Очередь показа очищается вместе со сценой, но не теряется: недопоказанное create забирает из данных restart.
     this.achievementQueue = [];
@@ -211,13 +260,16 @@ export abstract class BaseScene extends Phaser.Scene {
     this.isEndScreenOpen = false;
     this.isDevNoticeShown = false; // новый забег: про запрет ачивок в ТЕСТ скажем снова, если он всё ещё включён
     this.isDevNoticePending = false;
-    this.tickets = 0;
-    this.spinsLeft = SPINS_PER_ROUND;
+    this.tickets = this.upgradeEffects.startTickets; // №16 (28б): старт с билетом
+    // Первый раунд забега разыгрывается сразу, без startRound (он зовётся только к следующему раунду), поэтому
+    // улучшение №1 «+1 прокрутка в первом раунде» прибавляется здесь — иначе оно не работало бы никогда.
+    this.spinsLeft = SPINS_PER_ROUND + this.upgradeEffects.firstRoundSpins;
     this.pot = 0;
     this.streak = 0;
     this.record = loadRecord();
-    this.slots = START_SLOTS;
-    this.shelf = new Array<Item | null>(START_SLOTS).fill(null);
+    // №21 (28б): +1 место на полке с первого кадра, но не больше MAX_SLOTS — больше мест не бывает.
+    this.slots = startItemSlots(this.upgradeEffects.itemSlots);
+    this.shelf = new Array<Item | null>(this.slots).fill(null);
     this.itemEffects = noEffects();
     this.offer = [];
     this.sockets = START_SOCKETS; // гнёзда есть с первого раунда: открываются долгами, а не забегами
@@ -243,8 +295,6 @@ export abstract class BaseScene extends Phaser.Scene {
     this.patternSet = [...openedPatterns()]; // открытое копится навсегда: «заново» и конец забега схемы не гасят
     this.isDealing = false;
     this.isRescue = false;
-    this.secondWindLeft = SECOND_WIND_START;
-    this.breathTaken = false;
     this.insuranceSaves = 0;
     this.pacts = []; // новый забег — Дилер ещё ничего не предлагал
     this.isSpinning = false;
@@ -321,9 +371,19 @@ export abstract class BaseScene extends Phaser.Scene {
     this.checkChipGoal();
   }
 
+  /**
+   * Потратить билеты внутри забега (амулет, гнездо, кассета). Одна дверь нужна улучшению №45 (28г): откат
+   * возвращает то, что ушло ПОСЛЕ записи на кассету, поэтому трата сама себя считает. После смерти (витрина
+   * памяти, второе улучшение) эта дверь не нужна: там откатывать уже нечего.
+   */
+  protected spendRunTickets(count: number): void {
+    if (!(count > 0)) return;
+    this.tickets -= count;
+    if (this.tapeState === 'recorded') this.ticketsSpentOnTape += count; // №45: эту трату откат вернёт
+  }
+
   /** Лучший earned на конец забега: больше прежнего — запоминаем в localStorage. Зовут концовки забега. */
-  protected updateChipRecord(): void {
-    // Фишки, накрученные вкладкой «ТЕСТ», рекордом не считаются. Одной проверки isDevMode() мало: режим можно
+  protected updateChipRecord(): void {    // Фишки, накрученные вкладкой «ТЕСТ», рекордом не считаются. Одной проверки isDevMode() мало: режим можно
     // выключить кнопкой «ВЫЙТИ» и доиграть забег, а накрученное останется на табло — поэтому помним, что забег трогали.
     if (isDevMode() || this.devUsedThisRun) return;
     if (this.earned <= this.chipRecord) return;
@@ -363,7 +423,24 @@ export abstract class BaseScene extends Phaser.Scene {
       return;
     }
     if (!grantAchievement(id)) return; // ачивка уже была
+    this.grantAchievementTicket(id); // улучшение №47 (28г): каждая ачивка забега — билет
     this.showAchievement(id);
+  }
+
+  /**
+   * №47 (28г): каждая ачивка, выданная в этом забеге, даёт по билету — один раз за ачивку в забеге.
+   * Список achievementTicketGiven липкий (кассета его не сбрасывает) и начинается заново каждый забег:
+   * повторная проверка той же ачивки второго билета не даёт.
+   */
+  private grantAchievementTicket(id: AchievementId): void {
+    const count = achievementTicket(this.upgradeEffects.achievementTickets, id, this.achievementTicketGiven);
+    if (count === 0) return;
+    this.achievementTicketGiven.push(id);
+    this.tickets += count;
+    this.panel.showTickets(this.tickets);
+    this.shop.showMoney(this.balance, this.tickets);
+    this.panel.flyTickets(count, CENTER_X, PAYOUT_WINDOW.y);
+    this.sfx.play('ticket');
   }
 
   /**
@@ -466,9 +543,14 @@ export abstract class BaseScene extends Phaser.Scene {
     };
   }
 
-  /** Всё, от чего зависит вес символа в прокрутке: автомат, амулеты и предметы. */
+  /** Всё, от чего зависит вес символа в прокрутке: автомат, амулеты, предметы и улучшения №23/24 (28б). */
   protected weightContext(): WeightContext {
-    return { machineId: this.machineId, amulets: this.amuletIds(), effects: this.itemEffects };
+    return {
+      machineId: this.machineId,
+      amulets: this.amuletIds(),
+      effects: this.itemEffects,
+      symbolBonus: symbolWeightBonus(this.upgradeEffects),
+    };
   }
 
   /**
@@ -546,6 +628,8 @@ export abstract class BaseScene extends Phaser.Scene {
       !this.isPaused &&
       !this.isAtMonitor &&
       !this.isRescue &&
+      !this.isChoosingSymbol &&
+      !this.isChoosingMachine &&
       this.freeSpins === 0
     );
   }

@@ -22,14 +22,14 @@ if (!Number.isInteger(VISITS) || VISITS <= 0) {
 
 /** Политика бота — та же, что в full-run.mjs: чем выше в списке, тем охотнее берём. */
 const PACT_PRIORITY = [
-  'extra-breath', 'double-take', 'double-step', 'quiet-round', 'tickets-shop', 'free-amulet',
+  'double-take', 'double-step', 'quiet-round', 'tickets-shop', 'free-amulet',
   'price-up', 'machine-delay', 'safe-bank', 'skull-calm', 'soft-skull',
   'cheap-shop', 'debt-cut', 'full-insurance', 'jackpot-weight', 'symbol-weight',
 ];
 const ROUNDS = 30; // длина модельного забега
 const DICE_CHANCE = 0.95; // кубик приходит почти каждый раунд (его вес подстраивает evil.diceWeight)
 const DEATH_CHANCE = 0.12; // провал последнего шанса: счёт идёт назад, сроки сделок едут с ним
-const RESCUE_STEP = 1; // провал спасения («второе дыхание»): счёт на один назад; выживание его не откатывает
+const RESCUE_STEP = 1; // провал спасения в игре — смерть забега; в модельном забеге счёт идёт на один назад, чтобы сроки сделок поехали
 
 /** Что бот берёт со стола: первая по приоритету сделка, которой у него ещё нет (или null — отказ). */
 const pick = (offers, pacts, round) =>

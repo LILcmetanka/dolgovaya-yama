@@ -1,4 +1,5 @@
 import { ticketPrice, type Amulet, type AmuletCounts } from './amulets';
+import { isAchievementId } from './achievements';
 import type { Pact } from './dealerGame';
 import type { MachineId } from './machines';
 import type { Item, ItemEffects } from './items';
@@ -44,11 +45,18 @@ export interface RunSave {
   debtNextMul?: number; // сделка №12: следующий долг дороже во столько раз (1 — обычный); в старых записях поля нет
   diceDrought: number;
   patterns?: string[]; // какие паттерны были открыты на момент записи: откат возвращает стекло как на плёнке
-  secondWindLeft?: number; // сколько «вторых дыханий» осталось; в старых записях поля нет — secondWindUsed
-  secondWindUsed?: boolean; // старые записи: дыхание уже потрачено; новые пишут счётчик, но чтение терпит и флаг
-  breathTaken?: boolean; // сделка №9 «+1 запас дыхания» уже бралась в этом забеге; откат этой памяти не снимает
+  // Второго дыхания больше нет (шаг 34): провал спасения — сразу KABOOM. Старые плёнки могли записать
+  // secondWindLeft/secondWindUsed — поля больше не объявлены и просто игнорируются при чтении, формат не ломается.
   insuranceSaves?: number; // сколько раз страховка сработала в этом раунде; в старых записях поля нет — считаем 0
   devUsed?: boolean; // забег трогали во вкладке «ТЕСТ» до записи: откат этого не забывает, рекорд фишек не пишется; в старых записях поля нет — считаем, что нет
+  rescueUsed?: boolean; // спасение в этом забеге уже было: второе не прощают; откат кассетой флаг не снимает; в старых записях поля нет — считаем, что не было
+  deferUsed?: boolean; // улучшение №10 «отсрочка» в этом забеге уже потрачено (шаг 28); тоже липкое; в старых записях поля нет — считаем, что нет
+  amuletChipUsed?: boolean; // улучшение №39 (28в): амулет за фишки уже брали; липкое, откат не возвращает
+  freeGiftGiven?: boolean; // улучшение №40 (28в): подарок первого магазина уже выдан; липкое, откат второй не даёт
+  skullCancelUsed?: boolean; // улучшение №50 (28г): отмена черепа уже потрачена; липкая, откат вторую не даёт
+  achievementTickets?: string[]; // улучшение №47 (28г): какие ачивки уже дали билет в этом забеге; липкий список
+  startSymbol?: string; // улучшение №33 (28в): выбранный первый символ забега
+  startGridGiven?: boolean; // первая сетка уже получила джокера (№32) и выбранный символ (№33)
 }
 
 /** Цена кассеты в билетах, когда за забег уже куплено bought кассет: 2, 3, 4… mul — скидка магазина (сделка №2). */
@@ -78,16 +86,59 @@ export function debtNextMulOf(record: { debtNextMul?: unknown }): number {
   return mul;
 }
 
-/** Сколько «вторых дыханий» у забега без сделок Дилера: одно, как было до счётчика (DONTLIKE б.12). */
-export const SECOND_WIND_START = 1;
+/**
+ * Липкий флаг «отсрочка уже была» (улучшение №10, шаг 28): откат кассетой его не снимает — иначе перемотка
+ * возвращала бы отсрочку каждый забег. Устроен как rescueUsedOf: текущий OR с плёнкой, старой плёнке без поля — нет.
+ */
+export function deferUsedOf(record: { deferUsed?: unknown }, current = false): boolean {
+  return current || record.deferUsed === true;
+}
 
 /**
- * Сколько «вторых дыханий» осталось по записи. Новые плёнки пишут счётчик (secondWindLeft), старые — флаг
- * secondWindUsed: потрачен → 0, поля нет или флаг снят → SECOND_WIND_START. Дробное вниз, мусор — к флагу.
- * Чтение нарочно терпимое: потолок (SECOND_WIND_MAX) ставит сцена в loadTape — save.ts про него не знает.
+ * Липкий флаг «амулет за фишки уже брали» (улучшение №39, шаг 28в): откат кассетой не возвращает вторую покупку.
+ * Как deferUsedOf: текущий OR с плёнкой, старой плёнке без поля — «не было».
  */
-export function secondWindLeftOf(record: { secondWindLeft?: unknown; secondWindUsed?: unknown }): number {
-  const left = record.secondWindLeft;
-  if (typeof left === 'number' && Number.isFinite(left)) return Math.max(0, Math.floor(left));
-  return record.secondWindUsed === true ? 0 : SECOND_WIND_START;
+export function amuletChipUsedOf(record: { amuletChipUsed?: unknown }, current = false): boolean {
+  return current || record.amuletChipUsed === true;
+}
+
+/**
+ * Липкий флаг «подарок первого магазина выдан» (улучшение №40, шаг 28в): откат к записи до магазина второй
+ * подарок не даёт. Правило одно на запись и чтение — как у спасения и отсрочки.
+ */
+export function freeGiftUsedOf(record: { freeGiftGiven?: unknown }, current = false): boolean {
+  return current || record.freeGiftGiven === true;
+}
+
+/**
+ * Липкий флаг «отмена черепа уже потрачена» (улучшение №50, шаг 28г): откат кассетой её не возвращает, иначе
+ * перемотка давала бы отмену каждый забег. Как rescueUsedOf: текущий OR с плёнкой, старой плёнке без поля — нет.
+ */
+export function skullCancelUsedOf(record: { skullCancelUsed?: unknown }, current = false): boolean {
+  return current || record.skullCancelUsed === true;
+}
+
+/**
+ * Липкий список ачивок, которые уже дали билет в этом забеге (улучшение №47, шаг 28г): откат кассетой не даёт
+ * второй билет за ту же ачивку. Список — объединение текущего и записанного; чужие id и повторы отбрасываются,
+ * как в progress.ts. Старая плёнка без поля — пустой список.
+ */
+export function achievementTicketIdsOf(record: { achievementTickets?: unknown }, current: readonly string[] = []): string[] {
+  const result: string[] = [];
+  const add = (id: unknown): void => {
+    if (isAchievementId(id) && !result.includes(id)) result.push(id);
+  };
+  for (const id of current) add(id);
+  if (Array.isArray(record.achievementTickets)) for (const id of record.achievementTickets) add(id);
+  return result;
+}
+
+/**
+ * Липкий флаг «спасение уже было»: откат кассетой его не снимает, иначе яму фармили бы перемоткой (как devUsed).
+ * Правило одно для записи и чтения, поэтому оно здесь, а не в сцене: `insertTape` складывает текущий флаг с плёнкой,
+ * `loadTape` читает результат. Старая плёнка без поля — «не было»; плёнка «до ямы» + текущий true — true.
+ * Вторую нехватку фишек с этим флагом закрывает rescueAllowed (lastChance.ts) — сразу KABOOM, без спасения.
+ */
+export function rescueUsedOf(record: { rescueUsed?: unknown }, current = false): boolean {
+  return current || record.rescueUsed === true;
 }

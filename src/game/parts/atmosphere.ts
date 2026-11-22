@@ -22,7 +22,7 @@ const RESCUE_VIGNETTE_DEPTH = 12.5;
 const RESCUE_WASH_ALPHA = 0.16;
 const RESCUE_VIGNETTE_ALPHA = 0.9;
 const RESCUE_PULSE_TIME = 900; // полный вдох-выдох свечения, мс
-const RESCUE_FADE_TIME = 400;
+export const RESCUE_FADE_TIME = 400; // столько гаснет красный режим — и только потом открывается магазин (шаг 32)
 
 /**
  * Атмосфера комнаты: пыль в воздухе, полосы развёртки на экране автомата, иногда мигает свет,

@@ -113,6 +113,15 @@ interface GlassNews {
   tweens: Phaser.Tweens.Tween[];
 }
 
+/** Сообщение очереди на стекле: текст, цвет и кегль — как у одиночной новости announceNews. */
+export interface GlassMessage {
+  text: string;
+  color?: string;
+  fontSize?: string;
+  y?: number;
+  icon?: string;
+}
+
 /**
  * Экран автомата: сетка 5×3, мелькание и остановка столбцов, рамки найденных паттернов,
  * стекло с паттернами над экраном и бегущие огни вокруг него.
@@ -141,6 +150,9 @@ export class SlotScreen {
   private isPatternNewsShown = false; // за одну прокрутку — одна новость о паттерне (полосы иначе накладываются)
   // Живая новость на стекле: одна за раз. Новая зовёт removeNews — прежнюю гасим сразу, не дожидаясь её таймера.
   private news: GlassNews | null = null;
+  // Очередь сообщений на стекле (раунд спасения): показываем по одному, после последнего — done.
+  private queue: GlassMessage[] = [];
+  private queueDone: (() => void) | null = null;
 
   constructor(scene: Phaser.Scene, sfx: Sfx) {
     this.scene = scene;
@@ -564,8 +576,48 @@ export class SlotScreen {
     this.newsOnGlass(text, GOLD_TEXT, SCORE_NEWS_FONT_SIZE);
   }
 
+  /**
+   * Несколько сообщений на стекле по очереди, в стиле announceNews: каждое висит GLASS_NEWS_TIME и тает,
+   * потом встаёт следующее. После последнего — done. Одиночная новость (announceNews, сделки, ачивки) очередь
+   * снимает и показывает себя сразу — как раньше. Счётчик оставшихся прокруток в спасении живёт внутри такого
+   * сообщения, отдельной строки нет (шаг 32).
+   */
+  announceSequence(messages: readonly GlassMessage[], done?: () => void): void {
+    this.cancelSequence();
+    this.queue = messages.map((message) => ({ ...message }));
+    this.queueDone = done ?? null;
+    this.showNextQueued();
+  }
+
+  /** Следующее сообщение очереди: пусто — done и очередь закрыта. */
+  private showNextQueued(): void {
+    const message = this.queue.shift();
+    if (!message) {
+      const done = this.queueDone;
+      this.queueDone = null;
+      done?.();
+      return;
+    }
+    this.newsOnGlass(
+      message.text,
+      message.color ?? GOLD_TEXT,
+      message.fontSize ?? SCORE_NEWS_FONT_SIZE,
+      message.y ?? GLASS.y,
+      message.icon,
+      () => this.showNextQueued(),
+      true, // очередь ведём мы: одиночная новость её не трогает
+    );
+  }
+
+  /** Очередь снять: её сообщения не показываются, done не зовётся — его дело отменено. */
+  private cancelSequence(): void {
+    this.queue = [];
+    this.queueDone = null;
+  }
+
   /** Снять новость со стекла сразу: игрок сделал ход, надпись-вопрос больше не висит. */
   clearNews(): void {
+    this.cancelSequence();
     this.removeNews();
   }
 
@@ -581,8 +633,19 @@ export class SlotScreen {
    * icon — картинка слева от надписи (значок автомата).
    * На стекле живёт ОДНА новость: прежнюю снимаем сразу (без её таймера), новая встаёт на её место — иначе полосы
    * накладывались бы друг на друга (например «НОВЫЙ ПАТТЕРН» поверх «НА ДОЛГ ХВАТАЕТ»).
+   * onGone — что сделать, когда новость совсем погасла (очередь announceSequence зовёт так следующую).
+   * keepQueue — новость из очереди: саму очередь не снимаем; одиночная новость её снимает.
    */
-  private newsOnGlass(text: string, color: string, fontSize: string, y = GLASS.y, icon?: string): void {
+  private newsOnGlass(
+    text: string,
+    color: string,
+    fontSize: string,
+    y = GLASS.y,
+    icon?: string,
+    onGone?: () => void,
+    keepQueue = false,
+  ): void {
+    if (!keepQueue) this.cancelSequence();
     this.removeNews();
     const strip = this.scene.add.rectangle(GLASS.x, GLASS.y, GLASS.width, GLASS.height, 0x000000, 0.85).setRounded(10);
     const style = { ...POPUP_STYLE, fontSize, color };
@@ -616,6 +679,7 @@ export class SlotScreen {
         onComplete: () => {
           if (this.news === alive) this.news = null;
           for (const part of parts) part.destroy();
+          onGone?.();
         },
       }),
     );

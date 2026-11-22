@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import {
   amuletTexture,
+  CHIP_TEXTURE,
   createAmuletTextures,
   createTicketTexture,
   drawGlassPane,
@@ -45,6 +46,7 @@ const GOLD = 0xd4a62a;
 export interface CaseStock {
   amulets: Amulet[]; // амулеты по местам; если их меньше AMULET_CASE_PLACES — места пустые
   amuletPrices: number[]; // их цены в билетах
+  amuletChipPrices?: number[]; // их цены в фишках (улучшение №39): показываются в режиме «ЗА ФИШКИ»
 }
 
 /**
@@ -61,8 +63,18 @@ export class AmuletCase {
   private readonly priceTexts: Phaser.GameObjects.Text[] = []; // …и «× 2»
   private readonly marks: Phaser.GameObjects.Graphics[]; // тень под вещью и плашка для ценника каждого места — гаснут вместе с товаром
   private readonly glass: Phaser.GameObjects.Graphics; // плёнка с бликом над бархатом и вещами — как у торгового автомата
-  private prices: (number | null)[] = []; // цена места; null — место пустое
+  private prices: (number | null)[] = []; // цена места в билетах; null — место пустое
+  private chipPrices: (number | null)[] = []; // цена места в фишках (улучшение №39)
   private amulets: (Amulet | null)[] = []; // какой амулет на каком месте
+  private chipMode = false; // витрина показывает и продаёт за фишки (улучшение №39)
+  private chipAvailable = false; // кнопка режима видна: улучшение куплено и амулеты открыты
+  private chipUsed = false; // раз за забег фишками уже платили — режим больше не включается
+  private chipButton!: Phaser.GameObjects.Rectangle; // плашка кнопки «ЗА ФИШКИ»
+  private chipLabel!: Phaser.GameObjects.Text; // её надпись
+  private chipZone!: Phaser.GameObjects.Zone; // зона нажатия кнопки
+  private ticketsShown = 0; // последние числа для перекраски цен при переключении режима
+  private chipsShown = 0;
+  private readyShown: boolean[] = [];
   private readonly suitcase: Phaser.GameObjects.Container; // корпус и обе крышки — выезжают вместе
   private readonly lidFront: Phaser.GameObjects.Container; // закрытая крышка: лежит на корпусе; вещи и ценники — соседи чемодана в слое панели и рисуются поверх неё (их прячут явно)
   private readonly lidBack: Phaser.GameObjects.Container; // откинутая крышка: стоит над чемоданом
@@ -72,6 +84,11 @@ export class AmuletCase {
   /** Чемодан открыт — можно покупать. */
   get isOpen(): boolean {
     return this.open;
+  }
+
+  /** Витрина сейчас продаёт за фишки (улучшение №39): сцена по этому полю выбирает валюту покупки. */
+  get isChipMode(): boolean {
+    return this.chipMode;
   }
 
   /**
@@ -108,6 +125,51 @@ export class AmuletCase {
       this.layer.add([priceIcon, priceText]);
     }
     this.setAvailable(isAvailable);
+    this.buildChipButton(); // кнопка режима «ЗА ФИШКИ» (№39) — спрятана, пока улучшения нет
+  }
+
+  /**
+   * Кнопка режима «ЗА ФИШКИ» под чемоданом (улучшение №39): клик переключает цены и валюту покупки.
+   * Одноразовость держит сцена: после покупки за фишки кнопка гаснет и говорит «ИСПОЛЬЗОВАНО».
+   */
+  private buildChipButton(): void {
+    const x = AMULET_CASE.x;
+    const y = AMULET_CASE.y + AMULET_CASE.height / 2 + 16;
+    this.chipButton = this.scene.add
+      .rectangle(x, y, 150, 26, 0x0b0f19, 0.96)
+      .setRounded(7)
+      .setStrokeStyle(2, 0x2dd4bf)
+      .setDepth(GOODS_DEPTH + 1)
+      .setVisible(false);
+    this.chipLabel = addText(this.scene, x, y, '', { fontSize: '14px', fontStyle: 'bold', color: '#5eead4' })
+      .setOrigin(0.5)
+      .setDepth(GOODS_DEPTH + 2)
+      .setVisible(false);
+    this.chipZone = this.scene.add.zone(x, y, 150, 26).setInteractive({ useHandCursor: true });
+    this.chipZone.on('pointerdown', () => this.toggleChipMode());
+    this.chipZone.setVisible(false);
+    this.layer.add([this.chipButton, this.chipLabel, this.chipZone]);
+  }
+
+  /** Улучшение №39: показать кнопку режима; used — за забег фишками уже платили, режим больше не включается. */
+  setChipOption(available: boolean, used: boolean): void {
+    this.chipAvailable = available;
+    this.chipUsed = used;
+    if (!available || used) this.chipMode = false;
+    this.chipButton.setVisible(available);
+    this.chipLabel.setVisible(available);
+    this.chipZone.setVisible(available);
+    if (available) this.chipLabel.setText(t(used ? 'amuletChipUsed' : this.chipMode ? 'amuletTicketMode' : 'amuletChipMode'));
+    for (let place = 0; place < AMULET_CASE_PLACES; place++) this.showPlace(place);
+  }
+
+  /** Клик по кнопке: билеты ↔ фишки. После траты за забег режим не включается. */
+  private toggleChipMode(): void {
+    if (!this.chipAvailable || this.chipUsed) return;
+    this.chipMode = !this.chipMode;
+    this.chipLabel.setText(t(this.chipMode ? 'amuletTicketMode' : 'amuletChipMode'));
+    for (let place = 0; place < AMULET_CASE_PLACES; place++) this.showPlace(place);
+    this.refresh(this.ticketsShown, this.chipsShown, this.readyShown);
   }
 
   /**
@@ -205,7 +267,7 @@ export class AmuletCase {
 
   /** Подсказка места: что это и что делает. */
   private hintFor(place: number): [string, string] | null {
-    if (this.prices[place] === null) return null;
+    if (this.priceOf(place) === null) return null;
     const amulet = this.amulets[place];
     return amulet ? [t(amulet.name), t(amulet.description)] : null;
   }
@@ -217,7 +279,10 @@ export class AmuletCase {
   clear(): void {
     this.open = false;
     this.amulets = [];
+    this.chipMode = false;
     this.prices = new Array<number | null>(AMULET_CASE_PLACES).fill(null);
+    this.chipPrices = new Array<number | null>(AMULET_CASE_PLACES).fill(null);
+    if (this.chipAvailable) this.chipLabel.setText(t(this.chipUsed ? 'amuletChipUsed' : 'amuletChipMode'));
     for (const target of [this.suitcase, this.lidFront, this.lidBack, this.glass, ...this.goods, ...this.marks, ...this.priceIcons, ...this.priceTexts]) {
       this.scene.tweens.killTweensOf(target);
     }
@@ -239,10 +304,14 @@ export class AmuletCase {
     if (!this.available) return; // амулетов ещё нет — чемодан не открываем
     this.amulets = [];
     this.prices = [];
+    this.chipPrices = [];
+    this.chipMode = false;
+    if (this.chipAvailable) this.chipLabel.setText(t(this.chipUsed ? 'amuletChipUsed' : 'amuletChipMode'));
     for (let place = 0; place < AMULET_CASE_PLACES; place++) {
       const amulet = stock.amulets[place] ?? null;
       this.amulets.push(amulet);
       this.prices.push(amulet ? stock.amuletPrices[place] : null);
+      this.chipPrices.push(amulet ? stock.amuletChipPrices?.[place] ?? null : null);
     }
     this.open = false;
     for (let place = 0; place < AMULET_CASE_PLACES; place++) this.showPlace(place);
@@ -277,39 +346,51 @@ export class AmuletCase {
     this.glass.setVisible(shown > 0); // пустой чемодан: стекла над бархатом нет
   }
 
-  /** Место как есть: товар, его тень, плашка и ценник; пустое место — ничего. */
+  /** Место как есть: товар, его тень, плашка и ценник; пустое место — ничего. Ценник — в валюте режима. */
   private showPlace(place: number): void {
-    const price = this.prices[place];
+    const price = this.priceOf(place);
     const isEmpty = price === null;
     const good = this.goods[place];
     good.setTexture(this.textureFor(place)).setScale(AMULET_SCALE);
     const isShown = !isEmpty && this.open; // пока чемодан закрыт, вещи прячутся: их покажет popGoods
     good.setPosition(amuletCaseX(place, AMULET_CASE_PLACES), AMULET_CASE_ICON_Y).setAlpha(1).setVisible(isShown);
     this.marks[place].setVisible(isShown);
-    this.priceIcons[place].setVisible(isShown);
+    this.priceIcons[place].setTexture(this.chipMode ? CHIP_TEXTURE : TICKET_TEXTURE).setVisible(isShown);
     this.priceTexts[place].setText(isEmpty ? '' : `× ${price}`).setVisible(isShown);
   }
 
+  /** Цена места в текущей валюте витрины: в режиме №39 — фишки, иначе билеты. */
+  private priceOf(place: number): number | null {
+    return this.chipMode ? this.chipPrices[place] ?? null : this.prices[place];
+  }
+
   /**
-   * Ценники: билетов хватает — жёлтые, нет — красные. Амулет, который некуда поставить
-   * (amuletReady[place] — false), — тусклый.
+   * Ценники: в текущей валюте хватает — жёлтые, нет — красные. Амулет, который некуда поставить
+   * (amuletReady[place] — false), — тусклый. tickets и chips — числа на табло панели.
    */
-  refresh(tickets: number, amuletReady: boolean[]): void {
-    this.prices.forEach((price, place) => {
+  refresh(tickets: number, chips: number, amuletReady: boolean[]): void {
+    this.ticketsShown = tickets;
+    this.chipsShown = chips;
+    this.readyShown = amuletReady;
+    const balance = this.chipMode ? chips : tickets;
+    this.prices.forEach((_price, place) => {
+      const price = this.priceOf(place);
       if (price === null) return;
-      this.priceTexts[place].setColor(price <= tickets ? LED_COLOR : RED_TEXT);
+      this.priceTexts[place].setColor(price <= balance ? LED_COLOR : RED_TEXT);
       this.goods[place].setAlpha(amuletReady[place] ? 1 : DIM_ALPHA);
     });
   }
 
-  /** Купили место place: из шапки панели в витрину летят билеты, товар исчезает — landed(x, y) с его места. */
+  /** Купили место place: из шапки панели в витрину летит оплата, товар исчезает — landed(x, y) с его места. */
   sell(place: number, landed: (x: number, y: number) => void): void {
     const good = this.goods[place];
     const { x, y } = good;
-    const fromX = SHOP_HUD.ticketX;
+    const isChips = this.chipMode; // №39: за фишки летят фишки, за билеты — билеты
+    const fromX = isChips ? SHOP_HUD.chipX : SHOP_HUD.ticketX;
+    const texture = isChips ? CHIP_TEXTURE : TICKET_TEXTURE;
     const count = 3; // для красоты: цена может быть любой
     for (let index = 0; index < count; index++) {
-      const coin = this.scene.add.image(fromX, SHOP_HUD.y, TICKET_TEXTURE).setDepth(SHOP_FLY_DEPTH);
+      const coin = this.scene.add.image(fromX, SHOP_HUD.y, texture).setDepth(SHOP_FLY_DEPTH);
       this.scene.tweens.add({
         targets: coin,
         x,
@@ -323,10 +404,11 @@ export class AmuletCase {
     }
     // Ценник пропадает сразу, товар — когда до него долетит оплата. Тень с плашкой гаснут вместе с товаром.
     this.prices[place] = null;
+    this.chipPrices[place] = null;
     this.priceIcons[place].setVisible(false);
     this.priceTexts[place].setText('');
     this.scene.time.delayedCall(count * PAY_STAGGER + PAY_FLY_TIME, () => {
-      if (this.prices[place] === null) {
+      if (this.priceOf(place) === null) {
         good.setVisible(false);
         this.marks[place].setVisible(false);
       }

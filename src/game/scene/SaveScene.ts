@@ -1,7 +1,19 @@
-import { readPacts, SECOND_WIND_MAX } from '../dealerGame';
+import { readPacts } from '../dealerGame';
 import { copyEffects } from '../items';
 import { isPatternId } from '../progress';
-import { debtNextMulOf, luckyCloversOf, secondWindLeftOf, tapePrice, type RunSave } from '../save';
+import {
+  achievementTicketIdsOf,
+  amuletChipUsedOf,
+  debtNextMulOf,
+  deferUsedOf,
+  freeGiftUsedOf,
+  luckyCloversOf,
+  rescueUsedOf,
+  skullCancelUsedOf,
+  tapePrice,
+  type RunSave,
+} from '../save';
+import { streakAfterRewind, tapePriceAfter, ticketsAfterRewind } from '../upgrades';
 import { ShopScene } from './ShopScene';
 
 /**
@@ -12,9 +24,12 @@ import { ShopScene } from './ShopScene';
  * съедает кассету: в магазине можно купить новую. Запись живёт только в памяти: закрыл вкладку — забег заново.
  */
 export abstract class SaveScene extends ShopScene {
-  /** Магазин открылся: у кассеты — её цена. */
-  protected openShop(): void {
-    super.openShop();
+  /**
+   * Магазин открылся: у кассеты — её цена. keepDebt — раунд повторяется, долг не пересчитывается; replayRound — номер
+   * магазина при повторе (ShopScene.openShop).
+   */
+  protected override openShop(keepDebt = false, replayRound?: number): void {
+    super.openShop(keepDebt, replayRound);
     if (!this.isShopOpen) return; // магазин закрыт сделкой Дилера: панели нет, и ценника кассеты тоже
     this.showTapePrice();
   }
@@ -25,24 +40,30 @@ export abstract class SaveScene extends ShopScene {
     this.showTapePrice();
   }
 
-  /** Цена кассеты (если её сейчас продают); не хватает билетов — красная. Скидка магазина — сделка №2. */
+  /** Цена кассеты (если её сейчас продают); не хватает билетов — красная. Скидка магазина — сделка №2,
+   *  улучшение №44 (28г) обнуляет ровно эту цену. */
   private showTapePrice(): void {
     if (this.tapeState !== 'forSale') return;
-    const price = tapePrice(this.tapesBought, this.shopDiscount());
+    const price = this.tapeCost();
     this.cassette.showPrice(price, price <= this.tickets);
+  }
+
+  /** Цена кассеты в билетах: 2, 3, 4… по купленным, скидка магазина — и 0 с улучшением №44 «Кассета бесплатно». */
+  private tapeCost(): number {
+    return tapePriceAfter(tapePrice(this.tapesBought, this.priceMul()), this.upgradeEffects.freeTape);
   }
 
   /** Купить кассету (клик или 9): хватает билетов — она уезжает на видеомагнитофон, в отделение REC. Одна за раз. */
   protected buyTape(): void {
     if (!this.cassetteUnlocked()) return;
     if (!this.isShopping || this.tapeState !== 'forSale') return;
-    const price = tapePrice(this.tapesBought, this.shopDiscount());
+    const price = this.tapeCost();
     if (price > this.tickets) {
       this.sfx.play('deny');
       this.cassette.deny();
       return;
     }
-    this.tickets -= price;
+    this.spendRunTickets(price);
     this.tapesBought += 1;
     this.tapeState = 'blank';
     this.sfx.play('buy');
@@ -97,10 +118,16 @@ export abstract class SaveScene extends ShopScene {
       debtNextMul: this.debtNextMul, // «следующий долг +20%» ещё не применён — откат его не теряет
       diceDrought: this.diceDrought,
       patterns: [...this.patternSet], // стекло на плёнке: откат вернёт ровно этот набор
-      secondWindLeft: this.secondWindLeft, // на записи счётчик такой, какой был: запись до провала — дыхание ещё есть
-      breathTaken: this.breathTaken, // сделка №9 уже бралась — откат этого не забывает (иначе карту возьмут второй раз)
       insuranceSaves: this.insuranceSaves,
       devUsed: this.devUsedThisRun, // кассета помнит, что забег трогали в «ТЕСТ»: откат не делает такой рекорд честным
+      rescueUsed: this.rescueUsedThisRun, // и что спасение уже было: откат яму второй раз не выпросит
+      deferUsed: this.deferredThisRun, // и что отсрочка (улучшение №10) уже потрачена: откат её не возвращает
+      amuletChipUsed: this.amuletChipUsedThisRun, // и что амулет за фишки (№39) уже брали: откат не возвращает
+      freeGiftGiven: this.freeGiftGiven, // и что подарок первого магазина (№40) уже выдан
+      skullCancelUsed: this.skullCancelUsedThisRun, // и что отмена черепа (№50) уже потрачена
+      achievementTickets: [...this.achievementTicketGiven], // и какие ачивки (№47) уже дали билет
+      startSymbol: this.startSymbolId ?? undefined, // №33: выбранный символ переживает откат
+      startGridGiven: this.startGridGiven, // и первая сетка уже получила джокера/символ
     };
     this.tapeState = 'recorded';
     this.tooltip.hide();
@@ -127,12 +154,24 @@ export abstract class SaveScene extends ShopScene {
     this.refreshHud();
     this.sfx.play('rewind');
     const tapesBought = this.tapesBought; // купленные кассеты откат не откатывает — иначе цена вернулась бы
-    // Откат не пополняет ни «второе дыхание», ни страховку: что уже потрачено, записью не возвращается.
+    // Откат не пополняет страховку: что уже потрачено, записью не возвращается.
     // Страховка живёт в раунде: к записи из прошлого раунда её трата не относится.
     const tape: RunSave = {
       ...record,
-      secondWindLeft: Math.min(secondWindLeftOf(record), this.secondWindLeft),
-      breathTaken: this.breathTaken || !!record.breathTaken, // липкий, как devUsed: карту №9 второй раз не взять
+      // Спасение тоже липкое: откат к записи до ямы вторую яму не открывает — иначе её фармили бы перемоткой.
+      rescueUsed: rescueUsedOf(record, this.rescueUsedThisRun),
+      // Отсрочка липкая так же: запись до неё не возвращает вторую попытку.
+      deferUsed: deferUsedOf(record, this.deferredThisRun),
+      // №39/№40: вторая покупка за фишки и второй подарок откатом не возвращаются.
+      amuletChipUsed: amuletChipUsedOf(record, this.amuletChipUsedThisRun),
+      freeGiftGiven: freeGiftUsedOf(record, this.freeGiftGiven),
+      // №50 (28г): отмена черепа липкая — откат второй не даёт; №47: список ачивок с билетом — объединение с плёнкой.
+      skullCancelUsed: skullCancelUsedOf(record, this.skullCancelUsedThisRun),
+      achievementTickets: achievementTicketIdsOf(record, this.achievementTicketGiven),
+      // №42 (28г): откат не сбрасывает серию — берём большую из текущей и записанной.
+      streak: streakAfterRewind(record.streak, this.streak, this.upgradeEffects.rewindKeepsStreak),
+      // №45 (28г): откат возвращает билеты, потраченные после записи, — к снимку с плёнки.
+      tickets: ticketsAfterRewind(record.tickets, this.ticketsSpentOnTape, this.upgradeEffects.rewindRefundsTickets),
       // Откат не пополняет страховку: сработки из этого раунда и с плёнки берём по большей.
       insuranceSaves: Math.max(record.round === this.round ? this.insuranceSaves : 0, record.insuranceSaves ?? 0),
     };
@@ -174,15 +213,30 @@ export abstract class SaveScene extends ShopScene {
     this.pacts = readPacts(record.pacts);
     // Корпус его цвета и значок покажет MachineBadge — части строятся после.
     this.diceDrought = record.diceDrought;
-    // Откат не пополняет ни дыхание, ни страховку: то, что уже потрачено, записью не возвращается.
-    // Потолок — дело сцены: `secondWindLeftOf` читает запись терпимо (битые плёнки бывают), а два запаса — правило игры.
-    this.secondWindLeft = Math.min(SECOND_WIND_MAX, secondWindLeftOf(record));
-    this.breathTaken = this.breathTaken || !!record.breathTaken; // карта №9 одна на забег, даже после отката
+    // Откат не пополняет страховку: то, что уже потрачено, записью не возвращается.
     this.insuranceSaves = Math.max(this.insuranceSaves, record.insuranceSaves ?? 0);
     // След «трогали в ТЕСТ» липкий в обе стороны: накрученный до записи забег остаётся помеченным и после отката,
     // а старая кассета без поля (devUsed нет) ничего не помечает. resetState() этот флаг уже обнулил —
     // поэтому insertTape передаёт его в scene.restart отдельно (data.devUsed), и здесь он складывается с плёнкой.
     this.devUsedThisRun = this.devUsedThisRun || !!record.devUsed;
+    // Спасение липкое так же: запись до ямы его не возвращает. resetState флаг обнулил, а insertTape
+    // сложил текущий с плёнкой — здесь остаётся только прочитать (правило — save.rescueUsedOf; старая кассета без поля — не было).
+    this.rescueUsedThisRun = rescueUsedOf(record, this.rescueUsedThisRun);
+    // Отсрочка (улучшение №10) — по тому же правилу: текущий флаг с плёнкой, назад её не возвращает.
+    this.deferredThisRun = deferUsedOf(record, this.deferredThisRun);
+    // №39 и №40 — липкие так же: откат к записи до них вторую покупку и подарок не возвращает.
+    this.amuletChipUsedThisRun = amuletChipUsedOf(record, this.amuletChipUsedThisRun);
+    this.freeGiftGiven = freeGiftUsedOf(record, this.freeGiftGiven);
+    // №50 и №47 (28г): отмена черепа и список ачивок с билетом едут с плёнки; insertTape уже сложил текущее с записью.
+    this.skullCancelUsedThisRun = skullCancelUsedOf(record, this.skullCancelUsedThisRun);
+    this.achievementTicketGiven = achievementTicketIdsOf(record, this.achievementTicketGiven);
+    // №42/№45 (28г): серия и билеты на плёнке уже посчитаны с улучшениями (insertTape), здесь просто читаются.
+    // Откат съедает счётчик трат: эти билеты вернулись — второй раз их откат не начислит (кассеты уже нет).
+    // №33: выбранный символ и признак «первая сетка уже с бонусом» едут с плёнкой.
+    if (record.startSymbol !== undefined) this.startSymbolId = record.startSymbol;
+    this.startGridGiven = record.startGridGiven === true;
+    // Отложенного долга на плёнке нет: число на записи уже включает его, второй раз прибавлять нечего.
+    this.debtCarry = 0;
     this.tapesBought = tapesBought;
     this.tapeState = 'forSale';
     // Стекло как на записи: открытые позже этого места паттерны кассета не возвращает. В старой записи набора нет —
@@ -194,7 +248,8 @@ export abstract class SaveScene extends ShopScene {
   /**
    * Части созданы: полка, амулеты с копиями, включённые предметы, лампочки, кон и записка — как на кассете. Вид загорается, в углу «▶».
    * Раунд идёт с того же места, новый (startRound) не начинается; фазу проверяем, как в начале раунда.
-   * Спасение — ровно как на записи (loadTape): запись до нехватки — шанс ещё есть, после — израсходован.
+   * Спасение не как на записи, а липкое: был ли он на плёнке или уже случился в этом забеге — после отката его
+   * больше нет (save.rescueUsedOf складывает оба флага, insertTape/loadTape его не снимают).
    */
   protected playTape(): void {
     this.setPatternsOnGlass(); // стекло с записи: набор пришёл в loadTape

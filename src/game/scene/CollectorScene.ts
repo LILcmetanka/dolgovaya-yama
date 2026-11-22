@@ -1,12 +1,11 @@
 import { interestCoins, TICKETS_PER_DEBT } from '../amulets';
 import { amuletTexture, TICKET_TEXTURE } from '../decor';
-import { shiftPacts } from '../dealerGame';
+import { isDevMode } from '../devmode';
 import { CHIP_RECORD } from '../gameConfig';
 import {
   GOOD_LUCK_TIME,
   RESCUE_SPINS,
-  rescueDebtModeOf,
-  rescueDebtMul,
+  rescueAllowed,
   rescueFreezeVerdict,
   rescueOutcome,
   rescueSpin,
@@ -14,13 +13,16 @@ import {
   rescueSpinsAfter,
   rescueToggleFrozen,
   rescueWeightOf,
+  WON_RESCUE_ROUND_STEP,
 } from '../lastChance';
 import { t } from '../lang';
-import { CENTER_X, DISPLAY, GRID_Y } from '../layout';
+import { CENTER_X, DISPLAY } from '../layout';
 import { memoryOptions, type MemoryOption } from '../memory';
-import { setRememberedAmulet } from '../progress';
-import { debtForRound, FAILED_DEBT_ROUND_STEP, type Grid } from '../rules';
+import { RESCUE_FADE_TIME } from '../parts/atmosphere';
+import { grantUpgrade, setRememberedAmulet } from '../progress';
+import type { Grid } from '../rules';
 import { addText, fitTextWidth, GAME_OVER_DEPTH, GOLD_TEXT, GREEN_TEXT, LAMP_OFF, LAMP_RED } from '../theme';
+import { UPGRADE_SECOND_PRICE, freeMemorySave, roundDebtTickets, upgradeOffers, type Upgrade } from '../upgrades';
 import { SaveScene } from './SaveScene';
 
 // Порядок событий, мс.
@@ -31,8 +33,6 @@ const KABOOM_SHAKE_TIME = 700;
 const KABOOM_SHAKE = 0.03;
 const RESCUE_TENSION = 1; // в раунде спасения сердце в музыке бьётся быстрее всего
 const RESCUE_WIN_PAUSE = 1200; // паттерн собран: столько видно новость, потом магазин
-const SECOND_WIND_PAUSE = 1200; // провал с «вторым дыханием»: столько видно, что случилось, потом магазин
-const SECOND_WIND_WHY_FONT = 20; // пояснение под «ВТОРОЕ ДЫХАНИЕ»: обычный кегль попапа его растянул бы на весь вид
 // Победа (набрано CHIP_GOAL).
 const VICTORY_SETTLE_TIME = 400; // после прибавки фишек столько ждём: текущее действие успевает доиграть
 const VICTORY_PAUSE = 1400; // лампы погасли, новое число на табло видно — пауза, потом затемнение
@@ -55,10 +55,11 @@ const MEMORY_BORDER = 0xfbbf24;
  * получаешь купон (билет), дальше магазин. Не хватает — на экране банкомата GOOD LUCK, и начинается раунд спасения
  * (шаг 27): всё уходит в красный, даётся 5 прокруток, доля черепов — RESCUE_SKULL_SHARE, надо собрать хотя бы один
  * паттерн. После прокрутки можно заморозить или разморозить один столбец; крутятся только незамороженные.
- * Амулеты и предметы в спасении заморожены. Собрал паттерн — выжил, долг остаётся тем же (назад пути нет),
- * магазин и новый раунд. Не собрал — провал: первый за забег даёт «второе дыхание» (счёт −1, магазин),
- * следующий — KABOOM. Счётчик secondWindLeft живёт в записи забега и в кассете:
- * откат дыхание не пополняет, а сделка №9 кладёт ещё один запас.
+ * Амулеты и предметы в спасении заморожены. Собрал паттерн — выжил: ни фишек, ни билетов за это не дают, долг
+ * остаётся тем же и раунд играется заново (WON_RESCUE_ROUND_STEP). Не собрал — провал: сразу KABOOM, без
+ * прощения и без магазина (решение автора 22.11.2026, шаг 34: «если я проиграл — проиграл, ВСЁ»).
+ * Спасение одно за забег: второй нехватки фишек не прощают, KABOOM идёт сразу (rescueAllowed);
+ * флаг rescueUsed липкий — откат его не снимает.
  */
 export abstract class CollectorScene extends SaveScene {
   // Раунд спасения: сетка, которую докручивает игрок, остаток прокруток и заморозки.
@@ -66,6 +67,7 @@ export abstract class CollectorScene extends SaveScene {
   private rescueSpinsLeft = 0;
   private rescueFreezeUsed = false; // заморозка/разморозка в этом ходу уже была: разрешена одна
   private readonly frozenColumns = new Set<number>(); // замороженные столбцы: прокрутка их не трогает
+  private isRescueIntro = false; // на экране автомата идёт заставка спасения: ввод закрыт, крутить нельзя (шаг 32)
   private isRescueWinPending = false; // паттерн собран: новость показана, через мгновение магазин
   private wasShoppingAtVictory = false; // победа застала магазин на экране: «ДАЛЬШЕ» доиграет его выход
   private victoryReached = false; // цель уже взята (порог сверен и пройден): падение баланса ниже chipGoal её не отменяет
@@ -76,6 +78,10 @@ export abstract class CollectorScene extends SaveScene {
   protected memoryChips: Phaser.GameObjects.Image[] = []; // значки амулетов: клик по ним и переносит
   protected memoryBox: Phaser.GameObjects.Rectangle | null = null;
   protected memoryTitleText: Phaser.GameObjects.Text | null = null;
+  // Улучшения после смерти (шаг 28): три карточки над экраном смерти. Что предложено и в какой фазе выбор —
+  // сценарий проверки читает эти поля.
+  protected upgradeOfferList: Upgrade[] = [];
+  protected upgradeSecondPhase = false; // бесплатное улучшение взято: теперь можно второе за билеты
 
   /** Новый забег: спасения нет, заморозок нет. */
   protected resetState(): void {
@@ -83,6 +89,7 @@ export abstract class CollectorScene extends SaveScene {
     this.rescueGrid = null;
     this.rescueSpinsLeft = 0;
     this.rescueFreezeUsed = false;
+    this.isRescueIntro = false;
     this.isRescueWinPending = false;
     this.frozenColumns.clear();
     this.wasShoppingAtVictory = false;
@@ -93,6 +100,8 @@ export abstract class CollectorScene extends SaveScene {
     this.memoryChips = [];
     this.memoryBox = null;
     this.memoryTitleText = null;
+    this.upgradeOfferList = [];
+    this.upgradeSecondPhase = false;
   }
 
   /** В раунде спасения сердце в музыке бьётся быстрее всего. */
@@ -103,6 +112,9 @@ export abstract class CollectorScene extends SaveScene {
   /**
    * Прокрутки кончились (или долг отдают раньше — isPaidEarly): Коллектор идёт за долгом.
    * Фишек не хватает — сначала тревога и красные огни на GOOD_LUCK_TIME, потом раунд спасения.
+   * Если спасение в этом забеге уже было — не прощают: GOOD LUCK не показываем, сразу KABOOM
+   * (решение автора 22.11.2026; липкий флаг rescueUsed откат кассетой не снимает).
+   * Улучшение №10 (шаг 28) идёт раньше спасения: раз за забег долг можно отложить на раунд.
    */
   protected callCollector(isPaidEarly: boolean): void {
     // Забег уже кончен (победа по цели или KABOOM): Коллектору за долгом идти незачем.
@@ -110,10 +122,39 @@ export abstract class CollectorScene extends SaveScene {
     if (this.isGameOver) return;
     this.finishTutorial(); // Коллектор пришёл — тьма рассеивается совсем (и обучение запоминается)
     if (!this.hasEnoughForDebt()) {
+      if (this.canDeferDebt()) {
+        this.deferDebt(); // «Отсрочка»: долг уйдёт к следующему раунду, яма и KABOOM подождут
+        return;
+      }
+      if (!rescueAllowed(this.rescueUsedThisRun)) {
+        this.kaboom(); // яма уже была: второй раз фишек на долг не хватает — конец забега
+        return;
+      }
       this.sfx.play('warning');
       this.screen.flashLamps(LAMP_RED, GOOD_LUCK_TIME);
     }
     this.reachOut(isPaidEarly);
+  }
+
+  /** Улучшение №10: отсрочка куплена и в этом забеге ещё не тратилась. */
+  private canDeferDebt(): boolean {
+    return this.upgradeEffects.deferOnce && !this.deferredThisRun;
+  }
+
+  /**
+   * Улучшение №10 «Отсрочка»: раз за забег долг платится на раунд позже. Фишки не платятся, спасения нет —
+   * неуплаченный долг запоминается в debtCarry, и магазин прибавит его к долгу следующего раунда
+   * (ShopScene.applyShopDebt). Сообщение — на экране автомата, как заставка спасения; потом магазин.
+   * Идёт до спасения: это не прощение, а перенос, и второй раз за забег не выдаётся.
+   */
+  private deferDebt(): void {
+    this.deferredThisRun = true; // флаг липкий: откат кассетой его не снимает (SaveScene)
+    this.debtCarry = this.debt;
+    this.sfx.play('warning');
+    this.collector.showScreenSequence([t('debtDeferred')], () => {
+      if (this.isGameOver) return;
+      this.openShop(); // новый раунд: долг = следующий по кривой + отложенный
+    });
   }
 
   /**
@@ -147,15 +188,18 @@ export abstract class CollectorScene extends SaveScene {
     this.collector.takePayment(
       (x, y) => {
         this.balance -= this.debt;
-        const interest = interestCoins(this.balance, this.amuletIds());
+        // Улучшение №13 (шаг 28): +5 п.п. к «Процентам» — доля приходит из upgradeEffects, не из сцены.
+        const interest = interestCoins(this.balance, this.amuletIds(), this.upgradeEffects.interestBonus);
         if (interest > 0) {
           this.earn(interest); // проценты — доход забега (не штраф): они тоже идут в цель 1 000 000
           this.amuletRack.trigger('interest');
           this.effects.popupAt(DISPLAY.x, DISPLAY.y + 50, `+${interest}`, GREEN_TEXT); // проценты капают на табло
         }
+        // Билет за долг: обычный плюс №17 (28б) — прибавка только за долг, закрытый ровно в третьем раунде.
+        const earned = TICKETS_PER_DEBT + roundDebtTickets(this.round, this.upgradeEffects.debtTicketBonus);
         // Билет начисляется, когда последний билет долетел до табло: до этого на нём ещё старое число.
-        this.panel.flyTickets(TICKETS_PER_DEBT, x, y, () => {
-          this.tickets += TICKETS_PER_DEBT;
+        this.panel.flyTickets(earned, x, y, () => {
+          this.tickets += earned;
           this.refreshHud();
         });
       },
@@ -169,11 +213,13 @@ export abstract class CollectorScene extends SaveScene {
 
   /**
    * Фишек не хватило: банкомат уехал с GOOD LUCK — всё уходит в красный, игра даёт 5 прокруток.
+   * Сначала на экране автомата короткая заставка тремя сообщениями (шаг 32); пока она идёт, ввод закрыт.
    * Первую прокрутку делает игрок рычагом: так он сам решает, когда начать. Дальше после каждой прокрутки —
    * один клик по столбцу (заморозить или разморозить), крутятся только незамороженные.
    */
   private startRescue(): void {
     this.isRescue = true;
+    this.rescueUsedThisRun = true; // спасение одно за забег: вторую яму не прощают (флаг липкий, откат его не снимает)
     this.pot = 0;
     this.rescueGrid = null;
     this.rescueSpinsLeft = RESCUE_SPINS;
@@ -185,10 +231,14 @@ export abstract class CollectorScene extends SaveScene {
     this.screen.clearHighlights(); // рамки прошлой прокрутки в спасении не нужны
     this.clearRust(); // ржавый столбец не должен молча не крутиться в спасении
     this.screen.clearNews();
-    this.rescueBar.open(RESCUE_SPINS);
     this.enterRescueMood();
     this.refreshHud();
     this.sfx.play('warning', 0.5);
+    // Заставка на экране автомата: «ВНИМАНИЕ!» → «АКТИВИРОВАН ПОСЛЕДНИЙ ШАНС» → «СОБЕРИ ЛЮБОЙ ПАТТЕРН ЧТОБЫ ВЫЖИТЬ».
+    this.isRescueIntro = true;
+    this.collector.showScreenSequence([t('rescueAlert1'), t('rescueAlert2'), t('rescueAlert3')], () => {
+      this.isRescueIntro = false; // заставка погасла: рычаг снова слушается
+    });
   }
 
   /** Красный режим: огни автомата красные, по краям вида красное свечение, амулеты и предметы притушены. */
@@ -211,6 +261,7 @@ export abstract class CollectorScene extends SaveScene {
   /** Рычаг и Пробел в спасении крутят спасение, а не обычный раунд (там прокруток уже нет). */
   protected override spin(): void {
     if (this.isRescue) {
+      if (this.isRescueIntro) return; // на экране автомата идёт заставка: ввод закрыт
       this.rescueSpinNow();
       return;
     }
@@ -233,8 +284,6 @@ export abstract class CollectorScene extends SaveScene {
     this.rescueGrid = rescueSpin(this.rescueGrid, [...this.frozenColumns], weightOf);
     this.rescueSpinsLeft = rescueSpinsAfter(this.rescueSpinsLeft);
     this.rescueFreezeUsed = false; // новый ход: снова можно заморозить или разморозить один столбец
-    this.rescueBar.setSpins(this.rescueSpinsLeft);
-    this.rescueBar.setFreezeUsed(false);
     this.screen.endPick();
     this.screen.clearHighlights();
     this.isSpinning = true;
@@ -250,7 +299,7 @@ export abstract class CollectorScene extends SaveScene {
 
   /**
    * Столбцы встали: собрали платящий паттерн — выжили; прокрутки кончились — умерли; иначе — ход заморозки:
-   * один клик по столбцу морозит или размораживает его.
+   * один клик по столбцу морозит или размораживает его. Подсказка на стекле — со счётчиком оставшихся прокруток.
    */
   private afterRescueSpin(): void {
     if (!this.isRescue || this.isRescueWinPending) return;
@@ -265,7 +314,26 @@ export abstract class CollectorScene extends SaveScene {
       return;
     }
     this.refreshHud();
+    this.showRescueHint(); // «ЗАМОРОЗЬ СТОЛБЕЦ · ОСТАЛОСЬ N» (или «ПОСЛЕДНЯЯ ПРОКРУТКА»)
     this.screen.beginPick('column', (_row, col) => this.onRescuePick(col));
+  }
+
+  /**
+   * Подсказка на стекле паттернов — вместо старой полосы (шаг 32). Счётчик оставшихся прокруток живёт только внутри
+   * сообщения: можно морозить — «ЗАМОРОЗЬ СТОЛБЕЦ · ОСТАЛОСЬ N», заморозка в этом ходу уже была — «КРУТИ РЫЧАГ ·
+   * ОСТАЛОСЬ N», а когда останется одна прокрутка — «ПОСЛЕДНЯЯ ПРОКРУТКА». Паттерн уже собран — молчим: победа
+   * показывает своё «ПАТТЕРН СОБРАН».
+   */
+  private showRescueHint(): void {
+    if (!this.isRescue || this.isRescueWinPending) return;
+    const text = this.rescueHintText();
+    this.screen.announceSequence([{ text }]);
+  }
+
+  /** Текст подсказки спасения по остатку прокруток и заморозке этого хода. */
+  private rescueHintText(): string {
+    if (this.rescueSpinsLeft <= 1) return t('rescueLastSpin'); // осталась одна — это и есть последняя прокрутка
+    return t(this.rescueFreezeUsed ? 'rescuePullHint' : 'rescueFreezeHint', this.rescueSpinsLeft);
   }
 
   /**
@@ -285,79 +353,70 @@ export abstract class CollectorScene extends SaveScene {
     this.rescueFreezeUsed = next.used;
     this.screen.showFrozen([...this.frozenColumns]);
     this.screen.endPick(); // одно действие за ход: дальше — рычаг
-    this.rescueBar.setFreezeUsed(true);
+    this.showRescueHint(); // заморозка потрачена — «КРУТИ РЫЧАГ · ОСТАЛОСЬ N»
     this.sfx.play('rust');
     this.refreshHud();
   }
 
   /**
-   * Паттерн собран: выжил. Долг не откатывается и не прощается; как он растёт дальше — решает RESCUE_DEBT_MODE:
-   *  • 'frozen' — следующий долг равен текущему (debtNextMul = rescueDebtMul);
-   *  • 'curve'  — следующий долг считается от номера раунда, как в обычном раунде (openShop сам возьмёт
-   *               debtForRound(round + 1)), а debtNextMul остаётся 1.
-   * Назад пути нет.
+   * Паттерн собран: выжил. За выживание не дают ни фишек, ни билетов (чемодана и ящика в спасении нет вовсе),
+   * баланс не трогается. Долг остаётся РОВНО тем же числом, что был до ямы: счёт отступает на WON_RESCUE_ROUND_STEP,
+   * а магазин возвращает тот же номер раунда и не пересчитывает долг (openShop(true, replayRound)) — иначе разовые
+   * сделки потекли бы («−10%» сейчас, «+8%» сейчас). Сроки сделок не сдвигаются: номер раунда в итоге тот же, и
+   * сделка на 1 раунд должна действовать в переигранном раунде, а не исчезнуть. Поэтому магазину отдаём исходный
+   * номер: по нему он проверяет «магазин закрыт», иначе искал бы сделку на раунд раньше. Назад пути нет.
    */
   private winRescue(): void {
     this.isRescueWinPending = true;
     this.screen.endPick();
-    this.rescueBar.showResult();
-    this.screen.announceNews(t('rescueSurvived'));
+    this.screen.announceSequence([{ text: t('rescueSurvived') }]); // «ПАТТЕРН СОБРАН» на стекле
     this.sfx.play('bigWin');
     this.time.delayedCall(RESCUE_WIN_PAUSE, () => {
       if (!this.isRescue || !this.isRescueWinPending) return;
       this.isRescueWinPending = false;
-      this.closeRescue();
+      // Сообщение на стекле оставляем: пусть висит, пока гаснет красное и встаёт магазин (closeRescue(true)).
+      this.closeRescue(true);
       this.sfx.play('payment');
-      // Умножаем на действующий множитель: сделка №12 (+20% к следующему долгу) не должна потеряться от спасения.
-      if (rescueDebtModeOf() === 'frozen') this.debtNextMul = rescueDebtMul(this.debt, debtForRound(this.round + 1)) * this.debtNextMul;
-      this.openShop();
+      // Откат счёта на один, а магазин встанет перед исходным раундом: номер и долг — как были.
+      const replayRound = this.round;
+      this.round = Math.max(0, this.round - WON_RESCUE_ROUND_STEP);
+      // Магазин открывается только после того, как красное свечение погасло (RESCUE_FADE_TIME, шаг 32).
+      this.time.delayedCall(RESCUE_FADE_TIME, () => {
+        if (this.isGameOver || this.isShopOpen) return;
+        this.openShop(true, replayRound);
+      });
     });
   }
 
   /**
-   * Провал: паттерна нет. Пока счётчик «второго дыхания» не пуст — запас тратится, счёт −1 и магазин, забег живёт дальше.
-   * Пуст (обычный забег — после первого провала, со сделкой №9 — после второго) — KABOOM.
+   * Провал: паттерна нет. Прощения нет — сразу KABOOM (решение автора 22.11.2026, шаг 34: «если я проиграл —
+   * проиграл, ВСЁ»): счёт раунда не двигается, магазин не открывается.
    */
   private failRescue(): void {
     this.closeRescue();
-    if (this.secondWindLeft <= 0) {
-      this.kaboom();
-      return;
-    }
-    this.secondWindLeft -= 1;
-    this.sfx.play('warning');
-    // Попап — не только название: игрок должен понять, почему выжил и что будет дальше (DONTLIKE б.12).
-    this.effects.popup(t('rescueSecondWind'), GOLD_TEXT);
-    this.effects.popupAt(CENTER_X, GRID_Y + 24, t('rescueSecondWindWhat'), GOLD_TEXT, SECOND_WIND_WHY_FONT);
-    this.time.delayedCall(SECOND_WIND_PAUSE, () => {
-      // За 1,2 с забег мог кончиться или магазин уже встать (ввод в это время закрыт isRoundOver):
-      // второй раз счёт не двигаем и второй магазин не открываем.
-      if (this.isGameOver || this.isShopOpen) return;
-      // Долг не закрыт — счёт не двигаем (FAILED_DEBT_ROUND_STEP = 1): магазин прибавит единицу, и следующий
-      // долг будет тем же, без роста. Раньше счёт шёл на один долг назад — проигрыш выходил бафом.
-      const before = this.round;
-      this.round = Math.max(0, this.round - FAILED_DEBT_ROUND_STEP);
-      this.pacts = shiftPacts(this.pacts, this.round - before); // сроки сделок едут вместе со счётом раундов
-      this.openShop();
-    });
+    this.kaboom();
   }
 
-  /** Спасение кончилось любой дорогой: убрать полосу, сетку выбора, мороз и красный режим, снять isRescue. */
-  private closeRescue(): void {
+  /**
+   * Спасение кончилось любой дорогой: убрать сетку выбора, мороз и красный режим, снять isRescue.
+   * keepNews — сообщение на стекле («ПАТТЕРН СОБРАН») остаётся: магазин встанет, пока оно ещё видно.
+   */
+  private closeRescue(keepNews = false): void {
     this.screen.endPick();
     this.screen.showFrozen([]);
-    this.rescueBar.close();
+    this.collector.clearScreenSequence(); // недоигранная заставка спасения гаснет вместе с раундом
     this.collector.clearGoodLuck(); // GOOD LUCK с экрана уходит и после провала
     this.frozenColumns.clear();
     this.rescueGrid = null;
     this.rescueSpinsLeft = 0;
     this.rescueFreezeUsed = false;
+    this.isRescueIntro = false;
     this.isRescueWinPending = false;
     this.isRescue = false;
     this.isSpinning = false;
     this.pot = 0;
     this.exitRescueMood();
-    this.screen.clearNews();
+    if (!keepNews) this.screen.clearNews();
     this.refreshHud();
   }
 
@@ -473,9 +532,11 @@ export abstract class CollectorScene extends SaveScene {
    * Список и цены считает memory.ts: только уникальные амулеты забега и только те, на которые хватает билетов,
    * поэтому при нехватке билетов слота нет совсем. Копии не переносятся. Выбор кликом уходит в progress
    * (setRememberedAmulet) и сработает в начале следующего забега (BaseScene.grantMemoryAmulet).
+   * Улучшение №30 (28б): один амулет не сгорает при смерти — витрина предлагает его бесплатно, раз за забег.
    */
   private showMemorySlot(): void {
-    const options = memoryOptions(this.amulets.map((amulet) => amulet.id), this.tickets);
+    const free = freeMemorySave(this.upgradeEffects, this.amuletSavedThisRun);
+    const options = memoryOptions(this.amulets.map((amulet) => amulet.id), this.tickets, free ? 1 : 0);
     if (options.length === 0) return; // амулетов не было или билетов не хватает — слот не показываем
     this.memoryOptions = options;
     const width = Math.max(MEMORY_PANEL_MIN_WIDTH, options.length * MEMORY_CHIP_STEP + MEMORY_PANEL_PAD * 2);
@@ -540,6 +601,8 @@ export abstract class CollectorScene extends SaveScene {
     if (this.memoryOptions.length === 0) return;
     if (this.tickets < option.price) return; // не хватает билетов — вариант и не предлагался
     this.tickets -= option.price; // билеты забега на момент смерти: с этой минуты их меньше на цену
+    // №30 (28б): бесплатный перенос — один раз за забег. Второй амулет за 0 в этом забеге не даётся.
+    if (option.price === 0) this.amuletSavedThisRun = true;
     setRememberedAmulet(option.amulet.id);
     this.refreshHud();
     this.sfx.play('payment');
@@ -565,6 +628,86 @@ export abstract class CollectorScene extends SaveScene {
     this.memoryTitleText = null;
   }
 
+  // ---------- Улучшения после смерти (шаг 28) ----------
+
+  /**
+   * После смерти (и только после неё — ни после победы, ни после «ДАЛЬШЕ»): три улучшения из пула, одно бесплатно.
+   * Что можно взять, считает upgrades.upgradeOffers по купленному в прогрессe. Куплено всё — экрана нет,
+   * сразу витрина памяти. Экран — выше экрана смерти: пока он открыт, «ЗАНОВО» не нажать.
+   * Режим разработчика — как у ачивок (BaseScene.unlockAchievement): улучшения не выдаются и не пишутся, и экрана
+   * нет вовсе. devUsedThisRun — липкий след «забег трогали в ТЕСТ»: он тоже закрывает экран, даже если режим
+   * к моменту смерти уже выключили, иначе улучшения фармились бы тестовыми фишками.
+   */
+  private showUpgradeChoice(): void {
+    if (isDevMode() || this.devUsedThisRun) {
+      this.showMemorySlot(); // в «ТЕСТ» улучшений не даём: ни бесплатного, ни второго за билеты
+      return;
+    }
+    const offers = upgradeOffers(this.upgrades);
+    if (offers.length === 0) {
+      this.showMemorySlot(); // предлагать нечего: экран улучшений просто не показывается
+      return;
+    }
+    this.upgradeOfferList = offers;
+    this.upgradeSecondPhase = false;
+    this.upgradeScreen.show(offers, {
+      caption: t('upgFreeHint'),
+      onPick: (index) => this.pickUpgrade(index),
+    });
+  }
+
+  /**
+   * Выбор карточки. Первая — бесплатная (пишется в прогресс сразу и действует со следующего забега).
+   * Осталось что брать и билетов хватает — экран остаётся во второй фазе: второе улучшение за UPGRADE_SECOND_PRICE
+   * билетов из остатка погибшего забега. Билетов нет — экран закрывается, дальше обычное «ЗАНОВО».
+   * В «ТЕСТ» и после тестового забега не выдаётся ничего — ни бесплатное, ни второе за 6 билетов (ни билеты не списываются).
+   */
+  private pickUpgrade(index: number): void {
+    const upgrade = this.upgradeOfferList[index];
+    if (!upgrade) return;
+    if (isDevMode() || this.devUsedThisRun) {
+      this.closeUpgrades(); // заслон на случай, если экран уже открыт: без выдачи и без списания билетов
+      return;
+    }
+    if (!this.upgradeSecondPhase) {
+      grantUpgrade(upgrade.id);
+      this.sfx.play('buy');
+      const rest = this.upgradeOfferList.filter((_, place) => place !== index);
+      this.upgradeOfferList = rest;
+      this.upgradeSecondPhase = true;
+      if (rest.length === 0 || this.tickets < UPGRADE_SECOND_PRICE) {
+        this.closeUpgrades(); // второе брать не из чего или не на что — сразу к памяти и «ЗАНОВО»
+        return;
+      }
+      this.upgradeScreen.show(rest, {
+        caption: t('upgSecondHint', UPGRADE_SECOND_PRICE, this.tickets),
+        close: true, // второе — по желанию: экран закрывают ✕ или клавиша «0»
+        onPick: (place) => this.pickUpgrade(place),
+        onClose: () => this.closeUpgrades(),
+      });
+      this.refreshHud();
+      return;
+    }
+    // Вторая фаза: билеты списываются здесь же — из остатка погибшего забега (отдельного кошелька нет).
+    if (this.tickets < UPGRADE_SECOND_PRICE) {
+      this.sfx.play('deny');
+      return;
+    }
+    this.tickets -= UPGRADE_SECOND_PRICE;
+    grantUpgrade(upgrade.id);
+    this.sfx.play('payment');
+    this.refreshHud();
+    this.closeUpgrades();
+  }
+
+  /** Экран улучшений закрыт: дальше — витрина памяти (шаг 26) и обычное «ЗАНОВО» экрана смерти. */
+  private closeUpgrades(): void {
+    this.upgradeScreen.close();
+    this.upgradeOfferList = [];
+    this.upgradeSecondPhase = false;
+    this.showMemorySlot();
+  }
+
   /** Конец забега: на экране автомата KABOOM, потом автомат взрывается, всё темнеет, и на нём — KABOOM, счёт, «ЗАНОВО». */
   private kaboom(): void {
     this.isGameOver = true;
@@ -587,7 +730,8 @@ export abstract class CollectorScene extends SaveScene {
         this.collector.clearGoodLuck(); // KABOOM погас: под экраном DEATH не должно остаться старого мигающего заголовка
         this.collector.blackout(() => {
           this.collector.showDeath(this.closedDebts(), this.record, () => this.restartGame(), 'KABOOM');
-          this.showMemorySlot(); // после смерти — один амулет из забега за билеты (шаг 26); после победы его нет
+          // После смерти — три улучшения (шаг 28); куплено всё — сразу витрина памяти (шаг 26).
+          this.showUpgradeChoice();
           this.time.delayedCall(RESTART_SPACE_DELAY, () => {
             this.canRestartWithSpace = true;
           });

@@ -12,13 +12,21 @@ import { Atm } from './atm';
 import { CENTER_X, CENTER_Y, GOAL_NOTE, GOAL_NOTE_ANGLE, NOTE, NOTE_ANGLE, SCREEN, VIEW_WIDTH } from '../layout';
 import { CHIP_GOAL } from '../gameConfig';
 import { GOOD_LUCK_TIME } from '../lastChance';
-import { addText, GAME_OVER_DEPTH, GOLD_TEXT, LED_STYLE, POPUP_DEPTH, RED_TEXT } from '../theme';
+import { addText, fitTextWidth, GAME_OVER_DEPTH, GOLD_TEXT, LED_STYLE, POPUP_DEPTH, RED_TEXT } from '../theme';
 
 // Записка светится, когда долг можно отдать раньше: клик по ней или D.
 const NOTE_GLOW_MIN = 0.3; // свечение пульсирует: гаснет до такой яркости и разгорается снова
 const NOTE_GLOW_TIME = 700; // мс
 // Надпись на чёрном экране автомата: KABOOM — конец забега. GOOD LUCK рисует банкомат (atm.ts), не эта часть.
 const SCREEN_TITLE_STYLE = { ...LED_STYLE, fontSize: '64px', color: RED_TEXT, shadow: { color: '#ef4444', blur: 18, fill: true } };
+// Заставка раунда спасения (шаг 32): короткие строки по очереди на том же чёрном экране. Длинная строка ужимается
+// по ширине экрана: «СОБЕРИ ЛЮБОЙ ПАТТЕРН ЧТОБЫ ВЫЖИТЬ» в 64 px не влезла бы.
+const SCREEN_LINE_FONT = 64;
+const SCREEN_LINE_MIN_FONT = 18;
+const SCREEN_LINE_MAX_WIDTH = 420; // SCREEN.width (460) минус поле по бокам
+const SCREEN_LINE_HOLD = 900; // строка держится, мс
+const SCREEN_LINE_FADE = 220; // и столько гаснет
+const SCREEN_LINE_GAP = 120; // пауза перед следующей строкой, мс
 // Экран победы: «ПОБЕДА» золотом — автомат цел, забег выигран (KABOOM — красный).
 const VICTORY_TITLE_STYLE = { ...LED_STYLE, fontSize: '56px', color: GOLD_TEXT, shadow: { color: '#f59e0b', blur: 18, fill: true } };
 const SCREEN_TITLE_DEPTH = POPUP_DEPTH - 1; // заголовок — над сеткой, под всплывающими надписями
@@ -70,6 +78,9 @@ export class Collector {
   private notePot = 0;
   private isPayable = false; // записка светится: по ней можно кликнуть и отдать долг раньше
   private goodLuck: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = []; // KABOOM на экране автомата, пока идёт взрыв
+  // Заставка на экране автомата (раунд спасения): что нарисовано сейчас; token отменяет недоигранную заставку.
+  private screenSequence: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = [];
+  private sequenceToken = 0;
 
   /**
    * pay — что делать, когда кликнули по банкомату (Enter сцена ловит сама);
@@ -270,6 +281,65 @@ export class Collector {
     this.goodLuck = [];
     this.scene.tweens.killTweensOf(parts);
     this.scene.tweens.add({ targets: parts, alpha: 0, duration: GOOD_LUCK_FADE_TIME, onComplete: () => parts.forEach((part) => part.destroy()) });
+  }
+
+  /**
+   * Короткая заставка на экране автомата: строки идут по очереди — чёрный экран, мигающая LED-надпись (тот же вид,
+   * что у KABOOM), строка держится и гаснет, встаёт следующая. После последней гаснет и экран, потом done().
+   * Длинная строка ужимается по ширине экрана. Пока заставка идёт, ввод держит закрытым сцена (раунд спасения, шаг 32).
+   */
+  showScreenSequence(lines: readonly string[], done?: () => void): void {
+    this.clearScreenSequence(); // прошлая заставка (если была) убирается целиком
+    const token = this.sequenceToken;
+    const screen = this.scene.add
+      .rectangle(SCREEN.x, SCREEN.y, SCREEN.width, SCREEN.height, 0x000000)
+      .setRounded(16)
+      .setDepth(SCREEN_TITLE_DEPTH);
+    this.screenSequence = [screen];
+    let index = 0;
+    const next = (): void => {
+      if (token !== this.sequenceToken) return; // заставку сняли — дальше не идём
+      if (index >= lines.length) {
+        this.scene.tweens.add({
+          targets: screen,
+          alpha: 0,
+          duration: SCREEN_LINE_FADE,
+          onComplete: () => {
+            screen.destroy();
+            if (token === this.sequenceToken) this.screenSequence = [];
+            done?.();
+          },
+        });
+        return;
+      }
+      const text = lines[index++];
+      const title = addText(this.scene, SCREEN.x, SCREEN.y, text, SCREEN_TITLE_STYLE).setOrigin(0.5).setDepth(SCREEN_TITLE_DEPTH);
+      fitTextWidth(title, text, SCREEN_LINE_MAX_WIDTH, SCREEN_LINE_FONT, SCREEN_LINE_MIN_FONT); // всей строкой, без переносов
+      this.screenSequence = [screen, title];
+      const blink = this.scene.tweens.add({ targets: title, alpha: 0.3, duration: TITLE_BLINK_TIME, yoyo: true, repeat: -1 });
+      this.scene.time.delayedCall(SCREEN_LINE_HOLD, () => {
+        if (token !== this.sequenceToken) return;
+        blink.remove();
+        this.scene.tweens.add({
+          targets: title,
+          alpha: 0,
+          duration: SCREEN_LINE_FADE,
+          onComplete: () => {
+            title.destroy();
+            this.scene.time.delayedCall(SCREEN_LINE_GAP, next);
+          },
+        });
+      });
+    };
+    next();
+  }
+
+  /** Заставку снять сразу: её твины и картинки уничтожаются, done не зовётся. */
+  clearScreenSequence(): void {
+    this.sequenceToken += 1;
+    this.scene.tweens.killTweensOf(this.screenSequence);
+    for (const part of this.screenSequence) part.destroy();
+    this.screenSequence = [];
   }
 
   /** Чёрный экран автомата с мигающей надписью text на слое depth. look — цвет и размер надписи (KABOOM красный, ПОБЕДА золотая). */

@@ -19,6 +19,7 @@ export interface WeightContext {
   effects: ItemEffects;
   skullMul?: number; // поправка веса черепа от сделки Дилера (dealerGame.skullShareWeightMul); без неё — 1
   symbolLuck?: SymbolLuck; // сделка №11: выбранному символу +, остальным −; без неё веса обычные
+  symbolBonus?: Partial<Record<string, number>>; // улучшения №23/24: клеверу и вишне + к весу (upgrades.symbolWeightBonus)
 }
 
 /**
@@ -42,7 +43,11 @@ export function symbolWeightOf(symbol: SlotSymbol, base: WeightOf, ctx: WeightCo
   if (!machineSymbolAllowed(ctx.machineId, symbol)) return 0;
   const skullFactor = isSkull(symbol) ? machineSkullFactor(ctx.machineId) : 1;
   const machined = amuletWeight(symbol, base(symbol), [...ctx.amulets]) * skullFactor;
-  let weight = boostWeight(symbol, machined, ctx.effects); // чеснок: череп легче, вишни: вишня тяжелее
+  // Улучшения №23/24 (шаг 28б): клевер и вишня тяжелее на 1. Символ, которого в автомате нет (вес 0), добавка
+  // не открывает — иначе клевер выпадал бы до 7-го раунда, а у «Тихого» появился бы вовсе.
+  const bonus = ctx.symbolBonus?.[symbol.id] ?? 0;
+  const withBonus = bonus > 0 && machined > 0 ? machined + bonus : machined;
+  let weight = boostWeight(symbol, withBonus, ctx.effects); // чеснок: череп легче, вишни: вишня тяжелее
   if (ctx.symbolLuck !== undefined) weight = symbolLuckWeight(symbol, weight, ctx.symbolLuck); // сделка №11
   if (ctx.skullMul !== undefined && isSkull(symbol)) weight *= ctx.skullMul; // сделка Дилера: черепов больше
   if (ctx.effects.risk && isSkull(symbol)) weight *= RISK_SKULL_FACTOR; // риск: черепа втрое чаще

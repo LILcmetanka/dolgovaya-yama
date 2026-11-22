@@ -204,9 +204,21 @@ export function owns(owned: AmuletId[], id: AmuletId): boolean {
   return copiesOf(owned, id) > 0;
 }
 
-/** Цена амулета в билетах: переопределённая или по редкости, со скидкой магазина (mul — сделка №2). */
-export function amuletPrice(amulet: Amulet, mul = 1): number {
-  return ticketPrice(amulet.price ?? AMULET_PRICES[amulet.rarity], mul);
+/** Цена амулета в билетах: переопределённая или по редкости, со скидкой магазина (mul — сделка №2).
+ *  ticketsOff — улучшение №26 (шаг 28б): столько билетов снимается, но не ниже одного — бесплатно не продают. */
+export function amuletPrice(amulet: Amulet, mul = 1, ticketsOff = 0): number {
+  const price = ticketPrice(amulet.price ?? AMULET_PRICES[amulet.rarity], mul);
+  const off = Number.isFinite(ticketsOff) && ticketsOff > 0 ? Math.floor(ticketsOff) : 0;
+  return Math.max(1, price - off);
+}
+
+/**
+ * Потолок копий амулета с улучшением №27 (шаг 28б): каждая копия улучшения поднимает потолок ВСЕХ амулетов на 1.
+ * Мусор в прибавке (NaN, минус) — потолок игры.
+ */
+export function maxCopiesOf(amulet: Amulet, bonus = 0): number {
+  const extra = Number.isFinite(bonus) && bonus > 0 ? Math.floor(bonus) : 0;
+  return amulet.maxCopies + extra;
 }
 
 /** Цена копии страховки со сделкой №5: k-я копия (k — уже купленные) вдвое дороже предыдущей. */
@@ -219,23 +231,45 @@ export function earlyPayTickets(spinsLeft: number): number {
   return spinsLeft >= EARLY_PAY_MIN_SPINS ? EARLY_PAY_TICKETS : 0;
 }
 
-/** Цена следующего гнезда (сейчас гнёзд sockets). Гнёзд уже MAX_SOCKETS — null. */
-export function socketPrice(sockets: number, mul = 1): number | null {
+/** Цена следующего гнезда (сейчас гнёзд sockets). Гнёзд уже MAX_SOCKETS — null.
+ *  firstFree — улучшение №28 (шаг 28б): первое гнездо забега (sockets === START_SOCKETS) бесплатно. */
+export function socketPrice(sockets: number, mul = 1, firstFree = false): number | null {
   if (sockets >= MAX_SOCKETS) return null;
+  if (firstFree && sockets === START_SOCKETS) return 0;
   return ticketPrice(SOCKET_PRICES[sockets - START_SOCKETS], mul);
 }
 
 /**
- * Что в витрине амулетов: AMULET_OFFER_SIZE разных случайных амулетов, которых ещё можно докупить (копий меньше потолка).
+ * Что в витрине амулетов: AMULET_OFFER_SIZE разных случайных амулетов, которых ещё можно докупить
+ * (копий меньше потолка + maxCopiesBonus — улучшение №27).
  */
-export function randomAmuletOffer(owned: AmuletId[]): Amulet[] {
-  const pool = AMULETS.filter((amulet) => copiesOf(owned, amulet.id) < amulet.maxCopies);
+export function randomAmuletOffer(owned: AmuletId[], maxCopiesBonus = 0): Amulet[] {
+  const pool = AMULETS.filter((amulet) => copiesOf(owned, amulet.id) < maxCopiesOf(amulet, maxCopiesBonus));
   const offer: Amulet[] = [];
   while (offer.length < AMULET_OFFER_SIZE && pool.length > 0) {
     const index = Math.floor(Math.random() * pool.length);
     offer.push(pool.splice(index, 1)[0]);
   }
   return offer;
+}
+
+/**
+ * Улучшение №29 (шаг 28б): в первом магазине витрина амулетов обязана содержать редкий амулет.
+ * Уже есть редкий — витрина как есть; нет — последнее место занимает случайный редкий, которого нет в других местах
+ * и копий которого меньше потолка. Редких не осталось — витрина как есть (правило не выдумывает амулет).
+ */
+export function withRareAmulet(offer: Amulet[], owned: AmuletId[], maxCopiesBonus = 0, random = Math.random): Amulet[] {
+  if (offer.some((amulet) => amulet.rarity === 'rare')) return offer;
+  const taken = new Set(offer.map((amulet) => amulet.id));
+  const pool = AMULETS.filter(
+    (amulet) => amulet.rarity === 'rare' && !taken.has(amulet.id) && copiesOf(owned, amulet.id) < maxCopiesOf(amulet, maxCopiesBonus),
+  );
+  if (pool.length === 0) return offer;
+  const rare = pool[Math.min(pool.length - 1, Math.floor(random() * pool.length))];
+  if (offer.length < AMULET_OFFER_SIZE) return [...offer, rare];
+  const next = [...offer];
+  next[next.length - 1] = rare; // последнее место показывают как «редкий в витрине»
+  return next;
 }
 
 // ---------- Что меняют амулеты ----------
@@ -322,9 +356,12 @@ export function amuletsOnWin(hits: PatternHit[], owned: AmuletId[]): AmuletId[] 
   return fired.filter((id) => owns(owned, id));
 }
 
-/** Сколько кладёт копилка за прокрутку без выигрыша (с множителем этой прокрутки; PIGGY_COINS в степени копий). */
-export function piggyCoins(multiplier: number, owned: AmuletId[]): number {
-  return owns(owned, 'piggy') ? PIGGY_COINS ** copiesOf(owned, 'piggy') * multiplier : 0;
+/**
+ * Сколько кладёт копилка за прокрутку без выигрыша (с множителем этой прокрутки; PIGGY_COINS в степени копий).
+ * bonus — улучшение №14 (шаг 28): +1 фишка за прокрутку. Без копилки выплаты нет вовсе, бонус один её не включает.
+ */
+export function piggyCoins(multiplier: number, owned: AmuletId[], bonus = 0): number {
+  return owns(owned, 'piggy') ? PIGGY_COINS ** copiesOf(owned, 'piggy') * multiplier + bonus : 0;
 }
 
 /**
@@ -340,7 +377,12 @@ export function vestShields(owned: AmuletId[]): number {
   return VEST_SHIELDS * copiesOf(owned, 'vest');
 }
 
-/** Проценты: сколько фишек добавить к остатку на табло после расплаты (INTEREST_SHARE за копию). */
-export function interestCoins(balance: number, owned: AmuletId[]): number {
-  return Math.floor(balance * INTEREST_SHARE * copiesOf(owned, 'interest'));
+/**
+ * Проценты: сколько фишек добавить к остатку на табло после расплаты (INTEREST_SHARE за копию).
+ * bonus — улучшение №13 (шаг 28): +5 п.п. к доле, только пока «Проценты» есть — без амулета выплаты нет.
+ */
+export function interestCoins(balance: number, owned: AmuletId[], bonus = 0): number {
+  const copies = copiesOf(owned, 'interest');
+  if (copies <= 0) return 0;
+  return Math.floor(balance * (INTEREST_SHARE * copies + bonus));
 }

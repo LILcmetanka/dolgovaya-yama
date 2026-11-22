@@ -201,17 +201,21 @@ export function spinGrid(weightOf: WeightOf = BASE_WEIGHT): Grid {
 }
 
 /**
- * На сколько уменьшается счёт раундов перед магазином, когда долг НЕ закрыли (провал спасения,
- * «второе дыхание»). Счёт не двигаем: магазин прибавит единицу — следующий долг будет тем же, без роста
- * (решение автора: незакрытый долг переносится таким же, никаких бафов и штрафов за проигрыш).
- * Выжил в спасении — другое дело: долг остаётся тем же, но счёт раунда идёт вперёд (CollectorScene.winRescue).
+ * Долг раунда N = DEBT_START × DEBT_GROWTH^(N−1), округлённый до DEBT_ROUND_TO: 150, 540, 1940, 7000, 25 190…
+ * growthMul — улучшение №7 (шаг 28): долг растёт медленнее (×3,4 вместо ×3,6). Кривая та же, меняется только шаг роста;
+ * без улучшения growthMul = 1 и числа прежние.
  */
-export const FAILED_DEBT_ROUND_STEP = 1;
-
-/** Долг раунда N = DEBT_START × DEBT_GROWTH^(N−1), округлённый до DEBT_ROUND_TO: 150, 540, 1940, 7000, 25 190… */
-export function debtForRound(round: number): number {
-  const exact = DEBT_START * DEBT_GROWTH ** (round - 1);
+export function debtForRound(round: number, growthMul = 1): number {
+  const exact = DEBT_START * (DEBT_GROWTH * growthMul) ** (round - 1);
   return Math.round(exact / DEBT_ROUND_TO) * DEBT_ROUND_TO;
+}
+
+/**
+ * Долг первого раунда с поправкой улучшения №6 («стартовый долг −5%»): DEBT_START × mul по тому же округлению.
+ * Дальше долг считается по кривой от раунда — скидка старта на следующие раунды не переезжает.
+ */
+export function startDebt(mul = 1): number {
+  return Math.round((DEBT_START * mul) / DEBT_ROUND_TO) * DEBT_ROUND_TO;
 }
 
 /**
@@ -247,7 +251,10 @@ export function winWithMultiplier(win: number, multiplier: number): number {
   return Math.round(win * multiplier);
 }
 
-/** Прокрутки с бонусом, но не больше MAX_SPINS_PER_ROUND — иначе бонусы обгоняют трату и раунд не кончается. */
-export function spinsAfterBonus(spinsLeft: number, add: number): number {
-  return Math.min(MAX_SPINS_PER_ROUND, spinsLeft + add);
+/**
+ * Прокрутки с бонусом, но не больше потолка за раунд — иначе бонусы обгоняют трату и раунд не кончается никогда.
+ * cap — потолок: MAX_SPINS_PER_ROUND, а с улучшением №3 (шаг 28) — он плюс UPGRADE_SPIN_CAP_BONUS.
+ */
+export function spinsAfterBonus(spinsLeft: number, add: number, cap = MAX_SPINS_PER_ROUND): number {
+  return Math.min(cap, spinsLeft + add);
 }

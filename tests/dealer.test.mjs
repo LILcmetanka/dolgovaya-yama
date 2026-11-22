@@ -97,7 +97,8 @@ test('shiftPacts: сроки едут со счётом раундов, что �
 });
 
 test('откат счёта не прячет сделку: магазин закрыт и после сдвига', () => {
-  // Взяли «магазин закрыт» в 6-м раунде. Провалили спасение — счёт 6 → 5 (FAILED_DEBT_ROUND_STEP = 1 в игре).
+  // Взяли «магазин закрыт» в 6-м раунде. Счёт упал на один (исторически — провал спасения; в игре шага 34
+  // провал кончает забег сразу, а shiftPacts остаётся правилом для кассеты и симулятора).
   const taken = D.pactOf('tickets-shop', 6);
   const last = 6 + rounds('tickets-shop') - 1;
   const before = 5;
@@ -411,50 +412,42 @@ test('связка №8 «смена автомата отложена / чер�
   assert.equal(D.pactEffects([{ id: 'machine-delay', untilRound: 0 }], 1).noMachineSwap, false, 'битый срок — сделки нет');
 });
 
-test('связка №9 «+1 запас второго дыхания (не больше 2) / серия −1 ступень»', () => {
-  const breath = D.pactOf('extra-breath', TAKEN);
-  assert.equal(breath.untilRound, TAKEN + D.PACT_LAST_ROUNDS - 1, 'запись живёт до конца забега — маркер «уже брал»');
-  assert.equal(rounds('extra-breath'), D.EXTRA_BREATH_ROUNDS, 'срок — EXTRA_BREATH_ROUNDS');
-  assert.equal(D.EXTRA_BREATH_COUNT, 1, 'запас один');
-  assert.equal(D.EXTRA_BREATH_STREAK_COST, 1, 'ступень серии одна');
-  assert.equal(D.SECOND_WIND_MAX, 2, 'потолок запасов — два');
-  // Как DealerScene.applyPactOnce: запас +1, но не выше потолка; серия вниз на ступень, но не в минус.
-  const take = (left, streak) => ({
-    left: Math.min(D.SECOND_WIND_MAX, left + D.EXTRA_BREATH_COUNT),
-    streak: Math.max(0, streak - D.EXTRA_BREATH_STREAK_COST),
-  });
-  assert.deepEqual(take(1, 5), { left: 2, streak: 4 }, 'один запас был, стал два');
-  assert.deepEqual(take(1, 0), { left: 2, streak: 0 }, 'серия не уходит в минус');
-  assert.deepEqual(take(2, 1), { left: 2, streak: 0 }, 'выше двух запасов карта не поднимает');
-  assert.deepEqual(take(0, 3), { left: 1, streak: 2 }, 'потраченный запас восполняется до потолка');
-  // Повторно карту не берут: запись живёт весь забег, pactLive её видит.
-  assert.equal(D.pactLive([breath], 'extra-breath', TAKEN + 1), true, 'на следующий раунд карта уже не берётся');
-  assert.equal(D.pactLive([breath], 'extra-breath', breath.untilRound), true, 'и в последнем раунде срока');
-  // Два запаса кончились — третий провал последнего шанса кончает забег (как CollectorScene.failRescue).
-  const failures = [];
-  let left = S.SECOND_WIND_START;
-  left = take(left, 0).left;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (left <= 0) { failures.push('kaboom'); continue; }
-    left -= 1;
-    failures.push('secondWind');
+test('сделка №9 из пула удалена: 15 карт, раздача по-прежнему даёт три', () => {
+  // Решение автора 22.11.2026 (шаг 33): с одной ямой за забег второй запас недостижим, карта ничего не давала.
+  // id удалённой карты собираем из частей: строки карты в коде и в grep'ах быть не должно, а проверить её отсутствие надо.
+  const GONE = ['extra', 'breath'].join('-');
+  assert.equal(D.PACTS.length, 15, 'в пуле 15 карт — было 16, №9 убрана');
+  assert.equal(D.PACTS.some((spec) => spec.id === GONE), false, 'карты «ещё дыхание» в пуле нет');
+  assert.equal(D.isPactId(GONE), false, 'старая плёнка с этой сделкой читается как незнакомая сделка');
+  assert.deepEqual(D.readPacts([{ id: GONE, untilRound: 999 }]), [], 'и не возвращает сделку в забег');
+  // Раздача трёх карт работает всегда: в пуле 15 карт, три разных есть при любом перемешивании.
+  for (let draw = 0; draw < 200; draw++) {
+    const offers = D.offerPacts();
+    assert.equal(offers.length, D.PACT_OFFER_COUNT, 'на сукно всегда три карты');
+    assert.equal(new Set(offers.map((spec) => spec.id)).size, offers.length, 'карты на сукне разные');
   }
-  assert.deepEqual(failures, ['secondWind', 'secondWind', 'kaboom'], 'два запаса прощают два провала, третий — конец забега');
-  // В раунде эффекта нет: и ступень, и запас сработали в момент взятия (ветка switch с комментарием).
-  const effects = D.pactEffects([breath], TAKEN);
-  assert.equal(effects.spinsDelta, 0, 'прокруток не трогает');
-  assert.equal(effects.skullSoft, false, 'череп обычный');
-  assert.equal(effects.bankSurvivesSkull, false, 'к кону не относится');
-  // Кассета: новый счётчик, старые записи с флагом, мусор.
-  assert.equal(S.SECOND_WIND_START, 1, 'обычный забег — один запас');
-  assert.equal(S.secondWindLeftOf({}), S.SECOND_WIND_START, 'старая запись без полей — дыхание есть');
-  assert.equal(S.secondWindLeftOf({ secondWindUsed: false }), S.SECOND_WIND_START, 'старый флаг «не потрачено»');
-  assert.equal(S.secondWindLeftOf({ secondWindUsed: true }), 0, 'старый флаг «потрачено» — 0');
-  assert.equal(S.secondWindLeftOf({ secondWindLeft: 2 }), 2, 'счётчик со сделкой читается как есть');
-  assert.equal(S.secondWindLeftOf({ secondWindLeft: 2.9 }), 2, 'дробное вниз');
-  assert.equal(S.secondWindLeftOf({ secondWindLeft: -3 }), 0, 'минус — 0');
-  assert.equal(S.secondWindLeftOf({ secondWindLeft: Number.NaN, secondWindUsed: true }), 0, 'мусор — к старому флагу');
-  assert.equal(S.secondWindLeftOf({ secondWindLeft: Number.POSITIVE_INFINITY }), 1, '∞ — к флагу, флага нет — 1');
+});
+
+test('провал спасения — сразу KABOOM: запаса-прощения нет ни в правилах, ни в кассете', () => {
+  // Решение автора 22.11.2026 (шаг 34): «если я проиграл — проиграл, ВСЁ». Имена собираем из частей: grep по
+  // мёртвой механике должен оставаться пустым, а её отсутствие — проверяться.
+  const LEFT = 'second' + 'WindLeft';
+  const USED = 'second' + 'WindUsed';
+  const START = 'SECOND_' + 'WIND_START';
+  const MAX = 'SECOND_' + 'WIND_MAX';
+  const LEFT_OF = 'second' + 'WindLeftOf';
+  assert.equal(START in S, false, 'в save.ts нет стартового запаса');
+  assert.equal(LEFT_OF in S, false, 'и функции чтения счётчика');
+  assert.equal(MAX in D, false, 'в dealerGame нет потолка запасов');
+  // Ни одна карта пула запас не трогает: прощения в эффектах сделок нет вовсе.
+  for (const spec of D.PACTS) {
+    const effects = D.pactEffects([D.pactOf(spec.id, TAKEN)], TAKEN);
+    assert.equal(LEFT in effects, false, `${spec.id}: запас прощения сделкой не выдаётся`);
+  }
+  // Старая плёнка с полем счётчика читается: RunSave его больше не объявляет, лишнее поле просто игнорируется.
+  const old = { rescueUsed: true, [LEFT]: 2, [USED]: false };
+  assert.equal(S.rescueUsedOf(old), true, 'старая плёнка с полем счётчика читается без ошибки');
+  assert.equal(S.rescueUsedOf({ [LEFT]: 0 }), false, 'а само поле на исход больше не влияет');
 });
 
 test('связка №10 «первый череп не жжёт кон / набранное не идёт в цель»', () => {

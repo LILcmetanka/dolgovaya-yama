@@ -214,19 +214,38 @@ export const TICKET_SHARE_MAX = 1; // потолок: дороже всех фи
  */
 export const TICKETS_PER_SHOP = 1;
 
-/** Доля фишек на руках за билет после bought покупок за забег: 40, 70, 100% и дальше 100%. */
-export function ticketShare(bought: number): number {
-  if (!Number.isFinite(bought)) return TICKET_SHARE_START; // мусор в счётчике — как первый билет
-  return Math.min(TICKET_SHARE_MAX, TICKET_SHARE_START + TICKET_SHARE_STEP * Math.max(0, Math.floor(bought)));
+/** Доля фишек на руках за билет после bought покупок за забег: 40, 70, 100% и дальше 100%.
+ *  start — доля первого билета: улучшение №38 (шаг 28в) снижает её до 30%, шаги роста не меняются. */
+export function ticketShare(bought: number, start = TICKET_SHARE_START): number {
+  if (!Number.isFinite(bought)) return start; // мусор в счётчике — как первый билет
+  return Math.min(TICKET_SHARE_MAX, start + TICKET_SHARE_STEP * Math.max(0, Math.floor(bought)));
 }
 
 /**
  * Цена билета при balance фишек на руках, bought купленных за забег билетах и скидке сделки mul (№2):
  * доля банка, округлённая до 5, но не меньше 5. balance — мусор, ноль или минус: билет стоит минимум.
+ * start — доля первого билета (улучшение №38): шаги роста те же, поэтому растёт цена как раньше.
  */
-export function ticketForChips(balance: number, bought: number, mul = 1): number {
+export function ticketForChips(balance: number, bought: number, mul = 1, start = TICKET_SHARE_START): number {
   const bank = Number.isFinite(balance) && balance > 0 ? balance : 0;
-  return roundPrice(bank * ticketShare(bought), mul);
+  return roundPrice(bank * ticketShare(bought, start), mul);
+}
+
+/**
+ * Сколько фишек стоит покупка за tickets билетов, если один билет сейчас стоит chipPrice (улучшение №39):
+ * честный размен — столько же, сколько игрок отдал бы за эти билеты в ряду билетов. Никогда не ноль:
+ * нижняя граница та же, что у всех цен, — 5 фишек.
+ */
+export function chipsForTickets(tickets: number, chipPrice: number): number {
+  const count = Number.isFinite(tickets) && tickets > 0 ? Math.floor(tickets) : 0;
+  const price = Number.isFinite(chipPrice) && chipPrice > 0 ? chipPrice : 0;
+  return roundPrice(count * price);
+}
+
+/** Сколько рядов предметов в торговом автомате: OFFER_SIZE плюс улучшение №37, но не больше, чем предметов в игре. */
+export function offerRowCount(bonus = 0): number {
+  const extra = Number.isFinite(bonus) && bonus > 0 ? Math.floor(bonus) : 0;
+  return Math.min(ITEMS.length, OFFER_SIZE + extra);
 }
 
 /** Цена следующего места на полке (сейчас мест slots). Мест уже MAX_SLOTS — null: больше не продаётся. */
@@ -235,11 +254,17 @@ export function slotPrice(slots: number, debt: number, mul = 1): number | null {
   return roundPrice(SLOT_PRICE_SHARES[slots - START_SLOTS] * debt, mul);
 }
 
-/** Что лежит в торговом автомате: OFFER_SIZE разных предметов в случайном порядке. Предметы с unlockRound раньше раунда не продаются. */
-export function randomOffer(round: number, isAllowed: (item: ShopItem) => boolean = () => true): ShopItem[] {
+/** Что лежит в торговом автомате: OFFER_SIZE разных предметов в случайном порядке. Предметы с unlockRound раньше раунда не продаются.
+ *  count — сколько рядов (улучшение №37 даёт на один больше); больше, чем предметов в игре, всё равно не выложить. */
+export function randomOffer(
+  round: number,
+  isAllowed: (item: ShopItem) => boolean = () => true,
+  count = OFFER_SIZE,
+): ShopItem[] {
   const pool = ITEMS.filter((item) => (item.unlockRound ?? 1) <= round && isAllowed(item));
   const offer: ShopItem[] = [];
-  while (offer.length < OFFER_SIZE && pool.length > 0) {
+  const size = Math.max(0, Math.min(Math.floor(count), ITEMS.length));
+  while (offer.length < size && pool.length > 0) {
     const index = Math.floor(Math.random() * pool.length);
     offer.push(pool.splice(index, 1)[0]);
   }
