@@ -1,11 +1,32 @@
 import Phaser from 'phaser';
+import {
+  ACTION_EXCHANGE_TICKETS,
+  ACTION_LOTTERY_TICKETS,
+  ACTION_SERVICE_ROUNDS,
+  actionUsed,
+  canExchange,
+  debtBuyCut,
+  debtBuyPrice,
+  lotteryRoll,
+  salePrice,
+  serviceAllowed,
+  servicePrice,
+  symbolCells,
+  theftChance,
+  theftReward,
+  theftSucceeds,
+  useAction,
+  type ActionId,
+} from './actions';
 import type { AchievementId } from './achievements';
 import { addCopy, AMULETS, countOf, MAX_SOCKETS, symbolPayout, type AmuletId } from './amulets';
 import { drawMachineBody, drawRoom } from './decor';
-import { DEV_CHIPS, DEV_TICKETS } from './devmode';
+import { DEV_CHIPS, DEV_TICKETS, isDevMode } from './devmode';
 import { amuletKey, itemKey, machineKey, see } from './codex';
-import { lang, t, toggleLang, type Lang } from './lang';
+import { lang, t, toggleLang, type Lang, type TextKey } from './lang';
 import { BODY, LEVER_GLOW, NOTE, WALL_PANEL, ZOOM } from './layout';
+import { ActionBoard } from './parts/actionBoard';
+import { ActionPanel, type ActionChoice, type ActionRow } from './parts/actionPanel';
 import { AmuletCase } from './parts/amuletCase';
 import { AmuletRack } from './parts/amuletRack';
 import { Atmosphere } from './parts/atmosphere';
@@ -38,9 +59,10 @@ import { CollectorScene } from './scene/CollectorScene';
 import { ITEMS, MAX_SLOTS, offerRowCount, type ItemId } from './items';
 import { isTutorialDone, markTutorialDone } from './progress';
 import { symbolWeightOf } from './skullShare';
-import { isPaying, SYMBOLS, weightsForRound } from './rules';
+import { isPaying, SYMBOLS, weightsForRound, type SlotSymbol } from './rules';
 import type { RunSave } from './save';
 import { getVolumes, isSilent, setVolume, toggleSound, volumeShare, type VolumeKind } from './settings';
+import { GOLD_TEXT } from './theme';
 
 // Клавиши 1–9 и 0: в игре 1–8 — места на полках; в магазине 1–3 — ряды торгового автомата, 4–5 — маленький автомат
 // (место на полке и гнездо), 6–8 — места витрины амулетов, 9 — кассета, 0 — барабан.
@@ -51,6 +73,15 @@ const MINI_KEYS = 2; // сколько клавиш у маленького ав
 const CASE_KEYS = 3; // сколько клавиш у витрины амулетов; за ними — кассета (9) и барабан (0)
 const TAPE_KEY = VENDING_KEYS + MINI_KEYS + CASE_KEYS; // номер клавиши кассеты в NUMBER_KEYS
 const MUSIC_TICK = 100; // как часто музыка планирует удары «сердца» вперёд, мс
+/** Надпись лотереи (шаг 29) по id приза: короткая новость на стекле. */
+const LOTTERY_TEXT: Record<string, TextKey> = {
+  'win-up': 'actionLotteryWinUp',
+  'win-down': 'actionLotteryWinDown',
+  'skull-down': 'actionLotterySkullDown',
+  'skull-up': 'actionLotterySkullUp',
+  'spins-up': 'actionLotterySpinsUp',
+  'spins-down': 'actionLotterySpinsDown',
+};
 
 /**
  * Единственная сцена игры «Долговая яма» — верхний слой: создаёт части автомата и разбирает клавиши.
@@ -63,6 +94,7 @@ export class GameScene extends CollectorScene {
   private settingsPanel!: SettingsPanel; // настройки на экране паузы
   private symbolPick!: SymbolPickScreen; // выбор первого символа забега (улучшение №33, шаг 28в)
   private machinePick!: MachinePickScreen; // выбор стартового автомата (улучшение №49, шаг 28г)
+  private actionPanel!: ActionPanel; // панель шести действий вне прокрутки
   private languageAtPause!: Lang; // язык, какой был, когда встали на паузу: после «▶» записка переворачивается, только если он другой
 
   constructor() {
@@ -127,6 +159,8 @@ export class GameScene extends CollectorScene {
     this.upgradeScreen = new UpgradeScreen(this); // экран улучшений после смерти — ложится выше окна конца забега
     this.symbolPick = new SymbolPickScreen(this); // выбор первого символа (№33) — выше всего: игра ждёт выбора
     this.machinePick = new MachinePickScreen(this); // выбор стартового автомата (№49) — та же манера
+    this.actionPanel = new ActionPanel(this); // панель действий вне прокрутки (шаг 29)
+    this.actionBoard = new ActionBoard(this, () => this.toggleActions(), this.tooltip); // табличка на стене — вход
     this.pumpAchievements(); // то, что выдано до постройки окна (или до рестарта), показываем теперь
     this.atmosphere = new Atmosphere(this);
     this.corner = new CornerButtons(this, () => this.togglePause(), () => this.toggleMute());
@@ -253,9 +287,10 @@ export class GameScene extends CollectorScene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.game.events.off(Phaser.Core.Events.HIDDEN, pauseWhenHidden));
   }
 
-  /** Esc или P: пауза с настройками или продолжить. */
+  /** Esc или P: пауза с настройками или продолжить. Открытая панель действий закрывается первой. */
   private togglePause(): void {
-    if (this.isAtMonitor) this.lookBack(); // Esc сначала закрывает большой экран на стене
+    if (this.isActionsOpen) this.closeActions(); // Esc по панели действий — просто закрыть её
+    else if (this.isAtMonitor) this.lookBack(); // Esc сначала закрывает большой экран на стене
     else if (this.isPaused) this.resumeGame();
     else this.pauseGame();
   }
@@ -332,6 +367,7 @@ export class GameScene extends CollectorScene {
     this.pauseScreen.relabel();
     this.monitor.relabel();
     this.shop.relabel(); // кнопка выхода из магазина: надпись на новом языке
+    this.actionBoard.relabel(); // табличка действий (шаг 29) — тоже
     this.relabelReroll(); // висит решение по перемешке — новость на стекле заново на новом языке
     if (!this.isPaused) this.collector.flipNote(this.debt);
   }
@@ -340,6 +376,7 @@ export class GameScene extends CollectorScene {
 
   /** → или клик по экрану на стене: открыть большой экран или закрыть. */
   private toggleMonitor(): void {
+    if (this.isActionsOpen) return; // сначала закрывают панель действий
     if (this.isAtMonitor) this.lookBack();
     else this.lookAtMonitor();
   }
@@ -501,6 +538,333 @@ export class GameScene extends CollectorScene {
     this.sfx.play('roundStart');
   }
 
+  // ---------- Действия вне прокрутки (шаг 29) ----------
+
+  /** Табличка на стене или клавиша A: открыть панель шести действий или закрыть её. */
+  private toggleActions(): void {
+    if (this.isActionsOpen) {
+      this.closeActions();
+      return;
+    }
+    if (this.isGameOver || this.isPaused) return;
+    if (!this.canUseActions()) {
+      this.sfx.play('deny'); // крутится, магазин, спасение, чужой выбор — действовать не между прокрутками
+      return;
+    }
+    this.isActionsOpen = true;
+    this.tooltip.hide();
+    this.sfx.play('monitor');
+    this.showActionRows();
+    this.refreshHud();
+  }
+
+  /** Панель закрыта: ввод снова у автомата. Закрывают ✕, Esc, «0», Пробел, Enter и клик мимо панели. */
+  private closeActions(): void {
+    if (!this.isActionsOpen) return;
+    this.actionPanel.close();
+    this.isActionsOpen = false;
+    this.refreshHud();
+  }
+
+  /** Список действий: цена, подсказка и причина, если сейчас нельзя. В ТЕСТ все шесть закрыты (ни выгоды, ни траты). */
+  private showActionRows(): void {
+    this.actionPanel.show(this.actionRows(), {
+      caption: t('actionsCaption'),
+      onPick: (id) => this.pickAction(id),
+      onDeny: () => this.sfx.play('deny'),
+      onClose: () => this.closeActions(),
+    });
+  }
+
+  /** Строки панели: у каждого действия — цена, подсказка и доступность на сейчас. */
+  private actionRows(): ActionRow[] {
+    const dev = this.devBlocked();
+    const used = (id: ActionId): boolean => actionUsed(this.actionState, id);
+    const grid = this.gridSymbols();
+    const service = servicePrice(this.debt);
+    const nextDebt = this.nextDebtValue();
+    const buy = debtBuyPrice(nextDebt);
+    const cut = debtBuyCut(nextDebt);
+    const chance = Math.round(theftChance(this.round) * 100);
+    const reason = (id: ActionId, ok: boolean, text: TextKey | null): string => {
+      if (dev) return t('actionDev');
+      if (used(id)) return t('actionUsed');
+      return ok || !text ? '' : t(text);
+    };
+    const row = (
+      id: ActionId,
+      title: string,
+      base: string,
+      price: string,
+      ok: boolean,
+      text: TextKey | null,
+      danger = false,
+    ): ActionRow => {
+      const why = reason(id, ok, text);
+      return { id, title, desc: why || base, price, enabled: !dev && !used(id) && ok, danger };
+    };
+    return [
+      row(
+        'exchange',
+        t('actionExchange'),
+        t('actionExchangeWhat'),
+        t('actionTickets', ACTION_EXCHANGE_TICKETS),
+        this.tickets >= ACTION_EXCHANGE_TICKETS && grid.length > 0 && this.machineSymbols().length > 1,
+        this.tickets < ACTION_EXCHANGE_TICKETS ? 'actionNoTickets' : 'actionNoGrid',
+      ),
+      row(
+        'lottery',
+        t('actionLottery'),
+        t('actionLotteryWhat'),
+        t('actionTickets', ACTION_LOTTERY_TICKETS),
+        this.tickets >= ACTION_LOTTERY_TICKETS,
+        'actionNoTickets',
+      ),
+      row(
+        'service',
+        t('actionService'),
+        t('actionServiceWhat'),
+        t('actionChips', service),
+        serviceAllowed(this.actionState) && this.balance >= service,
+        serviceAllowed(this.actionState) ? 'actionNoChips' : 'actionServiceActive',
+      ),
+      row('theft', t('actionTheft'), t('actionTheftWhat'), `${t('actionRisk')} · ${chance}%`, true, null, true),
+      row(
+        'sale',
+        t('actionSale'),
+        t('actionSaleWhat'),
+        t('actionPick'),
+        grid.length > 0,
+        'actionNoGrid',
+      ),
+      row(
+        'debt',
+        t('actionDebt'),
+        t('actionDebtWhat', buy, cut),
+        t('actionChips', buy),
+        this.actionState.debtCut === 0 && this.balance >= buy,
+        this.actionState.debtCut > 0 ? 'actionDebtUsed' : 'actionNoChips',
+      ),
+    ];
+  }
+
+  /** Нажали строку: у обмена и продажи сначала выбор символа, остальные решаются сразу. */
+  private pickAction(id: ActionId): void {
+    if (this.devBlocked()) {
+      this.sfx.play('deny'); // ТЕСТ: ни выгоды, ни траты — как улучшения после смерти
+      return;
+    }
+    switch (id) {
+      case 'exchange':
+        this.showExchangeFrom();
+        break;
+      case 'lottery':
+        this.applyLottery();
+        break;
+      case 'service':
+        this.applyService();
+        break;
+      case 'theft':
+        this.applyTheft();
+        break;
+      case 'sale':
+        this.showSalePick();
+        break;
+      case 'debt':
+        this.applyDebtBuy();
+        break;
+    }
+  }
+
+  /** №2, шаг 1: что убрать — платящий символ с последней сетки. «0» — назад к списку. */
+  private showExchangeFrom(): void {
+    if (!this.canUseActions() || actionUsed(this.actionState, 'exchange') || this.tickets < ACTION_EXCHANGE_TICKETS) {
+      this.sfx.play('deny');
+      return;
+    }
+    const choices: ActionChoice[] = this.gridSymbols().map((symbol) => ({
+      symbol,
+      note: `${t('symbolPickWeight', Math.round(this.currentSymbolWeight(symbol)))} · ${t('symbolPickPrice', symbol.price)}`,
+    }));
+    this.actionPanel.showChoices(choices, {
+      caption: t('actionExchangeFrom', choices.length),
+      onPick: (symbol) => this.showExchangeTo(symbol),
+      onDeny: () => this.sfx.play('deny'),
+      onBack: () => this.showActionRows(),
+      onClose: () => this.closeActions(),
+    });
+  }
+
+  /** №2, шаг 2: на что менять — платящий символ этого автомата, кроме выбранного. */
+  private showExchangeTo(from: SlotSymbol): void {
+    const choices: ActionChoice[] = this.machineSymbols()
+      .filter((symbol) => symbol.id !== from.id)
+      .map((symbol) => ({
+        symbol,
+        note: `${t('symbolPickWeight', Math.round(this.currentSymbolWeight(symbol)))} · ${t('symbolPickPrice', symbol.price)}`,
+      }));
+    this.actionPanel.showChoices(choices, {
+      caption: t('actionExchangeTo', choices.length),
+      onPick: (to) => this.applyExchange(from, to),
+      onDeny: () => this.sfx.play('deny'),
+      onBack: () => this.showExchangeFrom(),
+      onClose: () => this.closeActions(),
+    });
+  }
+
+  /**
+   * №2: билеты уплачены, веса двух символов меняются местами до конца раунда, сетка перерисовывается:
+   * клетки убранного символа на экране становятся символом-заменой (итог уже посчитан, это только вид).
+   */
+  private applyExchange(from: SlotSymbol, to: SlotSymbol): void {
+    const inMachine = (symbol: SlotSymbol): boolean => this.machineSymbols().some((own) => own.id === symbol.id);
+    if (!this.canUseActions() || actionUsed(this.actionState, 'exchange') || this.tickets < ACTION_EXCHANGE_TICKETS || !canExchange(from, to, inMachine)) {
+      this.sfx.play('deny');
+      return;
+    }
+    this.spendRunTickets(ACTION_EXCHANGE_TICKETS);
+    this.actionState = useAction({ ...this.actionState, exchange: { from: from.id, to: to.id } }, 'exchange');
+    this.repaintGrid(from, to);
+    this.closeActions();
+    this.screen.announceNews(t('actionExchangeDone'));
+    this.sfx.play('news', 0.3);
+    this.refreshHud();
+  }
+
+  /** Перерисовать клетки символа from на сетке символом to: вид догоняет новый состав автомата. */
+  private repaintGrid(from: SlotSymbol, to: SlotSymbol): void {
+    const grid = this.lastGrid;
+    if (!grid) return;
+    grid.forEach((row, r) => {
+      row.forEach((cell, c) => {
+        if (cell.id !== from.id) return;
+        row[c] = to;
+        this.screen.revealCell(r, c, to, () => undefined);
+      });
+    });
+  }
+
+  /** №4: билет — и случайный баф или дебаф до конца раунда. Прокрутки из жребия применяются сразу. */
+  private applyLottery(): void {
+    if (!this.canUseActions() || actionUsed(this.actionState, 'lottery') || this.tickets < ACTION_LOTTERY_TICKETS) {
+      this.sfx.play('deny');
+      return;
+    }
+    this.spendRunTickets(ACTION_LOTTERY_TICKETS);
+    const prize = lotteryRoll(() => this.lotteryRandom());
+    this.actionState = useAction({ ...this.actionState, lottery: prize }, 'lottery');
+    this.actionSpins(prize.spins ?? 0);
+    this.closeActions();
+    this.screen.announceNews(t(LOTTERY_TEXT[prize.id] ?? 'actionLottery'));
+    this.sfx.play(prize.buff ? 'ticket' : 'warning', 0.3);
+    this.refreshHud();
+  }
+
+  /** №5: фишки — и черепа реже на ACTION_SERVICE_SKULL_DELTA два раунда. Второй раз не берут, пока идёт чистка. */
+  private applyService(): void {
+    const price = servicePrice(this.debt);
+    if (!this.canUseActions() || actionUsed(this.actionState, 'service') || !serviceAllowed(this.actionState) || this.balance < price) {
+      this.sfx.play('deny');
+      return;
+    }
+    this.balance -= price;
+    this.actionState = useAction({ ...this.actionState, serviceRounds: ACTION_SERVICE_ROUNDS }, 'service');
+    this.closeActions();
+    this.screen.announceNews(t('actionServiceDone'));
+    this.sfx.play('payment');
+    this.refreshHud();
+  }
+
+  /** №6: попытка кражи. Успех — фишки на табло; провал — сразу KABOOM, без очков и без магазина. */
+  private applyTheft(): void {
+    if (!this.canUseActions() || actionUsed(this.actionState, 'theft')) {
+      this.sfx.play('deny');
+      return;
+    }
+    this.actionState = useAction(this.actionState, 'theft');
+    this.closeActions();
+    this.sfx.play('warning', 0.3);
+    if (theftSucceeds(this.round, () => this.theftRandom())) {
+      const reward = theftReward(this.debt);
+      this.earn(reward);
+      this.effects.popup(`+${reward}`, GOLD_TEXT);
+      this.panel.pulseBoard();
+      this.screen.announceNews(t('actionTheftDone'));
+      this.sfx.play('chips');
+      this.refreshHud();
+      return;
+    }
+    this.kaboom(); // провал — смерть сразу: второй попытки и магазина нет
+  }
+
+  /** №8, шаг 1: что продать — платящий символ с сетки; в подписи цена за клетку и итог. */
+  private showSalePick(): void {
+    if (!this.canUseActions() || actionUsed(this.actionState, 'sale')) {
+      this.sfx.play('deny');
+      return;
+    }
+    const choices: ActionChoice[] = this.gridSymbols().map((symbol) => {
+      const cells = symbolCells(this.lastGrid, symbol.id);
+      return { symbol, note: t('actionSaleNote', symbol.price, cells, salePrice(symbol, cells)) };
+    });
+    this.actionPanel.showChoices(choices, {
+      caption: t('actionSalePick', choices.length),
+      onPick: (symbol) => this.applySale(symbol),
+      onDeny: () => this.sfx.play('deny'),
+      onBack: () => this.showActionRows(),
+      onClose: () => this.closeActions(),
+    });
+  }
+
+  /** №8: символ уходит из автомата до конца раунда, фишки — по его цене за каждую клетку на сетке. */
+  private applySale(symbol: SlotSymbol): void {
+    const cells = symbolCells(this.lastGrid, symbol.id);
+    const price = salePrice(symbol, cells);
+    if (!this.canUseActions() || actionUsed(this.actionState, 'sale') || price <= 0) {
+      this.sfx.play('deny');
+      return;
+    }
+    this.actionState = useAction({ ...this.actionState, sold: [...this.actionState.sold, symbol.id] }, 'sale');
+    this.earn(price);
+    this.closeActions();
+    this.effects.popup(`+${price}`, GOLD_TEXT);
+    this.screen.announceNews(t('actionSaleDone'));
+    this.sfx.play('chips');
+    this.refreshHud();
+  }
+
+  /** №10: платишь сейчас — следующий долг станет меньше на выкупленную долю (применит магазин). */
+  private applyDebtBuy(): void {
+    const next = this.nextDebtValue();
+    const price = debtBuyPrice(next);
+    const cut = debtBuyCut(next);
+    if (!this.canUseActions() || actionUsed(this.actionState, 'debt') || this.actionState.debtCut > 0 || this.balance < price) {
+      this.sfx.play('deny');
+      return;
+    }
+    this.balance -= price;
+    this.actionState = useAction({ ...this.actionState, debtCut: cut }, 'debt');
+    this.closeActions();
+    this.screen.announceNews(t('actionDebtDone'));
+    this.sfx.play('payment');
+    this.refreshHud();
+  }
+
+  /** ТЕСТ или забег, который трогали в ТЕСТ: действия не дают выгоды и не тратят (как улучшения после смерти). */
+  private devBlocked(): boolean {
+    return isDevMode() || this.devUsedThisRun;
+  }
+
+  /** Случай лотереи: отдельным методом, чтобы проверка сценария могла подставить число. */
+  protected lotteryRandom(): number {
+    return Math.random();
+  }
+
+  /** Случай кражи: так же подменяется в проверке; в игре — Math.random. */
+  protected theftRandom(): number {
+    return Math.random();
+  }
+
   // ---------- Ввод ----------
 
   private setupKeyboard(): void {
@@ -515,6 +879,7 @@ export class GameScene extends CollectorScene {
       if (this.isGameOver) this.restartGame();
     });
     NUMBER_KEYS.forEach((key, index) => this.onKey(key, () => this.onNumber(index)));
+    this.onKey('A', () => this.toggleActions()); // шаг 29: панель действий вне прокрутки
     this.onKey('D', () => this.payEarly()); // отдать долг раньше: фишек на табло хватает — записка светится
     this.onKey('RIGHT', () => this.toggleMonitor()); // экран на стене — справа
     this.onKey('LEFT', () => this.lookBack());
@@ -540,6 +905,7 @@ export class GameScene extends CollectorScene {
    */
   private onSpace(): void {
     if (this.isPaused) this.resumeGame();
+    else if (this.isActionsOpen) this.closeActions(); // панель действий: Пробел её закрывает
     else if (this.machinePick.isOpen) return; // №49: сначала автомат — Пробел игру не двигает
     else if (this.symbolPick.isOpen) return; // №33: сначала символ — Пробел игру не двигает
     else if (this.upgradeScreen.isOpen) return; // экран улучшений открыт: Пробел его не закрывает и забег не начинает
@@ -557,6 +923,7 @@ export class GameScene extends CollectorScene {
    */
   private onEnter(): void {
     if (this.isPaused) this.resumeGame();
+    else if (this.isActionsOpen) this.closeActions(); // панель действий: Enter её закрывает
     else if (this.machinePick.isOpen) return; // №49: сначала автомат
     else if (this.symbolPick.isOpen) return; // №33: сначала символ
     else if (this.upgradeScreen.isOpen) return; // экран улучшений открыт: выбор — только карточкой или 1–3
@@ -585,6 +952,11 @@ export class GameScene extends CollectorScene {
     // Экран улучшений после смерти: 1–3 — карточки; остальные клавиши игры молчат, пока он открыт.
     if (this.upgradeScreen.isOpen) {
       this.upgradeScreen.press(index);
+      return;
+    }
+    // Панель действий (шаг 29): 1–6 — строки, «0» — закрыть (в выборе символа — назад). Клавиши игры молчат.
+    if (this.isActionsOpen) {
+      this.actionPanel.press(index);
       return;
     }
     if (this.isRescue) return; // в спасении клавиш нет: столбец морозят кликом, прокрутку даёт рычаг

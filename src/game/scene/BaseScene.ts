@@ -28,6 +28,7 @@ import type { DealerTable } from '../parts/dealerTable';
 import type { Drum } from '../parts/drum';
 import type { Effects } from '../parts/effects';
 import type { AchievementWindow } from '../parts/achievementWindow';
+import type { ActionBoard } from '../parts/actionBoard';
 import type { ItemShelf } from '../parts/itemShelf';
 import type { MachineBadge } from '../parts/machineBadge';
 import type { MiniShop } from '../parts/miniShop';
@@ -193,6 +194,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isRewinding = false; // кассету вставили — плёнка перематывается, потом сцена перезапустится с записью
   protected isPaused = false; // пауза (Esc, P, ⏸): анимации, таймеры и звук стоят
   protected isAtMonitor = false; // большой экран на стене открыт — крутить и забирать нельзя
+  protected isActionsOpen = false; // панель действий вне прокрутки (шаг 29) открыта — крутить и забирать нельзя
   protected canRestartWithSpace = false; // Пробел на экране DEATH срабатывает не сразу
 
   // Звук создаётся один раз вместе со сценой и живёт весь сеанс: при scene.restart() он тот же (аудиоконтекстов в браузере мало).
@@ -219,6 +221,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected effects!: Effects; // брызги фишек, всплывающие надписи, вспышка с тряской
   protected achievements!: AchievementWindow; // окно полученной ачивки по центру сетки
   protected upgradeScreen!: UpgradeScreen; // экран улучшений после смерти (шаг 28): три карточки поверх экрана DEATH
+  protected actionBoard!: ActionBoard; // табличка «ДЕЙСТВИЯ» на стене: вход в панель действий (шаг 29)
   protected reveal: Reveal | null = null; // тьма первого забега; null — обучение пройдено или его нет
 
   /** Начало забега: первый долг, пустое табло, 2 места на полке, ничего не включено, автомат обычный. */
@@ -308,6 +311,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.isRewinding = false;
     this.isPaused = false;
     this.isAtMonitor = false;
+    this.isActionsOpen = false; // шаг 29: панель действий в новом забеге закрыта
     this.canRestartWithSpace = false;
   }
 
@@ -345,6 +349,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.collector.showProgress(this.debt, this.balance, this.pot);
     this.cassette.showUsable(this.canRecord() || this.canRewind());
     this.monitor.setEnabled(this.canAct() || this.isAtMonitor || this.isRerolling); // планшет — и во время обязательного выбора: он игру не двигает
+    this.actionBoard.setAvailable(this.canUseActions()); // табличка действий гаснет, когда действовать нельзя (шаг 29)
     // Отложенная новость про ТЕСТ: как только стекло снова на виду (магазин уехал, планшет закрыт, пауза снята), её показываем.
     this.flushDevNotice();
     const tension = this.tension();
@@ -614,9 +619,15 @@ export abstract class BaseScene extends Phaser.Scene {
    * Можно ли сейчас крутить, забирать и включать предметы. Пока впереди бесплатные прокрутки — нельзя: они крутятся сами.
    * Пока висит обязательное решение по перемешке или подмене (isRerolling) — тоже нельзя: сначала столбец или клетка.
    * Пока цель взята, но победа ждёт конца действия (isVictoryPending) — нельзя: иначе кассета успела бы
-   * откатить забег, а новая прокрутка начаться за экраном победы.
+   * откатить забег, а новая прокрутка начаться за экраном победы. Панель действий (шаг 29) тоже держит игру:
+   * пока она открыта, автомат ждёт.
    */
   protected canAct(): boolean {
+    return !this.isActionsOpen && this.canUseActions();
+  }
+
+  /** Можно ли действовать у автомата, не считая открытой панели действий: по этому же правилу она и открывается. */
+  protected canUseActions(): boolean {
     return (
       !this.isSpinning &&
       !this.isRerolling &&
@@ -630,6 +641,7 @@ export abstract class BaseScene extends Phaser.Scene {
       !this.isRescue &&
       !this.isChoosingSymbol &&
       !this.isChoosingMachine &&
+      !this.isShopping &&
       this.freeSpins === 0
     );
   }

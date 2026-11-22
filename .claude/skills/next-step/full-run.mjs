@@ -34,6 +34,7 @@
 //                        улучшение; в отчёте отдельная строка «улучшения». Без SIM_UPGRADES/SIM_META поведение прежнее.
 //   SIM_RECORD=<фишки> — рекорд лучшего забега по фишкам для улучшения №46 «старт с 5% рекорда» (по умолчанию 0:
 //                        в обычном прогоне рекорда нет, в SIM_META он копится от забега к забегу сам).
+//   SIM_ACTIONS=0      — бот не пользуется действиями вне прокрутки (шаг 29): эталон «как до действий».
 // streakReset — не переменная: это второй вариант в обычном прогоне, BASE_STRATEGY + { streakReset: true } («серия
 // сгорает в конце раунда», в коде — переходит). Числа из двух строк одного прогона сравнимы между собой.
 //
@@ -125,6 +126,8 @@ const DR = await import(SRC + 'drum.ts');
 const S = await import(SRC + 'save.ts');
 // Улучшения после смерти (шаг 28): пул, эффекты и прощение долга — те же функции, что зовёт игра.
 const UPG = await import(SRC + 'upgrades.ts');
+// Действия вне прокрутки (шаг 29): цены, жребий, обмен весов и продажа — те же функции, что зовёт сцена.
+const ACT = await import(SRC + 'actions.ts');
 // Цель забега (решение автора): 1 000 000 набранных = победа, 10 000 000 — отметка рекорда. Числа — из gameConfig.ts,
 // своей копии здесь нет; в симуляторе победа кончает забег так же, как CollectorScene.startVictory.
 const C = await import(SRC + 'gameConfig.ts');
@@ -138,7 +141,7 @@ const AMULET_POWER = { bones: 5.39, boost: 5.11, interest: 5.09, insurance: 5.02
 const ITEM_ORDER = ['garlic', 'triple', 'cigarette', 'shield', 'cherries', 'bells', 'diamonds', 'luck', 'shuffle', 'swap', 'risk', 'hammer', 'candle', 'luckSpin'];
 // Модель времени: сколько секунд занимает действие на экране. Числа не из игры — это оценка, для «минут забега».
 // rescue — весь раунд спасения: 5 прокруток с заморозкой столбцов. Провал — сразу KABOOM, паузы на магазин нет.
-const SECONDS = { spin: 2.5, take: 1, dealer: 6, collector: 2.5, shop: 10, rewind: 5, rec: 1, rescue: 16, defer: 2 };
+const SECONDS = { spin: 2.5, take: 1, dealer: 6, collector: 2.5, shop: 10, rewind: 5, rec: 1, rescue: 16, defer: 2, action: 3 };
 
 // ---------- Диагностика замечания 19: старые правила против новых ----------
 // Доля черепов до правки была постоянной, а фаза 2 множила её вес и росла множителем. Теперь доля растёт по раундам,
@@ -153,6 +156,7 @@ const PHASE_BONUS_SPINS = !LEGACY && process.env.SIM_PHASE_SPINS !== '0'; // +1 
 const LEGACY_PHASE_SKULL = LEGACY ? 1.2 : phaseSkullFactor(); // старый ×1,2 к весу черепа в фазе 2
 const NO_RESCUE = process.env.SIM_NO_RESCUE === '1'; // нехватка фишек — сразу конец забега
 const REFUSE_PACTS = process.env.SIM_REFUSE_PACTS === '1'; // эталон без сделок: бот отказывается от всех карт
+const ACTIONS_ON = process.env.SIM_ACTIONS !== '0'; // шаг 29: SIM_ACTIONS=0 — бот не пользуется действиями
 
 // ---------- Улучшения после смерти (шаг 28) ----------
 /**
@@ -371,6 +375,15 @@ export const BASE_STRATEGY = {
   swapChance: swapChanceFromEnv() ?? M.MACHINE_SWAP_CHANCE,
   // Серия: false — как в коде (переходит в следующий раунд), true — второй набор чисел (сгорает на конце раунда).
   streakReset: false,
+  // Действия вне прокрутки (шаг 29, политика бота, не правила): обслуживание — когда доля черепов не ниже
+  // serviceSkullShare; биржа — когда текущий долг уже закрыт; кража — когда шанс успеха не ниже theftChance
+  // (то есть риск смерти не выше 1 − theftChance); продажа и обмен — когда на долг не хватает.
+  actions: true,
+  serviceSkullShare: 0.27,
+  theftChance: 0.5,
+  saleMin: 60,
+  lotteryTickets: 3,
+  exchangeTickets: 4,
 };
 
 /** Цена кассеты — как в игре (save.ts: 2, 3, 4… по купленным). econ оставлен для старых файлов рядом (tape45-sim). */
@@ -381,6 +394,7 @@ export function defaultEcon() {
 const clone = (value) => structuredClone(value);
 // Амулеты по копиям: в гнёздах лежат уникальные (s.amulets), а копии — счётчиком (шаг 62б).
 const ids = (s) => A.amuletIdsFrom(s.amuletCounts);
+const symbolById = (id) => R.SYMBOLS.find((symbol) => symbol.id === id);
 // Автомат забега: его id (машина меняется сама в начале раунда, см. startRound).
 const mach = (s) => s.machineId;
 /**
@@ -449,6 +463,8 @@ function newRun(upgraded = {}, runNumber = 1, chipRecord = 0) {
     insuranceSaves: 0, // сколько раз страховка сработала в раунде (копий до двух — столько и спасений)
     pacts: [], // сделки Дилера (dealerGame.Pact): что действует в раунде, решает D.pactEffects
     debtNextMul: 1, // сделка №12: следующий долг дороже во столько раз (сбрасывается на назначении)
+    actions: ACT.freshActions(), // действия вне прокрутки (шаг 29): что сделано в раунде и что ещё действует
+    debtCutApplied: 0, // сколько фишек срезал выкуп долга (№10) в текущем долге — для проверки долга
   };
 }
 
@@ -458,7 +474,7 @@ function weightOf(s, isFree) {
   const raw = rawWeightOf(s, isFree);
   // Доля черепов: + у одних сделок, − у «тише черепа» (RoundScene.weightContext), плюс колокольчик за раунд
   // и −1 п.п. от улучшения №31 (28в).
-  const delta = D.pactEffects(s.pacts, s.round).skullShareDelta + s.bellSkull + s.upgradeEffects.skullShareDelta;
+  const delta = D.pactEffects(s.pacts, s.round).skullShareDelta + s.bellSkull + s.upgradeEffects.skullShareDelta + ACT.actionSkullDelta(s.actions);
   if (delta === 0 || !Number.isFinite(delta) || isFree) return raw;
   // Долю черепов считаем по тем же весам, что и прокрутку (как RoundScene.weightContext), и берём тот же
   // множитель веса черепа из dealerGame: числа сделки в симуляторе не повторяются.
@@ -478,6 +494,17 @@ function weightOf(s, isFree) {
 function rawWeightOf(s, isFree) {
   const id = s.machineId;
   const base = R.weightsForRound(s.round, E.diceWeight(s.diceDrought));
+  // Действия шага 29: проданный символ (№8) выпадает из автомата, обмен (№2) меняет базовые веса местами —
+  // тот же порядок, что в skullShare.symbolWeightOf, поэтому плашка доли черепов и прокрутка сходятся.
+  const baseOf = (symbol) => {
+    const swap = s.actions?.exchange ?? null;
+    if (s.actions?.sold?.includes(symbol.id)) return 0;
+    if (swap) {
+      if (symbol.id === swap.to) return base(symbolById(swap.from) ?? symbol);
+      if (symbol.id === swap.from) return base(symbolById(swap.to) ?? symbol);
+    }
+    return base(symbol);
+  };
   const owned = ids(s);
   const noSkulls = D.pactEffects(s.pacts, s.round).noSkulls; // сделка «до конца раунда нет черепов»
   const luck = D.pactEffects(s.pacts, s.round).symbolLuck; // сделка №11: выбранный символ
@@ -488,7 +515,7 @@ function rawWeightOf(s, isFree) {
   return (symbol) => {
     if (noSkulls && R.isSkull(symbol)) return 0; // черепам этого раунда вес 0 — как RoundScene.baseWeights
     if (!M.machineSymbolAllowed(id, symbol)) return 0; // «Тихий»: нет паука, замка, крови и клевера
-    const baseWeight = SKULL_SHARE_CONSTANT && R.isSkull(symbol) ? legacySkull : base(symbol);
+    const baseWeight = SKULL_SHARE_CONSTANT && R.isSkull(symbol) ? legacySkull : baseOf(symbol);
     const skullFactor = R.isSkull(symbol) ? M.machineSkullFactor(id) : 1; // «Жадный»: черепа тяжелее
     const machined = A.amuletWeight(symbol, baseWeight, owned) * skullFactor; // огранка, череп в кармане
     // №23/24 (28б): клевер и вишня тяжелее на 1 — как skullShare.symbolWeightOf; закрытый символ не открывается.
@@ -523,7 +550,9 @@ function debtOk(s) {
     : [formula, D.pactDebt(formula, D.DEBT_NEXT_MUL)];
   const stored = s.debtBase ?? s.debt;
   if (!bases.includes(stored)) return false;
-  let value = stored + (s.deferAdded ?? 0); // отсрочка (№10): долг прошлого раунда прибавлен к этому
+  // Выкуп долга (действие №10, шаг 29) идёт ДО разовых сделок: магазин срезает число, а «+8%» и «−10%»
+  // применяются уже в раунде (dealer.applyPactOnce). Поэтому срез — в той же очереди, перед ops.
+  let value = stored + (s.deferAdded ?? 0) - (s.debtCutApplied ?? 0);
   for (const op of s.debtOps ?? []) {
     value = D.pactDebt(value, op === 'cut' ? D.DEBT_CUT_MUL : D.CHEAP_SHOP_DEBT_MUL);
   }
@@ -660,6 +689,8 @@ function startRound(s, st, g) {
   s.insuranceSaves = 0; // страховка снова готова: сработок на раунд — по числу копий
   s.bankKeptThisRound = false; // сделка №10: «первый череп не жжёт кон» — снова первый
   s.bellSkull = 0; // колокольчик: поправка к доле черепов живёт один раунд (RoundScene.startRound)
+  s.actions = ACT.startRoundActions(s.actions); // шаг 29: одноразовые снова доступны, обмен и продажа гаснут
+  s.lastGrid = null; // сетка прошлого раунда не годится для продажи и обмена (как RoundScene.startRound)
   g.freeSpinsGiven = 0; // потолок бесплатных прокруток — на раунд
   g.freeInRound = 0;
   g.roundPaid = 0;
@@ -912,7 +943,8 @@ function roll(s, st, g, isFree) {
         const factor = A.winFactor(owned, s.bones) * (isBloody ? E.BLOOD_WIN : 1) * M.machineWinFactor(mach(s)) * (s.effects.risk ? I.RISK_WIN_FACTOR : 1)
           * D.pactEffects(s.pacts, s.round).winMul // сделка «выигрыш паттернов +N%» — только паттерны
           * s.upgradeEffects.winMul // улучшение №12 «выигрыш паттернов +5%» (шаг 28) — тоже только паттерны
-          * UPG.jackpotWinFactor(jackpot, s.upgradeEffects); // №34: джекпот ×1,2 (×120 вместо ×100)
+          * UPG.jackpotWinFactor(jackpot, s.upgradeEffects) // №34: джекпот ×1,2 (×120 вместо ×100)
+          * ACT.lotteryWinMul(s.actions); // №4 (шаг 29): лотерея может поднять или срезать выигрыш раунда
         s.pot += Math.round(win * mult * factor);
         s.spinsLeft = R.spinsAfterBonus(s.spinsLeft, A.bellSpins(result.hits, owned), R.MAX_SPINS_PER_ROUND + s.upgradeEffects.spinCapBonus); // потолок прокруток за раунд
         // Колокольчик (шаг 25): каждое срабатывание до конца раунда делает черепа чаще — тот же amulets.bellSkullDelta,
@@ -934,6 +966,133 @@ function roll(s, st, g, isFree) {
   }
   if (!calm && E.cellsOf(grid, 'dice').length > 0) { s.diceDrought = 0; dealer(s, st, g); } else s.diceDrought += 1;
   return burned;
+}
+
+/**
+ * Доля клеток-черепов сейчас — как плашка «💀 N%» в игре: по тем же весам, что и следующая прокрутка
+ * (weightOf уже включает сделки, колокольчик, улучшение №31 и действия шага 29).
+ */
+function skullShareNow(s) {
+  const weight = weightOf(s, false);
+  let skull = 0;
+  let others = 0;
+  for (const symbol of R.SYMBOLS) {
+    const value = weight(symbol);
+    if (R.isSkull(symbol)) skull = value;
+    else if (!R.isDice(symbol)) others += value;
+  }
+  return skull + others > 0 ? skull / (skull + others) : 0;
+}
+
+/** Символы последней сетки, которые платят и есть в автомате: из них бот выбирает обмен (№2) и продажу (№8). */
+function gridSymbolsOf(s) {
+  if (!s.lastGrid) return [];
+  const weight = rawWeightOf(s, false);
+  const seen = new Set();
+  const list = [];
+  for (const row of s.lastGrid) {
+    for (const cell of row) {
+      if (seen.has(cell.id) || !(cell.price > 0) || !(weight(cell) > 0)) continue;
+      seen.add(cell.id);
+      list.push(cell);
+    }
+  }
+  return list;
+}
+
+/** Сколько клеток символа на последней сетке (как actions.symbolCells). */
+function cellsOfSymbol(s, id) {
+  let count = 0;
+  for (const row of s.lastGrid ?? []) for (const cell of row) if (cell.id === id) count += 1;
+  return count;
+}
+
+/**
+ * Действия вне прокрутки (шаг 29) между прокрутками раунда. Политика бота (не правила): обслуживание — при
+ * высокой доле черепов, биржа — когда долг уже закрыт, кража — когда риск смерти ниже порога, продажа и обмен —
+ * когда на долг не хватает. Каждое — раз в раунде (actions.useAction). Вернёт true, если кража провалилась
+ * и забег кончился: тогда раунд не докручивается (KABOOM, как в игре).
+ */
+function useActions(s, st, g) {
+  if (!ACTIONS_ON || st.actions === false || !s.actions) return false;
+  const used = (id) => ACT.actionUsed(s.actions, id);
+  const short = s.balance + s.pot < s.debt;
+  // №5: обслуживание — черепа уже жалят, а фишки есть.
+  if (!used('service') && ACT.serviceAllowed(s.actions)) {
+    const price = ACT.servicePrice(s.debt);
+    if (price <= s.balance && skullShareNow(s) >= st.serviceSkullShare) {
+      s.balance -= price;
+      s.actions = ACT.useAction({ ...s.actions, serviceRounds: ACT.ACTION_SERVICE_ROUNDS }, 'service');
+      g.actionService += 1;
+      g.actionPaid += price;
+      g.time += SECONDS.action;
+    }
+  }
+  // №10: биржа — этот долг уже закрыт, и платить есть чем: следующий станет дешевле.
+  if (!used('debt') && s.actions.debtCut === 0) {
+    const next = D.shopDebt(s.debt, s.round + 1, s.debtNextMul, false, s.upgradeEffects.debtGrowthMul).debt + (s.deferCarry ?? 0);
+    const price = ACT.debtBuyPrice(next);
+    if (price <= s.balance && s.balance - price >= s.debt) {
+      s.balance -= price;
+      s.actions = ACT.useAction({ ...s.actions, debtCut: ACT.debtBuyCut(next) }, 'debt');
+      g.actionDebt += 1;
+      g.actionPaid += price;
+      g.actionDebtChips += ACT.debtBuyCut(next);
+      g.time += SECONDS.action;
+    }
+  }
+  // №8: продажа символа — на долг не хватает, а на сетке есть символ, за который дают достаточно.
+  if (!used('sale') && short) {
+    const best = gridSymbolsOf(s)
+      .map((symbol) => ({ symbol, price: ACT.salePrice(symbol, cellsOfSymbol(s, symbol.id)) }))
+      .sort((a, b) => b.price - a.price)[0];
+    if (best && best.price >= st.saleMin) {
+      s.actions = ACT.useAction({ ...s.actions, sold: [...s.actions.sold, best.symbol.id] }, 'sale');
+      earn(s, g, best.price);
+      g.actionSale += 1;
+      g.actionChips += best.price;
+      g.time += SECONDS.action;
+    }
+  }
+  // №2: обмен — на долг не хватает и билетов с запасом: тяжёлый дешёвый символ меняется на лёгкий дорогой.
+  if (!used('exchange') && short && s.tickets >= st.exchangeTickets) {
+    const weight = weightOf(s, false);
+    const grid = gridSymbolsOf(s);
+    const to = grid.slice().sort((a, b) => b.price - a.price)[0];
+    const from = grid.slice().sort((a, b) => weight(b) - weight(a))[0];
+    if (to && from && to.id !== from.id && weight(to) < weight(from)) {
+      spendTickets(s, g, ACT.ACTION_EXCHANGE_TICKETS);
+      s.actions = ACT.useAction({ ...s.actions, exchange: { from: from.id, to: to.id } }, 'exchange');
+      g.actionExchange += 1;
+      g.time += SECONDS.action;
+    }
+  }
+  // №4: лотерея — билетов с запасом и на долг не хватает.
+  if (!used('lottery') && short && s.tickets >= st.lotteryTickets) {
+    spendTickets(s, g, ACT.ACTION_LOTTERY_TICKETS);
+    const prize = ACT.lotteryRoll();
+    s.actions = ACT.useAction({ ...s.actions, lottery: prize }, 'lottery');
+    if (prize.spins > 0) s.spinsLeft = R.spinsAfterBonus(s.spinsLeft, prize.spins, R.MAX_SPINS_PER_ROUND + s.upgradeEffects.spinCapBonus);
+    else if (prize.spins < 0) s.spinsLeft = Math.max(MIN_ROUND_SPINS, s.spinsLeft + prize.spins);
+    g.actionLottery += 1;
+    g.time += SECONDS.action;
+  }
+  // №6: кража — последняя прокрутка раунда, на долг всё равно не хватает, яма уже была (иначе впереди спасение)
+  // и риск смерти (1 − шанс) не выше порога политики: это последний шанс, а не способ подзаработать.
+  if (!used('theft') && short && s.spinsLeft <= 1 && s.rescueUsed && ACT.theftChance(s.round) >= st.theftChance) {
+    s.actions = ACT.useAction(s.actions, 'theft');
+    g.actionTheft += 1;
+    g.time += SECONDS.action;
+    if (ACT.theftSucceeds(s.round)) {
+      const reward = ACT.theftReward(s.debt);
+      earn(s, g, reward);
+      g.actionChips += reward;
+    } else {
+      g.actionTheftFailed += 1; // провал — смерть: второй попытки и магазина нет, раунд не докручивается
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -1015,6 +1174,7 @@ function runSave(s) {
     slots: s.slots, shelf: s.shelf, effects: s.effects, sockets: s.sockets, amulets: s.amulets,
     amuletCounts: s.amuletCounts, bones: s.bones, machineId: s.machineId,
     pacts: s.pacts, debtNextMul: s.debtNextMul, diceDrought: s.diceDrought, insuranceSaves: s.insuranceSaves,
+    debtCutApplied: s.debtCutApplied, // сколько срезал выкуп долга (№10): откат к записи после выкупа это помнит
     rescueUsed: s.rescueUsed, // липкий, как devUsed: откат спасение не возвращает (save.ts)
     deferUsed: s.deferUsed, // и отсрочка (улучшение №10) липкая: откат вторую попытку не даёт
     amuletChipUsed: s.amuletChipUsed, // №39: амулет за фишки тоже липкий
@@ -1086,6 +1246,11 @@ function rewind(s, g) {
   // Колокольчик живёт в раунде и на плёнку не пишется (save.ts шаг 25 не трогал): в игре откат перезапускает сцену,
   // resetState обнуляет поправку — здесь так же, иначе после отката черепов было бы больше, чем в игре.
   s.bellSkull = 0;
+  // Действия вне прокрутки (шаг 29) на плёнку не пишутся: в игре откат перезапускает сцену, и resetState
+  // оставляет действия пустыми. Так же и здесь — заплаченное откатывает уже сам снимок баланса.
+  // А вот след выкупа долга в самой записи остаётся: долг на плёнке уже срезан (debtCutApplied), и проверка
+  // долга должна это знать — иначе откат к записи после выкупа выглядел бы как «долг не из набора».
+  s.actions = ACT.freshActions();
   return s;
 }
 
@@ -1115,6 +1280,11 @@ function playRound(s, st, g) {
     if (goalReached(s)) return s; // цель взята (например, страховкой) — забег кончен
     if (s.spinsLeft === 0) return s;
     if (g.tape === 'blank' && shouldRecord(s, st)) record(s, g); // запись — только между прокрутками
+    // Действия вне прокрутки (шаг 29): тоже между прокрутками. Провал кражи кончает забег — раунд не докручивается.
+    if (useActions(s, st, g)) {
+      g.theftDeath = true;
+      return s;
+    }
     beforeSpin(s, st, g);
     if (goalReached(s)) return s; // «забрать» перевалило цель — победа, раунд не докручивается
     // Отдать долг раньше: в игре — клик по светящейся записке, оставшиеся прокрутки пропадают, за 3 и больше — билет.
@@ -1157,8 +1327,12 @@ function takeDebtForRound(s, g) {
   // то же правило, что ShopScene.applyShopDebt (рост долга — из улучшения №7)
   const next = D.shopDebt(s.debt, s.round, s.debtNextMul, false, s.upgradeEffects.debtGrowthMul);
   const carry = s.deferCarry ?? 0;
-  const debt = next.debt + carry;
+  // «Долговая биржа» (действие №10, шаг 29): выкупленный заранее долг уменьшает следующий (ShopScene.applyShopDebt).
+  const cut = s.actions?.debtCut ?? 0;
+  const debt = Math.max(0, next.debt + carry - cut);
   s.deferCarry = 0; // отложенный долг уже в числе — второй раз не прибавляем
+  s.debtCutApplied = cut; // сколько срезал выкуп: проверка долга это учитывает
+  if (cut > 0) s.actions = { ...s.actions, debtCut: 0 }; // выкуп одноразовый
   s.debtNextMul = next.debtNextMul; // множитель действует ровно на один долг
   // Долг этого круга и его база для «−10%» и «+8%». При повторе раунда (выжил в спасении) сюда не
   // заходят вовсе: openShop(..., keepDebt) оставляет прежнее число и прежние debtBase/debtOps.
@@ -1498,6 +1672,10 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon(), upgraded = {},
     ticketsLedger: 0, ticketIncome: { debt: 0, early: 0, scatter: 0, jackpot: 0, drum: 0, pact: 0 }, // доход по источникам
     pactsOffered: 0, pactsTaken: 0, pactsRefused: 0, shopsClosed: 0, pactsById: {}, doubleTakes: 0, amuletsFree: 0, // сделки Дилера: сколько и каких взято
     violations: {}, safeguards: {},
+    // Действия вне прокрутки (шаг 29): сколько раз бот применил каждое, сколько краж провалено, сколько фишек
+    // пришло от краж и продаж, сколько ушло на действия и сколько срезал выкуп долга.
+    actionExchange: 0, actionLottery: 0, actionService: 0, actionTheft: 0, actionSale: 0, actionDebt: 0,
+    actionTheftFailed: 0, theftDeath: false, actionChips: 0, actionPaid: 0, actionDebtChips: 0,
   };
   let s = newRun(upgraded, runNumber, chipRecord);
   g.ticketsLedger = s.tickets; // №16 (28б): билет на старте — учёт начинается с него, а не с нуля
@@ -1510,6 +1688,7 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon(), upgraded = {},
     g.attempts += 1; // попытка раунда: после спасения тот же долг играется заново
     s = playRound(s, st, g);
     g.maxClosed = Math.max(g.maxClosed, s.round - 1);
+    if (g.theftDeath) break; // провал кражи (шаг 29) — сразу конец забега: без долга и без магазина
     // Победа (цель 1 000 000 набранных) кончает забег посреди раунда: раунд не докручивается, долг не платится,
     // магазина нет — так же, как CollectorScene.startVictory. Проверка после каждого шага, где могли прийти фишки.
     if (goalReached(s)) break;
@@ -1663,6 +1842,14 @@ export function summarizeRuns(runs) {
     // Шаг 28г: стартовые фишки от рекорда (№46) и отмены черепа (№50).
     startChips: mean((r) => r.startChips ?? 0),
     skullCancels: mean((r) => r.skullCancels),
+    // Действия вне прокрутки (шаг 29): сколько раз бот применил каждое, сколько краж провалено (и кончилось смертью),
+    // сколько фишек пришло от краж и продаж и сколько ушло на действия.
+    actionExchange: mean((r) => r.actionExchange), actionLottery: mean((r) => r.actionLottery),
+    actionService: mean((r) => r.actionService), actionTheft: mean((r) => r.actionTheft),
+    actionSale: mean((r) => r.actionSale), actionDebt: mean((r) => r.actionDebt),
+    theftFailed: mean((r) => r.actionTheftFailed), theftDeaths: runs.filter((r) => r.theftDeath).length / runs.length,
+    actionChips: mean((r) => r.actionChips), actionPaid: mean((r) => r.actionPaid),
+    actionDebtChips: mean((r) => r.actionDebtChips),
     guardStops: mean((r) => r.guardStops), guardRuns: runs.filter((r) => r.guardStops > 0).length / runs.length,
     // Режимы прокрутки (шаг 70): средние счётчики и доля спокойных среди платных.
     normalSpins: mean((r) => r.normalSpins),
@@ -1762,6 +1949,8 @@ export function report(name, x) {  const f = (n, d = 2) => n.toFixed(d).replace(
     ? ` | рекорд ${chips(RECORD)}: взяли ${pct(x.recordShare)} (${x.recordRuns} из ${x.runs}), у дошедших: раунд мед ${f(x.recordRoundMedian, 0)}, минут мед ${f(x.recordMinutesMedian, 1)}`
     : '';
   console.log(`${''.padEnd(44)} цель ${chips(GOAL)}: набрано за забег мед ${chips(x.earnedMedian)} (среднее ${chips(x.earnedMean)}), пик табло мед ${chips(x.peakBalanceMedian)}, 1 млн взяли ${pct(x.victory)} (${x.wonRuns} из ${x.runs}) | у дошедших: раунд мед ${f(x.millionRoundMedian, 0)}, минут мед ${f(x.millionMinutesMedian, 1)}${recordLine}`);
+  // Действия вне прокрутки (шаг 29): сколько раз каждое применили, что дали и что стоили; кражи — с провалами.
+  console.log(`${''.padEnd(44)} действия: обмен ${f(x.actionExchange)}, лотерея ${f(x.actionLottery)}, обслуживание ${f(x.actionService)}, продажа ${f(x.actionSale)}, биржа ${f(x.actionDebt)} (срезано фишек ${chips(x.actionDebtChips)}), кража ${f(x.actionTheft)} (провалов ${f(x.theftFailed)}, умерли от кражи ${pct(x.theftDeaths)} забегов) | пришло от краж и продаж ${chips(x.actionChips)}, ушло на действия ${chips(x.actionPaid)} | ${ACTIONS_ON ? 'включены' : 'ВЫКЛЮЧЕНЫ (SIM_ACTIONS=0)'}`);
   // Баланс долгов (правка 19.11): долг / доход раунда и остаток после оплаты к следующему долгу — по раундам 1–5.
   // Пустые данные печатаем как «—»: иначе 0 × 100 рисовал бы NaN и ошибку в balanceRows никто бы не заметил.
   const rounds = (x.debtRounds ?? []).slice(0, 5).map((row) => `р${row.round} ${f(row.ratio, 2)} (${chips(row.debt)}/${chips(row.income)})`).join(', ');

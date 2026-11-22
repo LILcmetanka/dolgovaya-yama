@@ -163,9 +163,16 @@ export abstract class ShopScene extends DealerScene {
    */
   private applyShopDebt(keepDebt: boolean): void {
     const next = shopDebt(this.debt, this.round, this.debtNextMul, keepDebt, this.upgradeEffects.debtGrowthMul);
-    this.debt = keepDebt ? next.debt : next.debt + this.debtCarry;
+    if (keepDebt) {
+      this.debt = next.debt; // раунд повторяется: долг остаётся ровно прежним, выкуп ждёт следующего магазина
+    } else {
+      // «Долговая биржа» (действие №10, шаг 29): выкупленный заранее долг уменьшает следующий на свою долю.
+      const cut = this.actionState.debtCut;
+      this.debt = Math.max(0, next.debt + this.debtCarry - cut);
+      this.debtCarry = 0; // отложенный долг уже в этом числе — второй раз не прибавляем
+      if (cut > 0) this.actionState = { ...this.actionState, debtCut: 0 }; // выкуп одноразовый: второй раз не спишется
+    }
     this.debtNextMul = next.debtNextMul;
-    if (!keepDebt) this.debtCarry = 0; // отложенный долг уже в этом числе — второй раз не прибавляем
   }
 
   /**

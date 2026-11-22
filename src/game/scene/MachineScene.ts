@@ -13,8 +13,7 @@ import { BonusScene } from './BonusScene';
  */
 export abstract class MachineScene extends BonusScene {
   private rustyColumn: number | null = null; // заржавевший столбец: в следующей прокрутке он не крутится
-  private lastGrid: Grid | null = null; // сетка прошлой прокрутки — её символы остаются в заржавевшем столбце
-
+  protected lastGrid: Grid | null = null; // сетка прошлой прокрутки — её символы остаются в заржавевшем столбце
   /** Новый забег: ржавчины нет. */
   protected resetState(): void {
     super.resetState();

@@ -13,10 +13,11 @@ import {
   vestShields,
   winFactor,
 } from '../amulets';
+import { actionSkullDelta, freshActions, lotteryWinMul, startRoundActions, type ActionState } from '../actions';
 import { CIGARETTES_FOR_ACHIEVEMENT, isBloodSpill, ITEM_ACHIEVEMENTS } from '../achievements';
 import { FREE_SPINS_GUARD } from '../bonus';
 import { bloodBurn, BLOOD_WIN, cellsOf, diceWeight, spiderBite } from '../evil';
-import { pactDoubleTake, pactEffects, skullShareWeightMul, skullStreakAfter } from '../dealerGame';
+import { pactDoubleTake, pactEffects, shopDebt, skullShareWeightMul, skullStreakAfter } from '../dealerGame';
 import {
   activeSlotEffects,
   CIGARETTE_SPINS,
@@ -38,7 +39,7 @@ import {
 import { t } from '../lang';
 import { jackpotWinFactor, keepsHammerAfter, skullCancelAllowed, startGridOf } from '../upgrades';
 import { RESCUE_SKULL_SHARE } from '../lastChance';
-import { machineAtRoundStart, machineWinFactor, MACHINE_SWAP_CHANCE } from '../machines';
+import { machineAtRoundStart, machineSymbolAllowed, machineWinFactor, MACHINE_SWAP_CHANCE } from '../machines';
 import { phaseAt } from '../phases';
 import { skullShareOf, symbolWeightOf, type WeightContext } from '../skullShare';
 import { CENTER_X, cellX, cellY, DISPLAY, GRID_Y, PAYOUT_WINDOW, SCREEN, SPIN_LAMPS_Y } from '../layout';
@@ -46,6 +47,7 @@ import { evaluateGrid, lockedColumns, ticketCells, type SpinResult } from '../pa
 import { revealStepMs, revealSteps, WIN_REVEAL_FADE_SHARE, WIN_REVEAL_HOLD, winGain, type RevealStep } from '../reveal';
 import {
   GRID_ROWS,
+  isPaying,
   isSkull,
   JOKER,
   MAX_SPINS_PER_ROUND,
@@ -53,6 +55,7 @@ import {
   spinsAfterBonus,
   SPINS_PER_ROUND,
   streakAfterTake,
+  SYMBOLS,
   symbolsUnlockedAt,
   TICKET_SCATTER,
   weightsForRound,
@@ -142,6 +145,9 @@ export abstract class RoundScene extends MachineScene {
   private pendingSkull: { grid: Grid; result: SpinResult; isBloody: boolean } | null = null;
   private skullCancelTimer: Phaser.Time.TimerEvent | null = null;
   private skullCancelBox: Phaser.GameObjects.GameObject[] | null = null;
+  // Действия вне прокрутки (шаг 29): что уже сделано в этом раунде, обмен, лотерея, чистка, проданные
+  // символы и выкуп долга. Живёт до конца раунда, в кассету не пишется.
+  protected actionState: ActionState = freshActions();
 
   /** Новый забег: прокруток ещё не было, решения по перемешке не висит, сделок Дилера нет. */
   protected resetState(): void {
@@ -159,6 +165,7 @@ export abstract class RoundScene extends MachineScene {
     this.revealId += 1; // новый забег: недосмотренный каскад не должен вернуться в него своим колбэком
     this.revealShown = null;
     this.fadeWinPopup(); // попап прошлого показа не должен пережить сброс забега
+    this.actionState = freshActions(); // шаг 29: у нового забега действий ещё не было
   }
 
   // ---------- Прокрутка ----------
@@ -242,9 +249,16 @@ export abstract class RoundScene extends MachineScene {
   protected override weightContext(): WeightContext {
     const base = super.weightContext();
     const effects = pactEffects(this.pacts, this.round);
-    const withLuck: WeightContext = effects.symbolLuck ? { ...base, symbolLuck: effects.symbolLuck } : base;
-    // Сделки Дилера, колокольчик и улучшение №31 (шаг 28в) двигают долю черепов каждый по-своему (может выйти и минус).
-    const delta = effects.skullShareDelta + this.bellSkull + this.upgradeEffects.skullShareDelta;
+    // Действия шага 29: обмен весов двух символов (№2) и проданные символы (№8) — до конца раунда.
+    const withActions: WeightContext = {
+      ...base,
+      swapSymbols: this.actionState.exchange,
+      dropSymbols: this.actionState.sold,
+    };
+    const withLuck: WeightContext = effects.symbolLuck ? { ...withActions, symbolLuck: effects.symbolLuck } : withActions;
+    // Сделки Дилера, колокольчик, улучшение №31 и действия раунда (лотерея и чистка черепов) двигают долю
+    // черепов каждый по-своему (может выйти и минус).
+    const delta = effects.skullShareDelta + this.bellSkull + this.upgradeEffects.skullShareDelta + actionSkullDelta(this.actionState);
     if (delta === 0 || !Number.isFinite(delta)) return withLuck;
     const mul = skullShareWeightMul(skullShareOf(this.round, this.diceDrought, withLuck), delta);
     return mul === 1 ? withLuck : { ...withLuck, skullMul: mul };
@@ -712,6 +726,7 @@ export abstract class RoundScene extends MachineScene {
       (this.itemEffects.risk ? RISK_WIN_FACTOR : 1) * // риск: выигрыш ×10 (видно в подсказке как ×10)
       pactEffects(this.pacts, this.round).winMul * // сделка «выигрыш паттернов +N%» — только паттерны, не «забрать»
       this.upgradeEffects.winMul * // улучшение №12 «выигрыш паттернов +5%» (шаг 28) — тоже только паттерны
+      lotteryWinMul(this.actionState) * // действие №4 (шаг 29): лотерея может поднять или срезать выигрыш раунда
       jackpotWinFactor(jackpot, this.upgradeEffects); // улучшение №34: джекпот ×1,2 (×120 вместо ×100)
     const gain = winGain(result.hits, ids, multiplier, factor); // та же формула, что в показе по шагам (revealSteps)
     const potBefore = this.pot; // от него окошко выплаты показывает, как кон растёт по шагам
@@ -979,6 +994,11 @@ export abstract class RoundScene extends MachineScene {
     return MAX_SPINS_PER_ROUND + this.upgradeEffects.spinCapBonus;
   }
 
+  /** Вес символа прямо сейчас — для подписи в панели действий (шаг 29): те же правила, что у прокрутки. */
+  protected currentSymbolWeight(symbol: SlotSymbol): number {
+    return this.symbolWeight(symbol, this.baseWeights(), false);
+  }
+
   /**
    * Можно ли сейчас включить предмет с полки: одни и те же правила в useItem и у полки (ItemShelf спрашивает
    * для пульса) — одна правда, без дублей (DONTLIKE, стр. 3: пульс не должен врать).
@@ -1100,6 +1120,67 @@ export abstract class RoundScene extends MachineScene {
     this.screen.setCalmColor(this.calmLampColor());
   }
 
+  // ---------- Действия вне прокрутки (шаг 29) ----------
+
+  /**
+   * Платящие символы, которые сейчас есть в автомате (вошли по раунду и не отобраны автоматом): из них
+   * выбирают замену для обмена (№2) и проверяется, что менять есть на что. Черепа, злые символы, билет,
+   * клевер, корона и кубик сюда не входят: они не платят, и обмен открыл бы то, чего в автомате нет.
+   */
+  protected machineSymbols(): SlotSymbol[] {
+    const base = weightsForRound(this.round, diceWeight(this.diceDrought));
+    return SYMBOLS.filter(
+      (symbol) =>
+        isPaying(symbol) &&
+        machineSymbolAllowed(this.machineId, symbol) &&
+        base(symbol) > 0 &&
+        !this.actionState.sold.includes(symbol.id), // проданный символ (№8) из автомата ушёл
+    );
+  }
+
+  /**
+   * Платящие символы на последней сетке — из них игрок выбирает, что обменять (№2) и что продать (№8).
+   * Пусто, пока в раунде не было прокрутки: менять нечего, и панель так и говорит.
+   */
+  protected gridSymbols(): SlotSymbol[] {
+    const ids = new Set(this.machineSymbols().map((symbol) => symbol.id));
+    const seen = new Set<string>();
+    const result: SlotSymbol[] = [];
+    for (const row of this.lastGrid ?? []) {
+      for (const cell of row) {
+        if (seen.has(cell.id) || !ids.has(cell.id)) continue;
+        seen.add(cell.id);
+        result.push(cell);
+      }
+    }
+    return result;
+  }
+
+  /** Долг следующего раунда, каким его поставит магазин: для подписи цены «Долговой биржи» (№10). */
+  protected nextDebtValue(): number {
+    const next = shopDebt(this.debt, this.round + 1, this.debtNextMul, false, this.upgradeEffects.debtGrowthMul);
+    return Math.max(0, next.debt + this.debtCarry);
+  }
+
+  /**
+   * Прокрутки от лотереи (№4): прибавка идёт через потолок раунда (spinCap), отнять можно до одной прокрутки
+   * в раунде — как сделка «−1 прокрутка»: раунд без прокруток невозможен.
+   */
+  protected actionSpins(delta: number): void {
+    if (!Number.isFinite(delta) || delta === 0) return;
+    if (delta > 0) {
+      const before = this.spinsLeft;
+      this.spinsLeft = spinsAfterBonus(this.spinsLeft, delta, this.spinCap());
+      if (this.spinsLeft > before) this.effects.popupAt(CENTER_X, SPIN_LAMPS_Y - 20, `+${this.spinsLeft - before}`, GOLD_TEXT);
+      this.panel.winkSpinLamps(this.spinsLeft);
+    } else {
+      const before = this.spinsLeft;
+      this.spinsLeft = Math.max(MIN_ROUND_SPINS, this.spinsLeft + delta);
+      if (this.spinsLeft < before) this.panel.burnOutSpinLamps(before - this.spinsLeft);
+    }
+    this.refreshHud();
+  }
+
   // ---------- Начало и конец раунда ----------
 
   /**
@@ -1151,6 +1232,9 @@ export abstract class RoundScene extends MachineScene {
     // а не бонус, который потолок мог бы срезать.
     if (this.round === 1) this.spinsLeft += this.upgradeEffects.firstRoundSpins;
     this.skullFreeSpinGiven = false; // №4: в новом раунде бесплатная прокрутка за первый череп снова доступна
+    // Действия шага 29: одноразовые снова доступны, обмен/лотерея/проданные символы гаснут, чистка тикает.
+    this.actionState = startRoundActions(this.actionState);
+    this.lastGrid = null; // сетка прошлого раунда не годится для продажи и обмена: символы уже не те
     this.roundShields = vestShields(ids);
     if (owns(ids, 'greed')) this.amuletRack.trigger('greed');
     // Сделка кончилась — одна короткая новость. Новый символ важнее, поэтому announceNewSymbols идёт следом

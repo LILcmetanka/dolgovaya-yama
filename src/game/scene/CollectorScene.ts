@@ -709,7 +709,7 @@ export abstract class CollectorScene extends SaveScene {
   }
 
   /** Конец забега: на экране автомата KABOOM, потом автомат взрывается, всё темнеет, и на нём — KABOOM, счёт, «ЗАНОВО». */
-  private kaboom(): void {
+  protected kaboom(): void {
     this.isGameOver = true;
     // Экран DEATH тоже ляжет выше окна ачивки: выданное перед смертью ждёт в очереди и доедет в новом забеге
     // (restartGame передаёт pendingAchievements), а не тает под экраном.
