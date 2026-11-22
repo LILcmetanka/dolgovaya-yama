@@ -588,7 +588,7 @@ export abstract class RoundScene extends MachineScene {
       .setDepth(SKULL_CANCEL_DEPTH);
     box.setInteractive({ useHandCursor: true }); // клик — отмена; мимо плашки кликать некуда (ввод и так закрыт)
     box.on('pointerdown', () => this.resolveSkullCancel(true));
-    const label = addText(this, CENTER_X, SKULL_CANCEL_Y, t('skullCancel'), {
+    const label = addText(this, CENTER_X, SKULL_CANCEL_Y, `${t('skullCancel')} · C`, {
       fontSize: SKULL_CANCEL_FONT,
       fontStyle: 'bold',
       color: GOLD_TEXT,
@@ -596,6 +596,15 @@ export abstract class RoundScene extends MachineScene {
     this.skullCancelBox = [box, label];
     this.skullCancelTimer = this.time.delayedCall(SKULL_CANCEL_TIME, () => this.resolveSkullCancel(false));
     this.refreshHud();
+  }
+
+  /**
+   * Клавиша C (шаг 35): отменить висящий череп так же, как клик по плашке. Плашки нет — клавиша молчит:
+   * отменять нечего, и тратить единственную за забег нельзя.
+   */
+  protected cancelSkullByKey(): void {
+    if (!this.pendingSkull) return;
+    this.resolveSkullCancel(true);
   }
 
   /**

@@ -91,6 +91,8 @@ const ROWS_LIFT = 22; // ряды карточек выше на столько:
 // Панель подробностей ачивки (клик по карточке): внутри стекла, над вкладками и содержимым, под подсказкой.
 const DETAIL_WIDTH = 620;
 const DETAIL_HEIGHT = 380;
+const DETAIL_CLOSE_SIZE = 44; // крестик панели подробностей: 44×44 — палец на телефоне попадает (шаг 35)
+const DETAIL_CLOSE_INSET = 30; // от края панели до середины крестика (44/2 + 8 до обводки)
 const DETAIL_SHADE_DEPTH = OVERLAY_DEPTH + 2;
 const DETAIL_DEPTH = DETAIL_SHADE_DEPTH + 1;
 const DETAIL_LINE_ALPHA = 0.6;
@@ -713,12 +715,12 @@ export class WallScreen {
       color: isObtained ? GREEN_TEXT : DIM_INK,
     }).setOrigin(0.5);
     const closeBox = scene.add
-      .rectangle(halfW - 30, -halfH + 30, 36, 36, PANEL_COLOR)
+      .rectangle(halfW - DETAIL_CLOSE_INSET, -halfH + DETAIL_CLOSE_INSET, DETAIL_CLOSE_SIZE, DETAIL_CLOSE_SIZE, PANEL_COLOR)
       .setStrokeStyle(CARD_LINE, PANEL_LINE, 0.5)
       .setRounded(PANEL_RADIUS);
     closeBox.setInteractive({ useHandCursor: true });
     closeBox.on('pointerdown', () => this.closeDetail());
-    const closeSign = addText(scene, halfW - 30, -halfH + 30, '✕', { fontSize: '20px', fontStyle: 'bold', color: INK }).setOrigin(0.5);
+    const closeSign = addText(scene, halfW - DETAIL_CLOSE_INSET, -halfH + DETAIL_CLOSE_INSET, '✕', { fontSize: '20px', fontStyle: 'bold', color: INK }).setOrigin(0.5);
     this.detailShade = shade;
     this.detail = scene.add.container(WALL_PANEL.x, WALL_PANEL.y, [panel, line, icon, name, description, status, closeBox, closeSign]);
     this.detail.setDepth(DETAIL_DEPTH).setScrollFactor(0);
@@ -748,11 +750,14 @@ export class WallScreen {
       { label: 'Esc', width: 58, caption: 'keyPause' }, { label: 'L', width: 48, caption: 'keyLanguage' },
       { label: 'M', width: 48, caption: 'keySound' },
     ], 18);
-    // В магазине те же цифры — по рядам витрины: корзина намекает, где это.
+    // В магазине те же цифры — по рядам витрины: корзина намекает, где это. 9 — четвёртый ряд (№37), T — кассета,
+    // B — билеты за фишки (шаг 35: у этих рядов раньше клавиш не было).
     this.content.add(icon(centerX, top + 348, '🛒', 34));
     this.addKeyRow(left, top + 392, width, [
-      { label: '1–4', width: 58, caption: 'keyShop' }, { label: '5–8', width: 58, caption: 'keyAmulets' },
-      { label: '9', width: 48, caption: 'keyCassette' }, { label: '0', width: 48, caption: 'keyDrum' },
+      { label: '1–3', width: 58, caption: 'keyShop' }, { label: '4–5', width: 58, caption: 'keyShelf' },
+      { label: '6–8', width: 58, caption: 'keyAmulets' }, { label: '9', width: 40, caption: 'keyExtraRow' },
+      { label: '0', width: 40, caption: 'keyDrum' }, { label: 'T', width: 40, caption: 'keyCassette' },
+      { label: 'B', width: 40, caption: 'keyTicket' },
     ], 26);
   }
 

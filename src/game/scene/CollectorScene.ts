@@ -69,6 +69,7 @@ export abstract class CollectorScene extends SaveScene {
   private rescueFreezeUsed = false; // заморозка/разморозка в этом ходу уже была: разрешена одна
   private readonly frozenColumns = new Set<number>(); // замороженные столбцы: прокрутка их не трогает
   private isRescueIntro = false; // на экране автомата идёт заставка спасения: ввод закрыт, крутить нельзя (шаг 32)
+  private rescueHintLive = false; // подсказка спасения сейчас на стекле: её перерисовывает смена языка (шаг 35)
   private isRescueWinPending = false; // паттерн собран: новость показана, через мгновение магазин
   private wasShoppingAtVictory = false; // победа застала магазин на экране: «ДАЛЬШЕ» доиграет его выход
   private victoryReached = false; // цель уже взята (порог сверен и пройден): падение баланса ниже chipGoal её не отменяет
@@ -92,6 +93,7 @@ export abstract class CollectorScene extends SaveScene {
     this.rescueFreezeUsed = false;
     this.isRescueIntro = false;
     this.isRescueWinPending = false;
+    this.rescueHintLive = false;
     this.frozenColumns.clear();
     this.wasShoppingAtVictory = false;
     this.victoryReached = false; // новый забег — цель снова не взята
@@ -253,9 +255,24 @@ export abstract class CollectorScene extends SaveScene {
     this.sfx.play('warning', 0.5);
     // Заставка на экране автомата: «ВНИМАНИЕ!» → «АКТИВИРОВАН ПОСЛЕДНИЙ ШАНС» → «СОБЕРИ ЛЮБОЙ ПАТТЕРН ЧТОБЫ ВЫЖИТЬ».
     this.isRescueIntro = true;
-    this.collector.showScreenSequence([t('rescueAlert1'), t('rescueAlert2'), t('rescueAlert3')], () => {
+    this.rescueHintLive = false;
+    this.collector.showScreenSequence(this.rescueIntroLines(), () => {
       this.isRescueIntro = false; // заставка погасла: рычаг снова слушается
     });
+  }
+
+  /** Строки заставки спасения на текущем языке: их же заново показывает смена языка (шаг 35). */
+  private rescueIntroLines(): string[] {
+    return [t('rescueAlert1'), t('rescueAlert2'), t('rescueAlert3')];
+  }
+
+  /**
+   * Сменили язык (L или RU/EN), пока на экране автомата идёт заставка спасения или на стекле висит подсказка:
+   * перерисовываем их на новом языке с того же места (шаг 35). Ничего не висит — ничего не трогаем.
+   */
+  protected relabelRescueTexts(): void {
+    if (this.isRescueIntro) this.collector.relabelScreenSequence(this.rescueIntroLines());
+    if (this.rescueHintLive) this.showRescueHint();
   }
 
   /** Красный режим: огни автомата красные, по краям вида красное свечение, амулеты и предметы притушены. */
@@ -304,6 +321,7 @@ export abstract class CollectorScene extends SaveScene {
     this.screen.endPick();
     this.screen.clearHighlights();
     this.isSpinning = true;
+    this.rescueHintLive = false; // прошлая подсказка снята прокруткой
     this.panel.pullLever();
     this.sfx.play('lever');
     this.sfx.play('roll', 0.1);
@@ -345,6 +363,7 @@ export abstract class CollectorScene extends SaveScene {
     if (!this.isRescue || this.isRescueWinPending) return;
     const text = this.rescueHintText();
     this.screen.announceSequence([{ text }]);
+    this.rescueHintLive = true; // висит на стекле: смена языка перерисует его этим же методом (шаг 35)
   }
 
   /** Текст подсказки спасения по остатку прокруток и заморозке этого хода. */
@@ -385,6 +404,7 @@ export abstract class CollectorScene extends SaveScene {
    */
   private winRescue(): void {
     this.isRescueWinPending = true;
+    this.rescueHintLive = false;
     this.screen.endPick();
     this.screen.announceSequence([{ text: t('rescueSurvived') }]); // «ПАТТЕРН СОБРАН» на стекле
     this.sfx.play('bigWin');
@@ -429,6 +449,7 @@ export abstract class CollectorScene extends SaveScene {
     this.rescueFreezeUsed = false;
     this.isRescueIntro = false;
     this.isRescueWinPending = false;
+    this.rescueHintLive = false;
     this.isRescue = false;
     this.isSpinning = false;
     this.pot = 0;

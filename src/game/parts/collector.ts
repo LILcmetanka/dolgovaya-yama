@@ -81,6 +81,13 @@ export class Collector {
   // Заставка на экране автомата (раунд спасения): что нарисовано сейчас; token отменяет недоигранную заставку.
   private screenSequence: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = [];
   private sequenceToken = 0;
+  // Отложенные шаги заставки: снимаются в clearScreenSequence, чтобы не висели после неё (шаг 35).
+  private sequenceTimers: Phaser.Time.TimerEvent[] = [];
+  // Строки заставки, номер показываемой и что сделать после последней: по ним заставка перерисовывается
+  // с того же места при смене языка (шаг 35).
+  private sequenceLines: readonly string[] = [];
+  private sequenceIndex = 0;
+  private sequenceDone: (() => void) | null = null;
 
   /**
    * pay — что делать, когда кликнули по банкомату (Enter сцена ловит сама);
@@ -289,17 +296,36 @@ export class Collector {
    * Длинная строка ужимается по ширине экрана. Пока заставка идёт, ввод держит закрытым сцена (раунд спасения, шаг 32).
    */
   showScreenSequence(lines: readonly string[], done?: () => void): void {
-    this.clearScreenSequence(); // прошлая заставка (если была) убирается целиком
+    this.startSequence(lines, done ?? null, 0);
+  }
+
+  /**
+   * Сменить язык прямо во время заставки (шаг 35): те же строки на новом языке, с той же строки и с тем же done.
+   * Заставки нет — ничего не делает. Номер строки берём текущий: показ перезапускается с начала этой строки.
+   */
+  relabelScreenSequence(lines: readonly string[]): void {
+    if (this.sequenceLines.length === 0) return;
+    this.startSequence(lines, this.sequenceDone, this.sequenceIndex);
+  }
+
+  /** Пуск заставки с строки from. Вызывают showScreenSequence (с нуля) и relabelScreenSequence (с текущей). */
+  private startSequence(lines: readonly string[], done: (() => void) | null, from: number): void {
+    this.clearScreenSequence(); // прошлая заставка (если была) убирается целиком, вместе с её таймерами
     const token = this.sequenceToken;
+    this.sequenceLines = lines;
+    this.sequenceIndex = Math.min(Math.max(0, from), lines.length);
+    this.sequenceDone = done;
     const screen = this.scene.add
       .rectangle(SCREEN.x, SCREEN.y, SCREEN.width, SCREEN.height, 0x000000)
       .setRounded(16)
       .setDepth(SCREEN_TITLE_DEPTH);
     this.screenSequence = [screen];
-    let index = 0;
+    let index = this.sequenceIndex;
     const next = (): void => {
       if (token !== this.sequenceToken) return; // заставку сняли — дальше не идём
       if (index >= lines.length) {
+        this.sequenceLines = [];
+        this.sequenceDone = null;
         this.scene.tweens.add({
           targets: screen,
           alpha: 0,
@@ -312,12 +338,14 @@ export class Collector {
         });
         return;
       }
-      const text = lines[index++];
+      const text = lines[index];
+      this.sequenceIndex = index; // эта строка на экране: смена языка вернётся к ней же
+      index += 1;
       const title = addText(this.scene, SCREEN.x, SCREEN.y, text, SCREEN_TITLE_STYLE).setOrigin(0.5).setDepth(SCREEN_TITLE_DEPTH);
       fitTextWidth(title, text, SCREEN_LINE_MAX_WIDTH, SCREEN_LINE_FONT, SCREEN_LINE_MIN_FONT); // всей строкой, без переносов
       this.screenSequence = [screen, title];
       const blink = this.scene.tweens.add({ targets: title, alpha: 0.3, duration: TITLE_BLINK_TIME, yoyo: true, repeat: -1 });
-      this.scene.time.delayedCall(SCREEN_LINE_HOLD, () => {
+      this.sequenceTimers.push(this.scene.time.delayedCall(SCREEN_LINE_HOLD, () => {
         if (token !== this.sequenceToken) return;
         blink.remove();
         this.scene.tweens.add({
@@ -326,20 +354,28 @@ export class Collector {
           duration: SCREEN_LINE_FADE,
           onComplete: () => {
             title.destroy();
-            this.scene.time.delayedCall(SCREEN_LINE_GAP, next);
+            this.sequenceTimers.push(this.scene.time.delayedCall(SCREEN_LINE_GAP, next));
           },
         });
-      });
+      }));
     };
     next();
   }
 
-  /** Заставку снять сразу: её твины и картинки уничтожаются, done не зовётся. */
+  /**
+   * Заставку снять сразу: её твины, картинки и отложенные шаги уничтожаются, done не зовётся.
+   * Таймеры снимаем по-настоящему: иначе они доживают до срока и зовут next по снятой заставке (шаг 35).
+   */
   clearScreenSequence(): void {
     this.sequenceToken += 1;
+    for (const timer of this.sequenceTimers) timer.remove(false);
+    this.sequenceTimers = [];
     this.scene.tweens.killTweensOf(this.screenSequence);
     for (const part of this.screenSequence) part.destroy();
     this.screenSequence = [];
+    this.sequenceLines = [];
+    this.sequenceIndex = 0;
+    this.sequenceDone = null;
   }
 
   /** Чёрный экран автомата с мигающей надписью text на слое depth. look — цвет и размер надписи (KABOOM красный, ПОБЕДА золотая). */

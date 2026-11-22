@@ -11,6 +11,10 @@
  *    ширине «больше 400» и кеглю, — поэтому смена шрифта проверку не роняет, а перенос карточки роняет;
  *  - полученная ачивка открывает панель с названием и полным описанием из lang.ts (тексты берутся из ключей
  *    achNoSmoke/achNoSmokeWhat и остальных — тех же, что читает игра);
+ *  - крестик панели подробностей — ровно DETAIL_CLOSE_SIZE из wallScreen.ts и стоит по формуле openDetail
+ *    (край панели минус DETAIL_CLOSE_INSET), а не «последний прямоугольник в панели» (шаг 35);
+ *  - клики считаются по мировым координатам: планшет обязан стоять в неподвижной камере (контейнер в (0,0),
+ *    стекло и шапка при scrollFactor 0, scroll камеры 0) — иначе сценарий падает с внятным текстом, а не кликает мимо;
  *  - неполученная — ровно «❓», «???», «Условие скрыто», «НЕ ПОЛУЧЕНО» и «✕» крестика: набор сверяется как
  *    множество, без «содержит», крестик обязателен; ни одного настоящего названия, описания или значка из
  *    ACHIEVEMENTS в панели нет;
@@ -53,9 +57,42 @@ const words = (key) => {
   if (!pair) throw new Error('в src/game/lang.ts нет ключа ' + key);
   return pair;
 };
-// Что должно быть на экране: те же ключи, что читает игра (achNoSmoke, achNoSmokeWhat, achConditionHidden, achEarned, achNotEarned).
+// Подписи клавиш магазина на вкладке «Как играть» (buildHowTo): ключи lang.ts, а не текст «на глаз». Шаг 35:
+// кассета переехала на T, «9» — четвёртый ряд витрины (№37), «B» — билеты за фишки. Старая строка «9 — кассета»
+// здесь больше не подойдёт: сценарий сверит подпись под каждой плашкой.
+const KEY_ROW = {
+  ru: { labels: ['1–3', '4–5', '6–8', '9', '0', 'T', 'B'], captions: ['keyShop', 'keyShelf', 'keyAmulets', 'keyExtraRow', 'keyDrum', 'keyCassette', 'keyTicket'] },
+  en: { labels: ['1–3', '4–5', '6–8', '9', '0', 'T', 'B'], captions: ['keyShop', 'keyShelf', 'keyAmulets', 'keyExtraRow', 'keyDrum', 'keyCassette', 'keyTicket'] },
+};
+
 const RU = { name: words('achNoSmoke').ru, what: words('achNoSmokeWhat').ru, hidden: words('achConditionHidden').ru, earned: words('achEarned').ru, notEarned: words('achNotEarned').ru };
 const EN = { name: words('achNoSmoke').en, what: words('achNoSmokeWhat').en, hidden: words('achConditionHidden').en, earned: words('achEarned').en, notEarned: words('achNotEarned').en };
+/**
+ * Любой ключ lang.ts, а не только ach*: подписи клавиш многострочные не бывают, но их ключи в общий разбор
+ * не попадают. Ищем запись по имени и читаем первые ru/en — нет ключа, падаем с понятным текстом.
+ */
+const LANG_TEXT_SRC = SRC('src/game/lang.ts');
+const langText = (key) => {
+  const at = LANG_TEXT_SRC.search(new RegExp('\\n  ' + key + ': \\{'));
+  if (at < 0) throw new Error('в src/game/lang.ts нет ключа ' + key);
+  const body = LANG_TEXT_SRC.slice(at);
+  const readAt = (from) => {
+    const quote = body[from];
+    if (quote !== "'" && quote !== '"' && quote !== '`') throw new Error(key + ': ожидал строку');
+    const end = body.indexOf(quote, from + 1);
+    if (end < 0) throw new Error(key + ': строка не закрыта');
+    return { value: body.slice(from + 1, end), end: end + 1 };
+  };
+  const ruAt = body.indexOf('ru: ');
+  if (ruAt < 0) throw new Error(key + ': нет ru');
+  const ru = readAt(ruAt + 4);
+  const enAt = body.indexOf('en: ', ru.end);
+  if (enAt < 0) throw new Error(key + ': нет en');
+  const en = readAt(enAt + 4);
+  return { ru: ru.value, en: en.value };
+};
+// Подписи клавиш читаются в любом случае: нет ключа — падаем до запуска Chrome, а не сверяем экран с пустой строкой.
+for (const language of ['ru', 'en']) for (const caption of KEY_ROW[language].captions) langText(caption);
 /**
  * Карточка планшета — не «прямоугольник шире 400»: размеры, отступы и место названия/описания берём из wallScreen.ts
  * (CARD_WIDTH, ROW_HEIGHT, ROW_NAME_TOP, ROW_DESC_TOP), размеры стекла — из layout.ts (WALL_PANEL), панели
@@ -92,6 +129,11 @@ const ROW_DESC_TOP = wallNumber('ROW_DESC_TOP'); // и до описания
 const CARD_TEXT_X = CARD_PAD + ROW_ICON + ROW_ICON_GAP; // от левого края карточки до текста
 const DETAIL_WIDTH = wallNumber('DETAIL_WIDTH');
 const DETAIL_HEIGHT = wallNumber('DETAIL_HEIGHT');
+// Крестик панели подробностей: размер и отступ от края панели берём из wallScreen.ts (DETAIL_CLOSE_SIZE/INSET),
+// а не «последний прямоугольник в панели». Требование — не меньше 44×44: на телефоне в него должен попадать палец.
+const DETAIL_CLOSE_SIZE = wallNumber('DETAIL_CLOSE_SIZE');
+const DETAIL_CLOSE_INSET = wallNumber('DETAIL_CLOSE_INSET');
+const MIN_TOUCH = 44;
 const PAD = wallNumber('PAD'); // поле стекла: счётчик прижат к нему в правом нижнем углу содержимого
 const PAGE_ZONE = wallNumber('PAGE_ZONE'); // зона нажатия у счётчика «назад»/«вперёд»: не меньше 44×44
 /**
@@ -244,9 +286,26 @@ try {
       panel,
       counter: box ? { text: counterObject.text, x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2, ...box } : null,
       zones,
+      // Клики идут по мировым координатам через pagePoint. Это верно, только пока камера не сдвинута, а контейнер
+      // содержимого стоит в нуле, а всё стекло и шапка приклеены к экрану (scrollFactor 0) — иначе объект рисуется
+      // без поправки на scroll, а формула её вычитает. Лучше упасть здесь с внятным текстом, чем молча кликать мимо.
+      frame: {
+        contentAtZero: m.content.x === 0 && m.content.y === 0,
+        contentFixed: m.content.scrollFactorX === 0 && m.content.scrollFactorY === 0,
+        overlayCount: m.overlay.length,
+        overlayFixed: m.overlay.every((o) => o.scrollFactorX === 0 && o.scrollFactorY === 0),
+        cameraScrollX: window.__g.cameras.main.scrollX,
+        cameraScrollY: window.__g.cameras.main.scrollY,
+        content: { x: m.content.x, y: m.content.y },
+      },
     });
   })()`));
-  /** Надписи открытой панели подробностей, её границы, точка крестика и границы его плашки. */
+  /**
+   * Надписи открытой панели подробностей, её границы, точка крестика и границы его плашки.
+   * Крестик — прямоугольник ровно DETAIL_CLOSE_SIZE из wallScreen.ts, а не «последний в панели»: перестановка
+   * деталей в исходнике не подменит его молча. Его место сверяется с формулой openDetail (край панели минус
+   * DETAIL_CLOSE_INSET) — код и проверка читают одни константы, а расхождение видно по живой геометрии.
+   */
   const detail = async () => JSON.parse(await val(`(() => {
     const m = window.__g.monitor, d = m.detail;
     if (!d) return JSON.stringify({ open: false, texts: [] });
@@ -254,8 +313,18 @@ try {
     const texts = d.list.filter((o) => o.type === 'Text').map((o) => o.text);
     const rects = d.list.filter((o) => o.type === 'Rectangle');
     const panel = rects.find((o) => Math.abs(o.width - ${DETAIL_WIDTH}) < 0.5 && Math.abs(o.height - ${DETAIL_HEIGHT}) < 0.5);
-    const close = rects[rects.length - 1];
-    return JSON.stringify({ open: true, texts, panel: panel ? bounds(panel) : null, close: { x: d.x + close.x, y: d.y + close.y }, closeBox: bounds(close) });
+    const closeBoxes = rects.filter((o) => Math.abs(o.width - ${DETAIL_CLOSE_SIZE}) < 0.5 && Math.abs(o.height - ${DETAIL_CLOSE_SIZE}) < 0.5);
+    const close = closeBoxes[0];
+    const expected = { x: d.x + ${DETAIL_WIDTH / 2} - ${DETAIL_CLOSE_INSET}, y: d.y - ${DETAIL_HEIGHT / 2} + ${DETAIL_CLOSE_INSET} };
+    const point = close ? { x: d.x + close.x, y: d.y + close.y } : null;
+    return JSON.stringify({
+      open: true, texts, panel: panel ? bounds(panel) : null,
+      closeBoxes: closeBoxes.length,
+      close: point,
+      closeBox: close ? bounds(close) : null,
+      closeShift: point ? { dx: +(point.x - expected.x).toFixed(2), dy: +(point.y - expected.y).toFixed(2) } : null,
+      expected,
+    });
   })()`));
   /** Прямоугольник a целиком внутри b (по мировым границам). */
   const inside = (a, b) => !!a && !!b && a.left >= b.left - 0.5 && a.right <= b.right + 0.5 && a.top >= b.top - 0.5 && a.bottom <= b.bottom + 0.5;
@@ -338,6 +407,11 @@ try {
   await sleep(900);
   let st = await tablet();
   check(st.open === true && st.tab === 'symbols', 'планшет открыт на «Символах»');
+  // Клики ниже считаются как «мировая точка → страница» (pagePoint): это верно, только пока камера не сдвинута,
+  // а контейнеры планшета стоят в нуле при scrollFactor(0). Сдвинули — падаем здесь, а не кликаем мимо молча.
+  check(st.frame && st.frame.contentAtZero && st.frame.contentFixed && st.frame.overlayFixed && st.frame.overlayCount > 0
+    && st.frame.cameraScrollX === 0 && st.frame.cameraScrollY === 0,
+    'клики по планшету опираются на неподвижную камеру: контейнер в (0,0), стекло и шапка при scrollFactor 0, scroll камеры 0 (сейчас ' + JSON.stringify(st.frame) + ')');
   await shot('after-symbols.png');
   for (const [tab, file] of [['items', 'after-items.png'], ['who', 'after-who.png'], ['howTo', 'after-howto.png'], ['achievements', 'after-ach.png']]) {
     await openTab(tab);
@@ -345,6 +419,32 @@ try {
     check(st.tab === tab && st.items > 0, `вкладка ${tab} открылась, содержимого ${st.items}`);
     await shot(file);
   }
+
+  // «Как играть»: клавиши магазина — плашки с номерами и подписи под ними. Шаг 35 сдвинул клавиши (кассета — T,
+  // «9» — четвёртый ряд витрины, «B» — билеты), поэтому подписи сверяем с lang.ts, а не с прежней картинкой:
+  // старая «9 — кассета» здесь провалится.
+  await openTab('howTo');
+  const howToTexts = JSON.parse(await val(`(() => {
+    const list = window.__g.monitor.content.list;
+    return JSON.stringify(list.filter((o) => o.type === 'Text').map((o) => { const b = o.getBounds(); return { t: o.text, x: +( (b.left + b.right) / 2 ).toFixed(1), y: +((b.top + b.bottom) / 2).toFixed(1) }; }));
+  })()`));
+  const keyRowReport = (language) => {
+    const row = KEY_ROW[language];
+    const missingLabels = row.labels.filter((label) => !howToTexts.some((text) => text.t === label));
+    const wrongCaptions = [];
+    row.labels.forEach((label, index) => {
+      const caption = langText(row.captions[index])[language];
+      const title = howToTexts.filter((text) => text.t === label);
+      const under = title.some((plate) => howToTexts.some((text) => text.t === caption && Math.abs(text.x - plate.x) <= 1.5 && text.y > plate.y + 8 && text.y < plate.y + 46));
+      if (!under) wrongCaptions.push(label + ' → ' + caption);
+    });
+    return { missingLabels, wrongCaptions };
+  };
+  const keyRowRu = keyRowReport('ru'), keyRowEn = keyRowReport('en');
+  const keyRow = keyRowRu.missingLabels.length <= keyRowEn.missingLabels.length ? keyRowRu : keyRowEn;
+  check(keyRow.missingLabels.length === 0, 'клавиши магазина на «Как играть»: ' + KEY_ROW.ru.labels.join(' ') + (keyRow.missingLabels.length ? ' — нет: ' + JSON.stringify(keyRow.missingLabels) : ''));
+  check(keyRow.wrongCaptions.length === 0, 'подписи клавиш магазина — из lang.ts (9 — ряд, T — кассета, B — билеты)' + (keyRow.wrongCaptions.length ? ': ' + JSON.stringify(keyRow.wrongCaptions) : ''));
+  await openTab('achievements'); // дальше проверка идёт по «Ачивкам», как и до этого блока
 
   // «Ачивки»: 7 рядов по 2 карточки = 14 на страницу, 44 ачивки — 4 страницы.
   st = await tablet();
@@ -441,6 +541,12 @@ try {
   checkMaskedPanel(d.texts, RU, '');
   check(inside(d.panel, st.panel), 'панель подробностей не выходит за стекло планшета' + (d.panel ? ' (' + JSON.stringify(d.panel) + ')' : ''));
   check(inside(d.closeBox, d.panel), 'крестик панели внутри самой панели');
+  // Крестик — ровно DETAIL_CLOSE_SIZE из wallScreen.ts, в панели такой один, и стоит там, где его ставит openDetail:
+  // край панели минус DETAIL_CLOSE_INSET по обеим осям. Размер и место — из исходника, а не «последний прямоугольник».
+  check(d.closeBoxes === 1, 'в панели ровно один крестик ' + DETAIL_CLOSE_SIZE + '×' + DETAIL_CLOSE_SIZE + ' (нашлось: ' + d.closeBoxes + ')');
+  check(DETAIL_CLOSE_SIZE >= MIN_TOUCH, 'крестик не меньше ' + MIN_TOUCH + '×' + MIN_TOUCH + ' (в wallScreen.ts ' + DETAIL_CLOSE_SIZE + ')');
+  check(!!d.closeShift && Math.abs(d.closeShift.dx) <= 1 && Math.abs(d.closeShift.dy) <= 1,
+    'крестик стоит по формуле openDetail: край панели минус ' + DETAIL_CLOSE_INSET + ' (сдвиг ' + JSON.stringify(d.closeShift) + ')');
   await shot('after-ach-hidden.png');
 
   // Клик по самой панели — не «мимо»: она остаётся открытой и не листает вкладку под собой.

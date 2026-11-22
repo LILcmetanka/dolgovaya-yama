@@ -53,7 +53,7 @@ export abstract class SaveScene extends ShopScene {
     return tapePriceAfter(tapePrice(this.tapesBought, this.priceMul()), this.upgradeEffects.freeTape);
   }
 
-  /** Купить кассету (клик или 9): хватает билетов — она уезжает на видеомагнитофон, в отделение REC. Одна за раз. */
+  /** Купить кассету (клик или T): хватает билетов — она уезжает на видеомагнитофон, в отделение REC. Одна за раз. */
   protected buyTape(): void {
     if (!this.cassetteUnlocked()) return;
     if (!this.isShopping || this.tapeState !== 'forSale') return;

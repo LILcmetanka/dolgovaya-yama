@@ -65,13 +65,16 @@ import { getVolumes, isSilent, setVolume, toggleSound, volumeShare, type VolumeK
 import { GOLD_TEXT } from './theme';
 
 // Клавиши 1–9 и 0: в игре 1–8 — места на полках; в магазине 1–3 — ряды торгового автомата, 4–5 — маленький автомат
-// (место на полке и гнездо), 6–8 — места витрины амулетов, 9 — кассета, 0 — барабан.
-// Вне магазина 9 — вставить кассету в видеомагнитофон.
+// (место на полке и гнездо), 6–8 — места витрины амулетов, 9 — четвёртый ряд витрины (№37), 0 — барабан.
+// Кассета — T (и в магазине, и у видеомагнитофона), ряд билетов — B (шаг 35: раньше кассета сидела на 9 и рядам
+// №37 и билетов клавиш не хватало).
 const NUMBER_KEYS = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE', 'ZERO'];
-const VENDING_KEYS = 3; // сколько клавиш у торгового автомата
+const VENDING_KEYS = 3; // сколько клавиш у торгового автомата (1–3)
 const MINI_KEYS = 2; // сколько клавиш у маленького автомата: место на полке и гнездо
-const CASE_KEYS = 3; // сколько клавиш у витрины амулетов; за ними — кассета (9) и барабан (0)
-const TAPE_KEY = VENDING_KEYS + MINI_KEYS + CASE_KEYS; // номер клавиши кассеты в NUMBER_KEYS
+const CASE_KEYS = 3; // сколько клавиш у витрины амулетов; за ними — четвёртый ряд (9) и барабан (0)
+const EXTRA_ROW_KEY = VENDING_KEYS + MINI_KEYS + CASE_KEYS; // «9»: четвёртый ряд витрины, когда он есть (№37)
+const TAPE_KEY = 'T'; // кассета: купить в магазине, вне его — записать или откатиться
+const TICKET_KEY = 'B'; // ряд билетов за фишки: раньше покупался только кликом (шаг 35)
 const MUSIC_TICK = 100; // как часто музыка планирует удары «сердца» вперёд, мс
 /** Надпись лотереи (шаг 29) по id приза: короткая новость на стекле. */
 const LOTTERY_TEXT: Record<string, TextKey> = {
@@ -369,6 +372,7 @@ export class GameScene extends CollectorScene {
     this.shop.relabel(); // кнопка выхода из магазина: надпись на новом языке
     this.actionBoard.relabel(); // табличка действий (шаг 29) — тоже
     this.relabelReroll(); // висит решение по перемешке — новость на стекле заново на новом языке
+    this.relabelRescueTexts(); // заставка спасения и подсказка на стекле — тоже (шаг 35)
     if (!this.isPaused) this.collector.flipNote(this.debt);
   }
 
@@ -879,7 +883,15 @@ export class GameScene extends CollectorScene {
       if (this.isGameOver) this.restartGame();
     });
     NUMBER_KEYS.forEach((key, index) => this.onKey(key, () => this.onNumber(index)));
+    this.onKey(TAPE_KEY, () => {
+      if (this.isShopping) this.buyTape(); // в магазине — купить
+      else this.useTape(); // у автомата — записать или откатиться
+    });
+    this.onKey(TICKET_KEY, () => {
+      if (this.isShopping) this.buy(this.shop.ticketRow); // ряд билетов за фишки (шаг 35)
+    });
     this.onKey('A', () => this.toggleActions()); // шаг 29: панель действий вне прокрутки
+    this.onKey('C', () => this.cancelSkullByKey()); // шаг 35: отменить висящий череп (№50) с клавиатуры
     this.onKey('D', () => this.payEarly()); // отдать долг раньше: фишек на табло хватает — записка светится
     this.onKey('RIGHT', () => this.toggleMonitor()); // экран на стене — справа
     this.onKey('LEFT', () => this.lookBack());
@@ -935,8 +947,8 @@ export class GameScene extends CollectorScene {
   }
 
   /**
-   * Клавиша 1–9 или 0: в магазине — купить; вне магазина 9 — кассета (записать или откатиться);
-   * в игре 1–8 — включить предмет с полки.
+   * Клавиша 1–9 или 0: в магазине — купить (9 — четвёртый ряд витрины №37, 0 — барабан); в игре 1–8 — включить
+   * предмет с полки. Кассета — отдельная клавиша T (и в магазине, и у видеомагнитофона), билеты — B (шаг 35).
    */
   private onNumber(index: number): void {
     // Выбор стартового автомата (№49): 1–3 — строки списка; остальные клавиши игры молчат.
@@ -961,16 +973,20 @@ export class GameScene extends CollectorScene {
     }
     if (this.isRescue) return; // в спасении клавиш нет: столбец морозят кликом, прокрутку даёт рычаг
     if (this.isShopping) this.onShopNumber(index);
-    else if (index === TAPE_KEY) this.useTape();
     else if (index < MAX_SLOTS) this.useItem(index);
   }
 
-  /** Клавиша в магазине: 1–3 — торговый автомат, 4–5 — маленький, 6–8 — витрина амулетов, 9 — кассета, 0 — барабан. */
+  /**
+   * Клавиша в магазине: 1–3 — торговый автомат, 4–5 — маленький, 6–8 — витрина амулетов, 9 — четвёртый ряд
+   * витрины (только с улучшением №37), 0 — барабан. Кассета и билеты — отдельными клавишами T и B (шаг 35).
+   */
   private onShopNumber(index: number): void {
     if (index < VENDING_KEYS) this.buy(index);
-    else if (index < VENDING_KEYS + MINI_KEYS) this.buyMini(index - VENDING_KEYS);
-    else if (index < TAPE_KEY) this.buyFromCase(index - VENDING_KEYS - MINI_KEYS);
-    else if (index === TAPE_KEY) this.buyTape();
+    else if (index === EXTRA_ROW_KEY) {
+      if (this.shop.offerRows > VENDING_KEYS) this.buy(VENDING_KEYS); // ряд есть только с №37
+      else this.sfx.play('deny'); // четвёртого ряда нет — «9» отвечает отказом, а не тишиной
+    } else if (index < VENDING_KEYS + MINI_KEYS) this.buyMini(index - VENDING_KEYS);
+    else if (index < EXTRA_ROW_KEY) this.buyFromCase(index - VENDING_KEYS - MINI_KEYS);
     else this.spinDrum();
   }
 }

@@ -117,9 +117,18 @@ try {
   const shot = async (name) => { const r = await send('Page.captureScreenshot', { format: 'png' }); writeFileSync(SP + '/' + name, Buffer.from(r.result.data, 'base64')); };
   let ok = 0, all = 0;
   const check = (cond, what) => { all++; if (cond) ok++; console.log((cond ? 'OK   ' : 'FAIL ') + what); };
-  /** Клавиша: как настоящий ввод браузера (Пробел, «1», «2»), а не вызов метода сцены. */
+  /** Клавиша: как настоящий ввод браузера (Пробел, «1», «2», «9», «T», «B»), а не вызов метода сцены. */
   const key = async (name) => {
-    const codes = { Space: { key: ' ', code: 'Space', keyCode: 32, text: ' ' }, 0: { key: '0', code: 'Digit0', keyCode: 48, text: '0' }, 1: { key: '1', code: 'Digit1', keyCode: 49, text: '1' }, 2: { key: '2', code: 'Digit2', keyCode: 50, text: '2' } };
+    const codes = {
+      Space: { key: ' ', code: 'Space', keyCode: 32, text: ' ' },
+      0: { key: '0', code: 'Digit0', keyCode: 48, text: '0' },
+      1: { key: '1', code: 'Digit1', keyCode: 49, text: '1' },
+      2: { key: '2', code: 'Digit2', keyCode: 50, text: '2' },
+      9: { key: '9', code: 'Digit9', keyCode: 57, text: '9' },
+      T: { key: 't', code: 'KeyT', keyCode: 84, text: 't' },
+      B: { key: 'b', code: 'KeyB', keyCode: 66, text: 'b' },
+      C: { key: 'c', code: 'KeyC', keyCode: 67, text: 'c' },
+    };
     const spec = codes[name];
     await send('Input.dispatchKeyEvent', { type: 'keyDown', key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.keyCode, nativeVirtualKeyCode: spec.keyCode, text: spec.text });
     await send('Input.dispatchKeyEvent', { type: 'keyUp', key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.keyCode, nativeVirtualKeyCode: spec.keyCode });
@@ -170,10 +179,15 @@ try {
     await val('if (window.__g.symbolPick.isOpen) window.__g.symbolPick.press(0); 1');
     await sleep(300);
   };
-  /** Смерть: KABOOM 1,8 с + взрыв 0,9 с + затемнение 0,7 с — экран улучшений на ~3,4 с. */
+  /** Смерть: KABOOM 1,8 с + взрыв 0,9 с + затемнение 0,7 с — но ждём не «по часам», а пока экран улучшений
+   *  (или витрина памяти, если предлагать нечего) действительно не появится: в headless бывает медленнее. */
   const die = async () => {
     await val('window.__g.finishTutorial(); window.__g.kaboom(); 1');
-    await sleep(4800);
+    for (let i = 0; i < 48; i++) {
+      if (await val('window.__g.upgradeScreen.isOpen || window.__g.memoryBox !== null')) break;
+      await sleep(250);
+    }
+    await sleep(400);
   };
   const restart = async () => { await val('window.__g.restartGame(); 1'); await sleep(4200); await passPicks(); };
   const setTickets = async (count) => { await val(`window.__g.tickets = ${count}; window.__g.refreshHud(); 1`); await sleep(200); };
@@ -395,6 +409,36 @@ try {
   for (const item of itemRows) check(shopC.prices[item.row] === expectedC(item.share), `№36: ${item.id} стоит ${shopC.prices[item.row]} вместо ${Math.round(item.share * shopC.debt)}`);
   // №38: первый билет — 30% банка, а ещё на нём скидка №36 10%: 100 000 × 0,3 × 0,9 = 27 000.
   check(shopC.prices[4] === 27000, `№38: билет стоит ${shopC.prices[4]} (ждём 30% × 0,9 от 100 000)`);
+
+  // Шаг 35 (№37): четвёртый ряд и ряд билетов теперь покупаются клавишами. Кассета переехала на T (освободила «9»),
+  // «9» — четвёртый ряд, «B» — билеты. Проверяем настоящим вводом: цена снимается, ряд меняется, билет приходит.
+  // Подарок №40 занял единственное место полки — открываем второе, иначе покупка честно отказала бы.
+  await val(`(() => { const g = window.__g;
+    if (g.slots < 2) { g.slots += 1; g.shelf.push(null); g.itemShelf.openSlot(g.slots - 1); }
+    return 1; })()`);
+  await sleep(300);
+  const keysBefore = JSON.parse((await val(`(() => { const g = window.__g; return JSON.stringify({
+    balance: g.balance, tickets: g.tickets, shelf: g.shelf.filter(Boolean).length,
+    row3: g.offer[3] ? g.offer[3].id : null, price3: g.shop.prices[3], price4: g.shop.prices[4],
+  }); })()`)) ?? '{}');
+  await key('9');
+  const afterNine = JSON.parse((await val(`(() => { const g = window.__g; return JSON.stringify({
+    balance: g.balance, row3: g.offer[3] ? g.offer[3].id : null, shelf: g.shelf.filter(Boolean).length,
+  }); })()`)) ?? '{}');
+  check(keysBefore.price3 !== null && afterNine.balance === keysBefore.balance - keysBefore.price3,
+    `шаг 35: «9» купил четвёртый ряд витрины (фишек ${keysBefore.balance} → ${afterNine.balance}, цена ${keysBefore.price3})`);
+  check(afterNine.row3 !== keysBefore.row3 || afterNine.shelf === keysBefore.shelf + 1,
+    `шаг 35: после «9» ряд сменился или лёг на полку (ряд ${keysBefore.row3} → ${afterNine.row3}, полка ${keysBefore.shelf} → ${afterNine.shelf})`);
+  const ticketsBeforeB = await val('window.__g.tickets');
+  const balanceBeforeB = await val('window.__g.balance');
+  const priceBeforeB = await val('window.__g.shop.prices[4]'); // цена пересчиталась после покупки «9»: доля банка
+  await key('B');
+  const afterB = JSON.parse((await val(`(() => { const g = window.__g; return JSON.stringify({
+    tickets: g.tickets, balance: g.balance, price4: g.shop.prices[4],
+  }); })()`)) ?? '{}');
+  check(afterB.tickets === ticketsBeforeB + 1, `шаг 35: «B» купил билет (билетов ${ticketsBeforeB} → ${afterB.tickets})`);
+  check(afterB.balance === balanceBeforeB - priceBeforeB && afterB.price4 === null,
+    `шаг 35: за билет списана его цена, ряд погас (фишек ${balanceBeforeB} → ${afterB.balance}, цена была ${priceBeforeB})`);
   // №39: переключаем витрину на фишки и покупаем самый первый амулет.
   const chipBuy = JSON.parse((await val(`(() => { const g = window.__g;
     if (g.amuletOffer[0] === null) return JSON.stringify({ ok: false });
@@ -545,6 +589,24 @@ try {
     const was = g.skullCancelUsedThisRun; g.skullCancelUsedThisRun = false; g.isRescue = true;
     const blocked = g.canCancelSkull(); g.isRescue = false; g.skullCancelUsedThisRun = was; return blocked; })()`);
   check(rescueBlocked === false, '№50: в раунде спасения череп отменить нельзя');
+  // Шаг 35: плашку теперь можно снять клавишей C, и она сама это показывает. Сбрасываем расход отмены и ловим новый череп.
+  await val(`(() => { const g = window.__g;
+    g.skullCancelUsedThisRun = false; g.pot = 400; g.streak = 5; g.isSpinning = true;
+    const cell = { id: 'lemon', sign: '🍋' };
+    const grid = [[cell, cell, cell, cell, cell], [cell, cell, cell, cell, cell], [cell, cell, cell, cell, cell]];
+    g.offerSkullCancel(grid, { kind: 'skull', win: 0, hits: [], tickets: 0 }, false);
+    return 1; })()`);
+  await sleep(150);
+  const plaqueText = await val(`(() => { const g = window.__g;
+    const label = (g.skullCancelBox ?? []).find((o) => o.type === 'Text'); return label ? label.text : null; })()`);
+  await key('C');
+  const byKey = JSON.parse((await val(`(() => { const g = window.__g; return JSON.stringify({
+    pot: g.pot, streak: g.streak, used: g.skullCancelUsedThisRun, plaque: g.skullCancelBox === null, spinning: g.isSpinning,
+  }); })()`)) ?? '{}');
+  check(typeof plaqueText === 'string' && plaqueText.includes('C'),
+    '№50 (шаг 35): на плашке показана клавиша C: «' + plaqueText + '»');
+  check(byKey.pot === 400 && byKey.streak === 5 && byKey.used === true && byKey.plaque === true && byKey.spinning === false,
+    `№50 (шаг 35): клавиша C отменила череп — кон ${byKey.pot}, серия ${byKey.streak}, флаг ${byKey.used}, плашка убрана ${byKey.plaque}`);
 
   // ---------- 22: вторую фазу можно закрыть с клавиатуры ----------
   await setPurchases({});

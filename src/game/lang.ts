@@ -267,6 +267,9 @@ const TEXTS = {
   keyAmulets: { ru: 'амулеты', en: 'amulets' },
   keyCassette: { ru: 'кассета', en: 'tape' },
   keyDrum: { ru: 'барабан', en: 'drum' },
+  keyShelf: { ru: 'полка', en: 'shelf' },
+  keyExtraRow: { ru: 'ряд +1', en: 'extra row' },
+  keyTicket: { ru: 'билет', en: 'ticket' },
   tabWho: { ru: 'КТО ЕСТЬ КТО', en: "WHO'S WHO" },
   tabItems: { ru: 'ПРЕДМЕТЫ', en: 'ITEMS' },
   tabAchievements: { ru: 'АЧИВКИ', en: 'ACHIEVEMENTS' }, // вкладка планшета: все ачивки, полученные и нет

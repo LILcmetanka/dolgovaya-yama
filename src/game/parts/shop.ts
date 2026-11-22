@@ -66,7 +66,7 @@ const TICKET_FLY_TIME = 600; // билет летит в шапку панели
 export class Shop {
   private readonly scene: Phaser.Scene;
   private readonly shopLayer: Phaser.GameObjects.Container; // панель: её вещи и вещи AmuletCase, Drum, Cassette
-  private readonly offerRows: number; // сколько рядов с предметами (№37 добавляет один)
+  readonly offerRows: number; // сколько рядов с предметами (№37 добавляет один); по нему сцена знает клавишу «9»
   /** Ряд билетов — последний. Номера клавиши у него нет: покупка только кликом, как и у лишнего ряда №37. */
   readonly ticketRow: number;
   private readonly goods: Phaser.GameObjects.Image[] = []; // что лежит в ряду
