@@ -17,7 +17,18 @@ import { actionSkullDelta, freshActions, lotteryWinMul, startRoundActions, type 
 import { CIGARETTES_FOR_ACHIEVEMENT, isBloodSpill, ITEM_ACHIEVEMENTS } from '../achievements';
 import { FREE_SPINS_GUARD } from '../bonus';
 import { bloodBurn, BLOOD_WIN, cellsOf, diceWeight, spiderBite } from '../evil';
-import { pactDoubleTake, pactEffects, shopDebt, skullShareWeightMul, skullStreakAfter } from '../dealerGame';
+import {
+  pactDoubleTake,
+  pactEffects,
+  pactJokerCenter,
+  pactSkullDelta,
+  pactSpinCap,
+  pactSymbolPay,
+  pactJackpotWin,
+  shopDebt,
+  skullShareWeightMul,
+  skullStreakAfter,
+} from '../dealerGame';
 import {
   activeSlotEffects,
   CIGARETTE_SPINS,
@@ -129,6 +140,8 @@ export abstract class RoundScene extends MachineScene {
   private tookExtraThisSpin = false; // второе «забрать» уже потрачено (больше двух за прокрутку нельзя)
   private lastTakeAmount = 0; // сколько дало первое забирание: от него считается второе
   private bankKeptThisRound = false; // сделка №10: первый череп в этом раунде кон уже не сжёг
+  private tookThisRound = false; // сделка №23: «забрать» в этом раунде уже было (раз за раунд)
+  private potSparedThisRound = false; // сделка №24: первый череп раунда уже пощадил кон
   // Колокольчик: сколько к доле черепов набежало срабатываниями 🔔 в этом раунде (amulets.bellSkullDelta).
   private bellSkull = 0;
   // Поколение показа выигрыша: пока идёт каскад рамок, оно не меняется; сброс состояния его двигает,
@@ -159,6 +172,8 @@ export abstract class RoundScene extends MachineScene {
     this.tookExtraThisSpin = false;
     this.lastTakeAmount = 0;
     this.bankKeptThisRound = false;
+    this.tookThisRound = false;
+    this.potSparedThisRound = false;
     this.skullFreeSpinGiven = false; // №4: в новом забеге бесплатная прокрутка за черепа ещё не выдана
     this.clearSkullCancel(); // №50: плашка отмены не должна пережить сброс забега
     this.bellSkull = 0; // колокольчик: в новом забеге 🔔 ещё не срабатывал
@@ -226,6 +241,7 @@ export abstract class RoundScene extends MachineScene {
       grid = startGridOf(grid, this.upgradeEffects, this.startSymbolId);
       this.startGridGiven = true;
     }
+    grid = pactJokerCenter(grid, pactEffects(this.pacts, this.round)); // сделка №39: джокер в центре каждой сетки
     this.screen.spin(grid, weightOf, () => this.finishSpin(grid, weightOf, multiplier, isFree));
   }
 
@@ -256,17 +272,27 @@ export abstract class RoundScene extends MachineScene {
       dropSymbols: this.actionState.sold,
     };
     const withLuck: WeightContext = effects.symbolLuck ? { ...withActions, symbolLuck: effects.symbolLuck } : withActions;
+    // Сделка №14: вишни реже вдвое — вес символа, а не доля черепов.
+    const withSymbols: WeightContext = Object.keys(effects.symbolWeightMul).length > 0
+      ? { ...withLuck, symbolWeightMul: effects.symbolWeightMul }
+      : withLuck;
     // Сделки Дилера, колокольчик, улучшение №31 и действия раунда (лотерея и чистка черепов) двигают долю
-    // черепов каждый по-своему (может выйти и минус).
-    const delta = effects.skullShareDelta + this.bellSkull + this.upgradeEffects.skullShareDelta + actionSkullDelta(this.actionState);
-    if (delta === 0 || !Number.isFinite(delta)) return withLuck;
-    const mul = skullShareWeightMul(skullShareOf(this.round, this.diceDrought, withLuck), delta);
-    return mul === 1 ? withLuck : { ...withLuck, skullMul: mul };
+    // черепов каждый по-своему (может выйти и минус). Сделка №10 держит долю не выше своего потолка.
+    const share = skullShareOf(this.round, this.diceDrought, withSymbols);
+    const delta = pactSkullDelta(
+      share,
+      effects.skullShareDelta + this.bellSkull + this.upgradeEffects.skullShareDelta + actionSkullDelta(this.actionState),
+      effects.skullShareMax,
+    );
+    if (delta === 0 || !Number.isFinite(delta)) return withSymbols;
+    const mul = skullShareWeightMul(share, delta);
+    return mul === 1 ? withSymbols : { ...withSymbols, skullMul: mul };
   }
 
   /** Шаг множителя серии: сделка «шаг вдвое» его удваивает (dealerGame.pactEffects). */
   protected override streakStep(): number {
-    return super.streakStep() * pactEffects(this.pacts, this.round).multiplierStepMul;
+    const effects = pactEffects(this.pacts, this.round);
+    return super.streakStep() * effects.multiplierStepMul + effects.streakStepBonus;
   }
 
   /** Потолок множителя: сделка «тише черепа» держит серию не выше ×PACT_CAP (dealerGame.pactEffects). */
@@ -605,23 +631,38 @@ export abstract class RoundScene extends MachineScene {
   private onSkulls(result: SpinResult, isBloody: boolean, cancelled = false): void {
     this.bones += 1; // паттерн из черепов выпал в любом случае — его и считает Коллекционер костей
     if (owns(this.amuletIds(), 'bones')) this.amuletRack.trigger('bones');
+    const pact = pactEffects(this.pacts, this.round);
     if (!cancelled) {
       this.grantSkullFreeSpin(); // улучшение №4: первый паттерн черепов в раунде даёт бесплатную прокрутку
-      if (this.roundShields > 0) {
+      // Сделка №46: череп не отбивается ни бронежилетом, ни щитом — кон сгорает всегда.
+      if (!pact.skullUnblockable && this.roundShields > 0) {
         this.roundShields -= 1;
         this.amuletRack.trigger('vest');
         this.blockSkulls(result);
-      } else if (this.itemEffects.shields > 0) {
+      } else if (!pact.skullUnblockable && this.itemEffects.shields > 0) {
         this.itemEffects.shields -= 1;
         this.itemShelf.spend('shield', CENTER_X, GRID_Y); // щит летит на сетку и тает
         this.itemShelf.refreshPulses(); // щит потрачен: место у экрана могло освободиться — второй щит на полке снова годен
         this.blockSkulls(result);
       } else {
         // Сделка №10: первый череп в этом раунде кон не жжёт (потом жжёт как обычно). Серия падает в любом случае.
-        const keepsPot = pactEffects(this.pacts, this.round).bankSurvivesSkull && !this.bankKeptThisRound;
-        if (keepsPot) this.bankKeptThisRound = true;
+        // Сделка №24: первый череп раунда тоже щадит кон, но следующий сжигает вдвое — пот и столько же с табло.
+        const bankSafe = pact.bankSurvivesSkull && !this.bankKeptThisRound;
+        const pactSafe = pact.potSafeFirst && !this.potSparedThisRound;
+        if (bankSafe) this.bankKeptThisRound = true;
+        if (pactSafe) this.potSparedThisRound = true;
+        const keepsPot = bankSafe || pactSafe;
+        const doubleBurn = pact.skullDoubleBurn && this.potSparedThisRound && !keepsPot;
+        const lost = keepsPot ? 0 : this.pot;
         this.burnPot(result, keepsPot);
+        if (doubleBurn && lost > 0) this.burnBoardAmount(lost);
         if (isBloody) this.burnBoard();
+      }
+      // Сделка №2: каждый паттерн из черепов отнимает прокрутку, но не оставляет раунд без прокруток вовсе.
+      if (pact.skullSpinCost > 0) {
+        const before = this.spinsLeft;
+        this.spinsLeft = Math.max(MIN_ROUND_SPINS, this.spinsLeft - Math.abs(pact.skullSpinCost));
+        if (this.spinsLeft < before) this.panel.burnOutSpinLamps(before - this.spinsLeft);
       }
     }
     this.showBones();
@@ -651,6 +692,17 @@ export abstract class RoundScene extends MachineScene {
     this.markDebt();
   }
 
+  /** Сделка №24: второй череп после пощажённого сжигает вдвое — столько же фишек уходит и с табло. */
+  private burnBoardAmount(amount: number): void {
+    if (!(amount > 0)) return;
+    const burned = Math.min(this.balance, Math.round(amount));
+    if (burned === 0) return;
+    this.balance -= burned;
+    this.effects.popupAt(DISPLAY.x, DISPLAY.y + 50, `−${burned}`, RED_TEXT);
+    this.panel.pulseBoard();
+    this.markDebt();
+  }
+
   /**
    * Черепа сжигают кон вместе с выигрышем этой прокрутки, серия падает до трети. Страховка возвращает на табло
    * `INSURANCE_SHARE` сгоревшего — по разу за копию: каждая копия даёт в раунде ещё одно спасение (`insuranceSaves`).
@@ -660,8 +712,12 @@ export abstract class RoundScene extends MachineScene {
    */
   private burnPot(result: SpinResult, keepsPot = false): void {
     const lost = keepsPot ? 0 : this.pot;
-    const share = Math.max(pactEffects(this.pacts, this.round).insuranceShare, this.upgradeEffects.insuranceShare);
-    const refund = insuranceRefund(lost, this.amuletIds(), this.insuranceSaves, share);
+    const effects = pactEffects(this.pacts, this.round);
+    const share = Math.max(effects.insuranceShare, this.upgradeEffects.insuranceShare);
+    const insured = insuranceRefund(lost, this.amuletIds(), this.insuranceSaves, share);
+    // Сделка №23: череп возвращает на табло половину сгоревшего кона без всякой страховки.
+    const pactRefund = Math.floor(lost * Math.max(0, Math.min(1, effects.skullPotRefund)));
+    const refund = Math.max(insured, pactRefund);
     if (!keepsPot) this.pot = 0;
     // Сделки с черепом: «череп в ×1» обнуляет серию, «мягкий череп» снимает одну ступень (одно очко серии),
     // иначе остаётся треть (SKULL_KEEPS_STREAK).
@@ -672,9 +728,11 @@ export abstract class RoundScene extends MachineScene {
     this.screen.flashLamps(LAMP_RED, SKULL_LAMPS_TIME);
     this.panel.flashMultiplierRed();
     if (refund > 0) {
-      this.insuranceSaves += 1; // сработка копии: следующая копия (если есть) спасёт ещё раз в этом раунде
-      this.amuletRack.trigger('insurance');
-      this.earn(refund); // возврат страховки — доход забега (решение автора): игра отдала эти фишки обратно
+      if (insured > 0) {
+        this.insuranceSaves += 1; // сработка копии: следующая копия (если есть) спасёт ещё раз в этом раунде
+        this.amuletRack.trigger('insurance');
+      }
+      this.earn(refund); // возврат страховки или сделки — доход забега: игра отдала эти фишки обратно
       this.payout.takeAll(refund, () => this.panel.pulseBoard());
       this.markDebt();
     } else if (lost > 0) {
@@ -717,18 +775,21 @@ export abstract class RoundScene extends MachineScene {
    */
   private addToPot(result: SpinResult, multiplier: number, isBloody: boolean, done: () => void): void {
     const ids = this.amuletIds();
-    const win = amuletPatternWin(result.hits, ids);
+    const pact = pactEffects(this.pacts, this.round);
+    const payMul = (symbol: SlotSymbol): number => pactSymbolPay(symbol, pact); // сделка №14: вишни платят ×2
+    const win = amuletPatternWin(result.hits, ids, payMul);
     const jackpot = result.hits.some((hit) => hit.pattern.id === 'jackpot'); // №34: только джекпот, не все ×100
     const factor =
       winFactor(ids, this.bones) *
       (isBloody ? BLOOD_WIN : 1) * // кровавая прокрутка — ×3
       machineWinFactor(this.machineId) *
       (this.itemEffects.risk ? RISK_WIN_FACTOR : 1) * // риск: выигрыш ×10 (видно в подсказке как ×10)
-      pactEffects(this.pacts, this.round).winMul * // сделка «выигрыш паттернов +N%» — только паттерны, не «забрать»
+      pact.winMul * // сделка «выигрыш паттернов +N%» — только паттерны, не «забрать»
       this.upgradeEffects.winMul * // улучшение №12 «выигрыш паттернов +5%» (шаг 28) — тоже только паттерны
       lotteryWinMul(this.actionState) * // действие №4 (шаг 29): лотерея может поднять или срезать выигрыш раунда
-      jackpotWinFactor(jackpot, this.upgradeEffects); // улучшение №34: джекпот ×1,2 (×120 вместо ×100)
-    const gain = winGain(result.hits, ids, multiplier, factor); // та же формула, что в показе по шагам (revealSteps)
+      jackpotWinFactor(jackpot, this.upgradeEffects) * // улучшение №34: джекпот ×1,2 (×120 вместо ×100)
+      pactJackpotWin(jackpot, pact); // сделка №12: джекпот платит вдвое
+    const gain = winGain(result.hits, ids, multiplier, factor, payMul); // та же формула, что в показе по шагам (revealSteps)
     const potBefore = this.pot; // от него окошко выплаты показывает, как кон растёт по шагам
     this.pot += gain;
     // Колокольчик: прокрутки, но не выше потолка. Показываем, сколько добавилось на самом деле: у потолка бывает и 0.
@@ -744,7 +805,7 @@ export abstract class RoundScene extends MachineScene {
     for (const id of amuletsOnWin(result.hits, ids)) this.amuletRack.trigger(id);
     this.screen.flashLamps(LAMP_GOLD, WIN_LAMPS_TIME);
     // Каскад рамок: по шагу на паттерн. Он показывает то, что уже начислено, и в конце зовёт done().
-    this.showWinReveal(revealSteps(result.hits, ids, multiplier, factor), win, multiplier, factor, gain, potBefore, done);
+    this.showWinReveal(revealSteps(result.hits, ids, multiplier, factor, payMul), win, multiplier, factor, gain, potBefore, done);
   }
 
   /**
@@ -855,13 +916,24 @@ export abstract class RoundScene extends MachineScene {
 
   /** Прокрутка без выигрыша: копилка кладёт на кон немного фишек (× множитель), с улучшением №14 — ещё +1 фишку. */
   private feedPiggy(multiplier: number): void {
-    const coins = piggyCoins(multiplier, this.amuletIds(), this.upgradeEffects.piggyBonus);
-    if (coins === 0) return;
-    this.pot += coins;
-    this.sfx.play('coin');
-    this.amuletRack.trigger('piggy');
-    this.effects.popup(`+${coins}`, GOLD_TEXT);
-    this.payout.addWin(this.pot, this.debt);
+    const pact = pactEffects(this.pacts, this.round);
+    const coins = piggyCoins(multiplier, this.amuletIds(), this.upgradeEffects.piggyBonus + pact.piggyBonus);
+    if (coins > 0) {
+      this.pot += coins;
+      this.sfx.play('coin');
+      this.amuletRack.trigger('piggy');
+      this.effects.popup(`+${coins}`, GOLD_TEXT);
+      this.payout.addWin(this.pot, this.debt);
+    }
+    // Сделка №5: пустая прокрутка (кон без выигрыша) даёт ещё прокрутку — не выше потолка раунда.
+    if (pact.emptySpinSpins > 0) {
+      const before = this.spinsLeft;
+      this.spinsLeft = spinsAfterBonus(this.spinsLeft, pact.emptySpinSpins, this.spinCap());
+      if (this.spinsLeft > before) {
+        this.effects.popupAt(CENTER_X, SPIN_LAMPS_Y - 20, `+${this.spinsLeft - before}`, GOLD_TEXT);
+        this.panel.winkSpinLamps(this.spinsLeft);
+      }
+    }
   }
 
   // ---------- Забрать ----------
@@ -874,6 +946,11 @@ export abstract class RoundScene extends MachineScene {
   protected take(): void {
     if (this.remindReroll()) return; // висит решение — сначала столбец или клетка, забрать раньше нельзя
     if (!this.canAct()) return;
+    const pact = pactEffects(this.pacts, this.round);
+    // Сделка №22: кон забрать руками нельзя — он уйдёт сам в конце раунда.
+    if (pact.noTake) return;
+    // Сделка №23: забрать кон можно один раз за раунд.
+    if (pact.takeOncePerRound && this.tookThisRound) return;
     if (this.pot > 0) {
       this.payout.press();
       this.sfx.play('take');
@@ -892,7 +969,8 @@ export abstract class RoundScene extends MachineScene {
   /** Сколько отдаст второе «забрать»: сделка №15, только если кон уже забран в этой прокрутке и второго ещё не было. */
   private extraTake(): number {
     if (!this.tookThisSpin || this.tookExtraThisSpin || this.pot > 0) return 0;
-    return pactDoubleTake(pactEffects(this.pacts, this.round).doubleTake, this.lastTakeAmount);
+    const pact = pactEffects(this.pacts, this.round);
+    return pactDoubleTake(pact.doubleTake, this.lastTakeAmount, pact.doubleTakeShare);
   }
 
   /** Второе «забрать» в этой прокрутке ещё доступно — по нему Enter берёт, а не крутит (GameScene.onEnter). */
@@ -930,14 +1008,17 @@ export abstract class RoundScene extends MachineScene {
       this.lastTakeAmount = amount;
       this.tookThisSpin = true;
       this.tookExtraThisSpin = false;
+      this.tookThisRound = true;
     }
     this.pot = 0;
+    const pact = pactEffects(this.pacts, this.round);
     if (this.itemEffects.candle) {
       this.itemEffects.candle = false;
       this.itemShelf.spend('candle', PAYOUT_WINDOW.x, PAYOUT_WINDOW.y); // свеча сгорает: серия осталась
       this.showItemEffects();
     } else if (!isRoundEnd) {
-      this.streak = streakAfterTake(this.streak); // не до ×1: на поздних раундах иначе долг не добить
+      // Сделка №48: второе забирание отдаёт весь кон, но серия сбрасывается в ноль.
+      this.streak = pact.takeStreakReset ? 0 : streakAfterTake(this.streak);
       this.panel.dropMultiplier();
     }
     this.payout.takeAll(amount, () => {
@@ -990,8 +1071,8 @@ export abstract class RoundScene extends MachineScene {
    * Потолок прокруток в раунде: MAX_SPINS_PER_ROUND плюс улучшение №3 (шаг 28). Через него считаются все бонусные
    * прокрутки (колокольчик, джекпот, фаза, сигарета) и запрет сигареты у потолка — иначе улучшение работало бы наполовину.
    */
-  private spinCap(): number {
-    return MAX_SPINS_PER_ROUND + this.upgradeEffects.spinCapBonus;
+  protected spinCap(): number {
+    return pactSpinCap(MAX_SPINS_PER_ROUND + this.upgradeEffects.spinCapBonus, pactEffects(this.pacts, this.round));
   }
 
   /** Вес символа прямо сейчас — для подписи в панели действий (шаг 29): те же правила, что у прокрутки. */
@@ -1216,6 +1297,12 @@ export abstract class RoundScene extends MachineScene {
     clearRoundEffects(this.itemEffects); // бусты и флаги прошлого раунда не переходят в новый
     this.insuranceSaves = 0; // страховка снова готова: сработок на новый раунд — по числу копий
     this.bankKeptThisRound = false; // сделка №10: «первый череп не жжёт кон» — снова первый
+    this.tookThisRound = false; // сделка №23: «забрать» раз за раунд — счётчик нового раунда
+    this.potSparedThisRound = false; // сделка №24: первый череп раунда снова пощадит кон
+    // Сделки шага 30: №40 — первая прокрутка раунда кровавая, №21 — на кону с самого начала лежит N фишек.
+    const roundPacts = pactEffects(this.pacts, this.round);
+    if (roundPacts.bloodFirstSpin) this.isBloodNext = true;
+    if (roundPacts.potStart > 0) this.pot = Math.max(this.pot, roundPacts.potStart);
     this.bellSkull = 0; // колокольчик: поправка к доле черепов живёт один раунд
     this.tookThisSpin = false; // сделка №15: в новом раунде «забрать» ещё не было
     this.tookExtraThisSpin = false;
@@ -1227,7 +1314,10 @@ export abstract class RoundScene extends MachineScene {
     // checkPhase идёт в конце startRound (после зелёных огней), а прокрутки нужны уже сейчас.
     this.spinsLeft = spinsAfterBonus(this.spinsLeft, phaseAt(this.closedDebts()).bonusSpins, this.spinCap());
     // Сделка «−1 прокрутка в раунде»: после амулетов и фазы, но не меньше MIN_ROUND_SPINS — иначе раунд кончился бы сразу.
-    this.spinsLeft = Math.max(MIN_ROUND_SPINS, this.spinsLeft + pactEffects(this.pacts, this.round).spinsDelta);
+    // «+1 прокрутка» (шаг 30) не пробивает потолок раунда: он для всех бонусных прокруток один (spinCap).
+    const spinsDelta = pactEffects(this.pacts, this.round).spinsDelta;
+    this.spinsLeft = Math.max(MIN_ROUND_SPINS, this.spinsLeft + spinsDelta);
+    if (spinsDelta > 0) this.spinsLeft = Math.min(this.spinCap(), this.spinsLeft);
     // Улучшение №1 «+1 прокрутка в первом раунде» (шаг 28): только раунд 1 и после всех поправок — это подарок,
     // а не бонус, который потолок мог бы срезать.
     if (this.round === 1) this.spinsLeft += this.upgradeEffects.firstRoundSpins;

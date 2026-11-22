@@ -287,10 +287,16 @@ function symbolPayoutFactor(symbol: SlotSymbol, owned: AmuletId[]): number {
   return 1;
 }
 
-/** Выигрыш паттернов с амулетами (ещё без множителя серии): косточка — паттерны из 🍒 ×2 за копию, две копии — ×4. */
-export function amuletPatternWin(hits: PatternHit[], owned: AmuletId[]): number {
+/**
+ * Выигрыш паттернов с амулетами (ещё без множителя серии): косточка — паттерны из 🍒 ×2 за копию, две копии — ×4.
+ * payMul — множитель выплаты символа из сделки Дилера (№14: вишни платят ×2); без него — обычная цена.
+ */
+export function amuletPatternWin(hits: PatternHit[], owned: AmuletId[], payMul?: (symbol: SlotSymbol) => number): number {
   let win = 0;
-  for (const hit of hits) win += hit.symbol.price * hit.pattern.multiplier * symbolPayoutFactor(hit.symbol, owned);
+  for (const hit of hits) {
+    const mul = payMul ? Math.max(0, payMul(hit.symbol)) : 1;
+    win += hit.symbol.price * hit.pattern.multiplier * symbolPayoutFactor(hit.symbol, owned) * mul;
+  }
   return win;
 }
 

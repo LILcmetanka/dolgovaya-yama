@@ -1,7 +1,7 @@
 import { INSURANCE_SHARE } from './amulets';
 import type { Words } from './lang';
 import { LOW_PATTERN_MULTIPLIER, TOP_MULTIPLIER, type Pattern } from './patterns';
-import { DEBT_ROUND_TO, debtForRound, isPaying, isUnlocked, streakAfterSkull, SYMBOLS, type SlotSymbol } from './rules';
+import { DEBT_ROUND_TO, debtForRound, isPaying, isUnlocked, JOKER, skullShare, streakAfterSkull, SYMBOLS, type Grid, type SlotSymbol } from './rules';
 
 /**
  * Сделка Дилера (решение автора 15.11.2026, QUESTIONS.md): на экране выпал кубик 🎲 — Дилер кладёт на сукно
@@ -25,7 +25,18 @@ export type PactId =
   | 'tickets-shop' | 'quiet-round' | 'double-step'
   | 'skull-calm' | 'soft-skull' | 'price-up'
   | 'cheap-shop' | 'full-insurance' | 'jackpot-weight' | 'symbol-weight' | 'debt-cut'
-  | 'machine-delay' | 'safe-bank' | 'free-amulet' | 'double-take';
+  | 'machine-delay' | 'safe-bank' | 'free-amulet' | 'double-take'
+  // Шаг 30: DONTLIKE.md §2 (37 карт из 44; №31, 37, 41 — дубли уже принятых, №42, 47, 49, 50 — без механики, см. QUESTIONS.md)
+  | 'spin-plus' | 'spin-cap' | 'empty-spin'
+  | 'calm-win' | 'half-step' | 'skull-growth' | 'skull-cap'
+  | 'win-debt' | 'jackpot-double' | 'cherry-double' | 'step-two'
+  | 'amulet-half' | 'ticket-gift' | 'interest-win' | 'insurance-free'
+  | 'pot-start' | 'piggy-lock' | 'skull-refund' | 'pot-safe-double' | 'chips-start'
+  | 'free-item' | 'item-cheap' | 'two-slots' | 'joker-slot'
+  | 'amulet-copy' | 'socket-gift' | 'amulet-save' | 'rare-only'
+  | 'symbol-run' | 'machine-pick' | 'joker-center' | 'blood-round'
+  | 'debt-defer' | 'debt-freeze' | 'debt-tickets'
+  | 'win-double-risk' | 'take-streak';
 
 /** Карта-сделка: id, сколько раундов живёт и две строки на карте — баф зелёным, дебаф красным. */
 export interface PactSpec {
@@ -34,6 +45,7 @@ export interface PactSpec {
   bonus: Words; // «получаешь» — зелёная строка на карте
   cost: Words; // «платишь» — красная строка на карте
   needsSymbol?: boolean; // №11: прежде чем взять, игрок выбирает символ (ряд кнопок на сукне)
+  needsMachine?: boolean; // №38: прежде чем взять, игрок выбирает автомат (три кнопки на сукне)
 }
 
 /** Запись на кассете: сделка и последний раунд, в котором она ещё действует. */
@@ -77,6 +89,47 @@ export interface PactEffects {
   bankSurvivesSkull: boolean; // №10: первый череп в раунде не жжёт кон, а собранное в конце раунда в цель не идёт
   effectSlotsDelta: number; // №13: столько мест в столбике включённых предметов прибавится (+) или убавится (−)
   doubleTake: boolean; // №15: после «забрать» в этой прокрутке можно забрать ещё раз (80% забранного, DOUBLE_TAKE_SHARE)
+  // ---------- Шаг 30: DONTLIKE.md §2 ----------
+  spinCapDelta: number; // №2: +N к потолку прокруток раунда
+  spinCapValue: number; // №10: потолок прокруток ровно N (0 — не задан, работает обычный)
+  skullSpinCost: number; // №2: столько прокруток отнимает каждый паттерн из черепов
+  emptySpinSpins: number; // №5: столько прокруток даёт прокрутка без выигрыша (как копилка, но в прокрутках)
+  skullShareMax: number; // №10: доля черепов не выше этого (Infinity — без потолка)
+  skullHalfStep: boolean; // №7: череп снимает полступени, а не треть серии
+  streakStepBonus: number; // №15: шаг множителя серии больше на столько
+  skullDropSteps: number; // №15: череп снимает столько ступеней серии
+  jackpotWinMul: number; // №12: во сколько раз больше платит только джекпот-паттерн
+  symbolWeightMul: Partial<Record<string, number>>; // №14: множители веса символов (вишни реже вдвое)
+  symbolPayMul: Partial<Record<string, number>>; // №14: множители выплаты символов (вишни платят вдвое)
+  skullUnblockable: boolean; // №46: щит и бронежилет черепа не отбивают
+  ticketChipsMul: number; // №18: во сколько раз дороже билеты за фишки
+  amuletPriceMul: number; // №17: множитель цен амулетов
+  amuletPriceAdd: number; // №32: столько билетов прибавляется к цене каждого амулета
+  amuletCopiesDouble: boolean; // №17: каждая следующая копия любого амулета вдвое дороже
+  amuletFreeInsurance: boolean; // №20: страховка в витрине стоит 0 билетов
+  insuranceMaxOne: boolean; // №20: страховку можно держать только одну
+  amuletDeathSave: boolean; // №34: один амулет не сгорает при смерти (как улучшение №30)
+  amuletsClosed: boolean; // №33: в этом забеге амулеты не продаются
+  rareAmuletForced: boolean; // №35: в витрине всегда есть редкий амулет
+  amuletPerShop: number; // №35: столько амулетов в витрине за магазин (0 — обычное число)
+  interestBonus: number; // №19: прибавка к «Процентам» на остаток
+  piggyBonus: number; // №22: прибавка к фишкам копилки за прокрутку (сама копилка — амулет)
+  potStart: number; // №21: столько фишек лежит на коне в начале каждого раунда сделки
+  noTake: boolean; // №22: кон нельзя забрать руками, только сам в конце раунда
+  takeOncePerRound: boolean; // №23: забрать кон можно один раз за раунд
+  skullPotRefund: number; // №23: такая доля сгоревшего кона возвращается на табло без страховки
+  potSafeFirst: boolean; // №24: первый череп в раунде кон не жжёт
+  skullDoubleBurn: boolean; // №24: череп после пощажённого сжигает вдвое (пот и столько же с табло)
+  itemPriceMul: number; // №27: множитель цен предметов
+  itemOfferDelta: number; // №27: на столько меньше/больше предметов в витрине
+  shelfSlotsDelta: number; // №26/28/30: на столько мест на полке больше (+) или меньше (−)
+  jokerCenter: boolean; // №39: в центре каждой сетки джокер
+  bloodFirstSpin: boolean; // №40: первая прокрутка раунда кровавая
+  debtDefer: boolean; // №43: раз за забег долг можно отложить на раунд
+  debtNoGrowth: boolean; // №44: долг следующего раунда не растёт
+  debtTicketsHalf: boolean; // №45: половину долга можно закрыть билетами
+  doubleTakeShare: number; // №48: какую долю первого забирания отдаёт второе (у №15 — DOUBLE_TAKE_SHARE)
+  takeStreakReset: boolean; // №48: после первого забирания серия сбрасывается в ноль
 }
 
 /** Сколько карт Дилер кладёт на сукно. */
@@ -159,6 +212,128 @@ export const FREE_AMULET_SLOTS = 2;
 export const DOUBLE_TAKE_SHARE = 0.8;
 /** №15: столько раундов живёт «забрать дважды» (в брифе было до конца забега, но +80% к каждому забиранию на весь забег — слишком сильно). */
 export const DOUBLE_TAKE_ROUNDS = 3;
+
+// ---------- Связки шага 30: DONTLIKE.md §2 (одобрены все, кроме №3, 4, 8, 13, 16, 29) ----------
+// Карты, у которых эффект живёт на раунд, складываются в PactEffects. Разовые выдачи (билет, долг, предмет,
+// амулет, гнездо, автомат) сцена и симулятор делают в момент взятия — у них числа тоже отсюда.
+/** №1: +1 прокрутка в раунде, черепа чаще на 1 п.п. */
+export const SPIN_PLUS_SPINS = 1;
+export const SPIN_PLUS_SKULL_DELTA = 0.01;
+export const SPIN_PLUS_ROUNDS = 3;
+/** №2: +2 к потолку прокруток, каждый череп отнимает 1 прокрутку. */
+export const SPIN_CAP_BONUS = 2;
+export const SPIN_CAP_SKULL_SPINS = 1;
+export const SPIN_CAP_ROUNDS = 3;
+/** №5: +1 прокрутка за пустой кон (прокрутку без выигрыша), долг следующего раунда +10%. */
+export const EMPTY_SPIN_SPINS = 1;
+export const EMPTY_SPIN_DEBT_MUL = 1.1;
+export const EMPTY_SPIN_ROUNDS = 3;
+/** №6: черепа реже на 3 п.п. два раунда, выигрыш −10%. */
+export const CALM_WIN_SKULL_DELTA = -0.03;
+export const CALM_WIN_MUL = 0.9;
+export const CALM_WIN_ROUNDS = 2;
+/** №7: череп снимает полступени серии, билетов −1 разово. */
+export const HALF_STEP_ROUNDS = 3;
+export const HALF_STEP_TICKETS = 1;
+/** №9: первые три раунда сделки черепа не растут, на пятом рост вдвое (одна лишняя ступень роста доли). */
+export const SKULL_GROWTH_ROUNDS = 5;
+/** №10: доля черепов не выше 25%, потолок прокруток 10. */
+export const SKULL_CAP_SHARE = 0.25;
+export const SKULL_CAP_SPINS = 10;
+export const SKULL_CAP_ROUNDS = 3;
+/** №11: паттерны +20%, долг +8% разово. */
+export const WIN_DEBT_WIN = 1.2;
+export const WIN_DEBT_MUL = 1.08;
+export const WIN_DEBT_ROUNDS = 3;
+/** №12: джекпот платит вдвое больше, но выпадает вдвое реже. */
+export const JACKPOT_DOUBLE_WIN = 2;
+export const JACKPOT_DOUBLE_WEIGHT = 0.5;
+export const JACKPOT_DOUBLE_ROUNDS = 3;
+/** №14: вишни платят вдвое больше, но выпадают вдвое реже. */
+export const CHERRY_PAY_MUL = 2;
+export const CHERRY_WEIGHT_MUL = 0.5;
+export const CHERRY_ROUNDS = 3;
+/** №15: шаг множителя +1, череп роняет серию на две ступени. */
+export const STEP_TWO_BONUS = 1;
+export const STEP_TWO_SKULL_STEPS = 2;
+export const STEP_TWO_ROUNDS = 3;
+/** №17: амулет за полцены, вторая копия любого амулета вдвое дороже. */
+export const AMULET_HALF_PRICE = 0.5;
+export const AMULET_HALF_COPY_MUL = 2;
+export const AMULET_HALF_ROUNDS = 3;
+/** №18: билет в подарок, билеты за фишки дороже на 20%. */
+export const TICKET_GIFT_CHIPS_MUL = 1.2;
+export const TICKET_GIFT_ROUNDS = 3;
+/** №19: проценты +10% на раунд, выигрыш −15%. */
+export const INTEREST_WIN_BONUS = 0.1;
+export const INTEREST_WIN_MUL = 0.85;
+export const INTEREST_WIN_ROUNDS = 3;
+/** №20: страховка бесплатно, но одна на забег (до конца забега). */
+export const INSURANCE_FREE_ROUNDS = PACT_LAST_ROUNDS;
+/** №21: стартовый кон 150 фишек, долг следующего раунда +15%. */
+export const POT_START_CHIPS = 150;
+export const POT_START_DEBT_MUL = 1.15;
+export const POT_START_ROUNDS = 3;
+/** №22: копилка +2 за прокрутку, но кон нельзя забрать руками — только в конце раунда. */
+export const PIGGY_LOCK_BONUS = 2;
+export const PIGGY_LOCK_ROUNDS = 3;
+/** №23: череп возвращает 50% кона на табло, забрать кон можно только раз в раунд. */
+export const SKULL_REFUND_SHARE = 0.5;
+export const SKULL_REFUND_ROUNDS = 3;
+/** №24: первый череп кон не жжёт, следующий сжигает вдвое (пот и столько же с табло). */
+export const POT_SAFE_DOUBLE_ROUNDS = 3;
+/** №25: старт с 100 фишками, стартовый долг +10% (разово). */
+export const CHIPS_START_CHIPS = 100;
+export const CHIPS_START_DEBT_MUL = 1.1;
+/** №26: бесплатный предмет, −1 место на полке три раунда. */
+export const FREE_ITEM_SHELF = -1;
+export const FREE_ITEM_ROUNDS = 3;
+/** №27: предметы −20%, в витрине на один предмет меньше. */
+export const ITEM_CHEAP_MUL = 0.8;
+export const ITEM_CHEAP_OFFER = -1;
+export const ITEM_CHEAP_ROUNDS = 3;
+/** №28: +2 места на полке, черепа чаще на 2 п.п. */
+export const TWO_SLOTS_BONUS = 2;
+export const TWO_SLOTS_SKULL_DELTA = 0.02;
+export const TWO_SLOTS_ROUNDS = 3;
+/** №30: джокер в подарок (предмет «подмена»), −1 место на полке. */
+export const JOKER_SLOT_SHELF = -1;
+export const JOKER_SLOT_ROUNDS = 3;
+/** №32: копия любого амулета бесплатно, все амулеты дороже на 1 билет. */
+export const AMULET_COPY_PRICE_ADD = 1;
+export const AMULET_COPY_ROUNDS = 3;
+/** №33: гнездо в подарок, амулеты в этом забеге не продаются. */
+export const SOCKET_GIFT_ROUNDS = PACT_LAST_ROUNDS;
+/** №34: амулет не сгорает при смерти раз, но следующий купленный сгорает сразу. */
+export const AMULET_SAVE_ROUNDS = PACT_LAST_ROUNDS;
+/** №35: редкий амулет в витрине, но только один амулет за магазин. */
+export const RARE_ONLY_AMULETS = 1;
+export const RARE_ONLY_ROUNDS = 3;
+/** №36: выбранный символ +2 веса, остальным −0,5 — до конца забега (у старой карты №11 те же числа на 2 раунда). */
+export const SYMBOL_RUN_ROUNDS = PACT_LAST_ROUNDS;
+/** №38: автомат сразу меняется на выбранный, скидка магазина −10%. */
+export const MACHINE_PICK_DISCOUNT = 0.9;
+export const MACHINE_PICK_ROUNDS = 3;
+/** №39: джокер в центре каждой сетки, выигрыш −10%. */
+export const JOKER_CENTER_WIN = 0.9;
+export const JOKER_CENTER_ROUNDS = 3;
+/** №40: кровавая прокрутка гарантирована раз в раунд, черепа чаще на 2 п.п. */
+export const BLOOD_FIRST_SKULL_DELTA = 0.02;
+export const BLOOD_FIRST_ROUNDS = 3;
+/** №43: отсрочка на раунд, долг +25%. */
+export const DEBT_DEFER_COST_MUL = 1.25;
+/** №44: долг не растёт в этом раунде, следующий растёт вдвое. */
+export const DEBT_FREEZE_NEXT_MUL = 2;
+/** №45: половину долга можно заплатить билетами, билетов −2. Разово −2 билета, правило — на три раунда. */
+export const DEBT_TICKETS_OFF = 2;
+export const DEBT_TICKETS_SHARE = 0.5;
+export const DEBT_TICKETS_PER_TICKET = 0.1; // один билет закрывает 10% долга, половина — не больше пяти билетов
+export const DEBT_TICKETS_ROUNDS = 3;
+/** №46: выигрыш ×2, но череп не отбивается щитом/бронежилетом — кон сгорает всегда. */
+export const WIN_DOUBLE = 2;
+export const WIN_DOUBLE_ROUNDS = 3;
+/** №48: второе забирание отдаёт весь кон, но серия сбрасывается до нуля. */
+export const TAKE_STREAK_ROUNDS = 3;
 
 /**
  * Число в тексте карты: целые без дробной части, дробные — с одним знаком (0,5 / 0.5).
@@ -330,6 +505,312 @@ export const PACTS: readonly PactSpec[] = [
       en: `each second take loses ${cardNum((1 - DOUBLE_TAKE_SHARE) * 100, true)}%`,
     },
   },
+  // ---------- Шаг 30: 37 карт из DONTLIKE.md §2 ----------
+  {
+    id: 'spin-plus',
+    rounds: SPIN_PLUS_ROUNDS,
+    bonus: { ru: `+${SPIN_PLUS_SPINS} прокрутка в раунде`, en: `+${SPIN_PLUS_SPINS} spin per round` },
+    cost: {
+      ru: `черепа чаще на ${cardNum(SPIN_PLUS_SKULL_DELTA * 100, false)}%`,
+      en: `skulls ${cardNum(SPIN_PLUS_SKULL_DELTA * 100, true)}% more often`,
+    },
+  },
+  {
+    id: 'spin-cap',
+    rounds: SPIN_CAP_ROUNDS,
+    bonus: { ru: `+${SPIN_CAP_BONUS} к потолку прокруток`, en: `+${SPIN_CAP_BONUS} spin cap` },
+    cost: {
+      ru: `каждый череп −${SPIN_CAP_SKULL_SPINS} прокрутка`,
+      en: `each skull −${SPIN_CAP_SKULL_SPINS} spin`,
+    },
+  },
+  {
+    id: 'empty-spin',
+    rounds: EMPTY_SPIN_ROUNDS,
+    bonus: { ru: `+${EMPTY_SPIN_SPINS} прокрутка за пустой кон`, en: `+${EMPTY_SPIN_SPINS} spin for an empty pot` },
+    cost: {
+      ru: `долг следующего раунда +${cardNum((EMPTY_SPIN_DEBT_MUL - 1) * 100, false)}%`,
+      en: `next round debt +${cardNum((EMPTY_SPIN_DEBT_MUL - 1) * 100, true)}%`,
+    },
+  },
+  {
+    id: 'calm-win',
+    rounds: CALM_WIN_ROUNDS,
+    bonus: {
+      ru: `черепа реже на ${cardNum(-CALM_WIN_SKULL_DELTA * 100, false)}%`,
+      en: `skulls ${cardNum(-CALM_WIN_SKULL_DELTA * 100, true)}% rarer`,
+    },
+    cost: {
+      ru: `выигрыш −${cardNum((1 - CALM_WIN_MUL) * 100, false)}%`,
+      en: `wins −${cardNum((1 - CALM_WIN_MUL) * 100, true)}%`,
+    },
+  },
+  {
+    id: 'half-step',
+    rounds: HALF_STEP_ROUNDS,
+    bonus: { ru: 'череп снимает полступени', en: 'a skull costs half a step' },
+    cost: { ru: `билетов −${HALF_STEP_TICKETS} сразу`, en: `−${HALF_STEP_TICKETS} ticket right away` },
+  },
+  {
+    id: 'skull-growth',
+    rounds: SKULL_GROWTH_ROUNDS,
+    bonus: { ru: `черепа не растут ${SKULL_GROWTH_ROUNDS - 2} раунда`, en: `skulls stay flat for ${SKULL_GROWTH_ROUNDS - 2} rounds` },
+    cost: { ru: 'на пятом раунде растут вдвое', en: 'they grow twice as fast in round five' },
+  },
+  {
+    id: 'skull-cap',
+    rounds: SKULL_CAP_ROUNDS,
+    bonus: {
+      ru: `доля черепов не выше ${cardNum(SKULL_CAP_SHARE * 100, false)}%`,
+      en: `skull share at most ${cardNum(SKULL_CAP_SHARE * 100, true)}%`,
+    },
+    cost: { ru: `потолок прокруток ${SKULL_CAP_SPINS}`, en: `spin cap ${SKULL_CAP_SPINS}` },
+  },
+  {
+    id: 'win-debt',
+    rounds: WIN_DEBT_ROUNDS,
+    bonus: {
+      ru: `паттерны +${cardNum((WIN_DEBT_WIN - 1) * 100, false)}%`,
+      en: `patterns +${cardNum((WIN_DEBT_WIN - 1) * 100, true)}%`,
+    },
+    cost: {
+      ru: `долг +${cardNum((WIN_DEBT_MUL - 1) * 100, false)}% разово`,
+      en: `debt +${cardNum((WIN_DEBT_MUL - 1) * 100, true)}% once`,
+    },
+  },
+  {
+    id: 'jackpot-double',
+    rounds: JACKPOT_DOUBLE_ROUNDS,
+    bonus: {
+      ru: `джекпот +${cardNum((JACKPOT_DOUBLE_WIN - 1) * 100, false)}%`,
+      en: `jackpot +${cardNum((JACKPOT_DOUBLE_WIN - 1) * 100, true)}%`,
+    },
+    cost: { ru: 'джекпот реже вдвое', en: 'jackpot twice as rare' },
+  },
+  {
+    id: 'cherry-double',
+    rounds: CHERRY_ROUNDS,
+    bonus: { ru: 'вишни платят ×2', en: 'cherries pay ×2' },
+    cost: { ru: 'вишни реже вдвое', en: 'cherries twice as rare' },
+  },
+  {
+    id: 'step-two',
+    rounds: STEP_TWO_ROUNDS,
+    bonus: { ru: 'шаг серии +1', en: 'streak step +1' },
+    cost: { ru: `череп роняет на ${STEP_TWO_SKULL_STEPS} ступени`, en: `a skull drops ${STEP_TWO_SKULL_STEPS} steps` },
+  },
+  {
+    id: 'amulet-half',
+    rounds: AMULET_HALF_ROUNDS,
+    bonus: { ru: 'амулет за полцены', en: 'amulets at half price' },
+    cost: { ru: 'вторая копия дороже вдвое', en: 'a second copy costs double' },
+  },
+  {
+    id: 'ticket-gift',
+    rounds: TICKET_GIFT_ROUNDS,
+    bonus: { ru: '+1 билет сразу', en: '+1 ticket right away' },
+    cost: {
+      ru: `билеты за фишки дороже на ${cardNum((TICKET_GIFT_CHIPS_MUL - 1) * 100, false)}%`,
+      en: `tickets for chips +${cardNum((TICKET_GIFT_CHIPS_MUL - 1) * 100, true)}%`,
+    },
+  },
+  {
+    id: 'interest-win',
+    rounds: INTEREST_WIN_ROUNDS,
+    bonus: {
+      ru: `проценты +${cardNum(INTEREST_WIN_BONUS * 100, false)}% на раунд`,
+      en: `interest +${cardNum(INTEREST_WIN_BONUS * 100, true)}% per round`,
+    },
+    cost: {
+      ru: `выигрыш −${cardNum((1 - INTEREST_WIN_MUL) * 100, false)}%`,
+      en: `wins −${cardNum((1 - INTEREST_WIN_MUL) * 100, true)}%`,
+    },
+  },
+  {
+    id: 'insurance-free',
+    rounds: INSURANCE_FREE_ROUNDS,
+    bonus: { ru: 'страховка бесплатно', en: 'insurance is free' },
+    cost: { ru: 'страховка одна на забег', en: 'only one insurance per run' },
+  },
+  {
+    id: 'pot-start',
+    rounds: POT_START_ROUNDS,
+    bonus: { ru: `стартовый кон ${POT_START_CHIPS} фишек`, en: `${POT_START_CHIPS} chips in the pot at round start` },
+    cost: {
+      ru: `долг следующего раунда +${cardNum((POT_START_DEBT_MUL - 1) * 100, false)}%`,
+      en: `next round debt +${cardNum((POT_START_DEBT_MUL - 1) * 100, true)}%`,
+    },
+  },
+  {
+    id: 'piggy-lock',
+    rounds: PIGGY_LOCK_ROUNDS,
+    bonus: { ru: `копилка +${PIGGY_LOCK_BONUS} за прокрутку`, en: `piggy bank +${PIGGY_LOCK_BONUS} per spin` },
+    cost: { ru: 'кон нельзя забрать руками', en: 'the pot cannot be taken by hand' },
+  },
+  {
+    id: 'skull-refund',
+    rounds: SKULL_REFUND_ROUNDS,
+    bonus: {
+      ru: `череп возвращает ${cardNum(SKULL_REFUND_SHARE * 100, false)}% кона`,
+      en: `a skull returns ${cardNum(SKULL_REFUND_SHARE * 100, true)}% of the pot`,
+    },
+    cost: { ru: 'забрать кон можно раз в раунд', en: 'take the pot once per round' },
+  },
+  {
+    id: 'pot-safe-double',
+    rounds: POT_SAFE_DOUBLE_ROUNDS,
+    bonus: { ru: 'первый череп не жжёт кон', en: 'the first skull spares the pot' },
+    cost: { ru: 'следующий череп сжигает вдвое', en: 'the next skull burns double' },
+  },
+  {
+    id: 'chips-start',
+    rounds: 1,
+    bonus: { ru: `сразу +${CHIPS_START_CHIPS} фишек`, en: `+${CHIPS_START_CHIPS} chips right away` },
+    cost: {
+      ru: `долг +${cardNum((CHIPS_START_DEBT_MUL - 1) * 100, false)}% сразу`,
+      en: `debt +${cardNum((CHIPS_START_DEBT_MUL - 1) * 100, true)}% right away`,
+    },
+  },
+  {
+    id: 'free-item',
+    rounds: FREE_ITEM_ROUNDS,
+    bonus: { ru: 'бесплатный предмет на полку', en: 'a free item on the shelf' },
+    cost: {
+      ru: `мест на полке −${-FREE_ITEM_SHELF} на ${FREE_ITEM_ROUNDS} раунда`,
+      en: `−${-FREE_ITEM_SHELF} shelf slot for ${FREE_ITEM_ROUNDS} rounds`,
+    },
+  },
+  {
+    id: 'item-cheap',
+    rounds: ITEM_CHEAP_ROUNDS,
+    bonus: {
+      ru: `предметы −${cardNum((1 - ITEM_CHEAP_MUL) * 100, false)}%`,
+      en: `items −${cardNum((1 - ITEM_CHEAP_MUL) * 100, true)}%`,
+    },
+    cost: {
+      ru: `в витрине на ${-ITEM_CHEAP_OFFER} предмет меньше`,
+      en: `${-ITEM_CHEAP_OFFER} item fewer in the window`,
+    },
+  },
+  {
+    id: 'two-slots',
+    rounds: TWO_SLOTS_ROUNDS,
+    bonus: { ru: `+${TWO_SLOTS_BONUS} места на полке`, en: `+${TWO_SLOTS_BONUS} shelf slots` },
+    cost: {
+      ru: `черепа чаще на ${cardNum(TWO_SLOTS_SKULL_DELTA * 100, false)}%`,
+      en: `skulls ${cardNum(TWO_SLOTS_SKULL_DELTA * 100, true)}% more often`,
+    },
+  },
+  {
+    id: 'joker-slot',
+    rounds: JOKER_SLOT_ROUNDS,
+    bonus: { ru: 'джокер в подарок', en: 'a free joker' },
+    cost: {
+      ru: `джокер занимает ${-JOKER_SLOT_SHELF} место полки`,
+      en: `the joker takes ${-JOKER_SLOT_SHELF} shelf slot`,
+    },
+  },
+  {
+    id: 'amulet-copy',
+    rounds: AMULET_COPY_ROUNDS,
+    bonus: { ru: 'копия любого амулета', en: 'a copy of any amulet' },
+    cost: { ru: `все амулеты дороже на ${AMULET_COPY_PRICE_ADD}`, en: `all amulets cost ${AMULET_COPY_PRICE_ADD} more` },
+  },
+  {
+    id: 'socket-gift',
+    rounds: SOCKET_GIFT_ROUNDS,
+    bonus: { ru: 'гнездо в подарок', en: 'a free socket' },
+    cost: { ru: 'в этом забеге амулеты не продаются', en: 'no amulets are sold this run' },
+  },
+  {
+    id: 'amulet-save',
+    rounds: AMULET_SAVE_ROUNDS,
+    bonus: { ru: 'амулет не сгорает при смерти', en: 'one amulet survives death' },
+    cost: { ru: 'следующий амулет сгорает сразу', en: 'the next amulet burns at once' },
+  },
+  {
+    id: 'rare-only',
+    rounds: RARE_ONLY_ROUNDS,
+    bonus: { ru: 'в витрине редкий амулет', en: 'a rare amulet in the window' },
+    cost: { ru: `только ${RARE_ONLY_AMULETS} амулет за магазин`, en: `only ${RARE_ONLY_AMULETS} amulet per shop` },
+  },
+  {
+    id: 'symbol-run',
+    rounds: SYMBOL_RUN_ROUNDS,
+    needsSymbol: true,
+    bonus: {
+      ru: `выбранный символ +${cardNum(SYMBOL_LUCK_PLUS, false)} веса до конца забега`,
+      en: `chosen symbol +${cardNum(SYMBOL_LUCK_PLUS, true)} weight until the run ends`,
+    },
+    cost: {
+      ru: `остальным −${cardNum(SYMBOL_LUCK_MINUS, false)} веса`,
+      en: `others −${cardNum(SYMBOL_LUCK_MINUS, true)} weight`,
+    },
+  },
+  {
+    id: 'machine-pick',
+    rounds: MACHINE_PICK_ROUNDS,
+    needsMachine: true,
+    bonus: { ru: 'автомат меняется на выбранный', en: 'the machine switches to your choice' },
+    cost: {
+      ru: `скидка магазина −${cardNum((1 - MACHINE_PICK_DISCOUNT) * 100, false)}%`,
+      en: `shop discount −${cardNum((1 - MACHINE_PICK_DISCOUNT) * 100, true)}%`,
+    },
+  },
+  {
+    id: 'joker-center',
+    rounds: JOKER_CENTER_ROUNDS,
+    bonus: { ru: 'джокер в центре каждой сетки', en: 'a joker in the centre of every grid' },
+    cost: {
+      ru: `выигрыш −${cardNum((1 - JOKER_CENTER_WIN) * 100, false)}%`,
+      en: `wins −${cardNum((1 - JOKER_CENTER_WIN) * 100, true)}%`,
+    },
+  },
+  {
+    id: 'blood-round',
+    rounds: BLOOD_FIRST_ROUNDS,
+    bonus: { ru: 'кровавая прокрутка раз в раунд', en: 'one bloody spin per round' },
+    cost: {
+      ru: `черепа чаще на ${cardNum(BLOOD_FIRST_SKULL_DELTA * 100, false)}%`,
+      en: `skulls ${cardNum(BLOOD_FIRST_SKULL_DELTA * 100, true)}% more often`,
+    },
+  },
+  {
+    id: 'debt-defer',
+    rounds: PACT_LAST_ROUNDS,
+    bonus: { ru: 'отсрочка долга на раунд', en: 'defer the debt one round' },
+    cost: {
+      ru: `долг +${cardNum((DEBT_DEFER_COST_MUL - 1) * 100, false)}%`,
+      en: `debt +${cardNum((DEBT_DEFER_COST_MUL - 1) * 100, true)}%`,
+    },
+  },
+  {
+    id: 'debt-freeze',
+    rounds: 1,
+    bonus: { ru: 'долг не растёт в этом раунде', en: 'the debt does not grow this round' },
+    cost: { ru: `следующий растёт ×${DEBT_FREEZE_NEXT_MUL}`, en: `the next one grows ×${DEBT_FREEZE_NEXT_MUL}` },
+  },
+  {
+    id: 'debt-tickets',
+    rounds: DEBT_TICKETS_ROUNDS,
+    bonus: {
+      ru: `половину долга можно закрыть билетами`,
+      en: `half the debt can be paid with tickets`,
+    },
+    cost: { ru: `билетов −${DEBT_TICKETS_OFF} сразу`, en: `−${DEBT_TICKETS_OFF} tickets right away` },
+  },
+  {
+    id: 'win-double-risk',
+    rounds: WIN_DOUBLE_ROUNDS,
+    bonus: { ru: `выигрыш ×${WIN_DOUBLE}`, en: `wins ×${WIN_DOUBLE}` },
+    cost: { ru: 'при черепе кон сгорает всегда', en: 'a skull always burns the pot' },
+  },
+  {
+    id: 'take-streak',
+    rounds: TAKE_STREAK_ROUNDS,
+    bonus: { ru: 'второе забирание кона', en: 'a second take' },
+    cost: { ru: 'серия сбрасывается', en: 'the streak resets' },
+  },
 ];
 
 /** Сделка по id: id типизирован, поэтому сделка есть всегда (цикл-проверка — для чужих данных кассеты). */
@@ -452,8 +933,50 @@ export function pactEffects(pacts: readonly Pact[], round: number): PactEffects 
     bankSurvivesSkull: false, // череп жжёт кон как обычно
     effectSlotsDelta: 0, // столбик включённых предметов обычный
     doubleTake: false, // «забрать» одно за прокрутку
+    // Шаг 30: нейтральные числа карт третьей партии
+    spinCapDelta: 0,
+    spinCapValue: 0,
+    skullSpinCost: 0,
+    emptySpinSpins: 0,
+    skullShareMax: Number.POSITIVE_INFINITY,
+    skullHalfStep: false,
+    streakStepBonus: 0,
+    skullDropSteps: 0,
+    jackpotWinMul: 1,
+    symbolWeightMul: {},
+    symbolPayMul: {},
+    skullUnblockable: false,
+    ticketChipsMul: 1,
+    amuletPriceMul: 1,
+    amuletPriceAdd: 0,
+    amuletCopiesDouble: false,
+    amuletFreeInsurance: false,
+    insuranceMaxOne: false,
+    amuletDeathSave: false,
+    amuletsClosed: false,
+    rareAmuletForced: false,
+    amuletPerShop: 0,
+    interestBonus: 0,
+    piggyBonus: 0,
+    potStart: 0,
+    noTake: false,
+    takeOncePerRound: false,
+    skullPotRefund: 0,
+    potSafeFirst: false,
+    skullDoubleBurn: false,
+    itemPriceMul: 1,
+    itemOfferDelta: 0,
+    shelfSlotsDelta: 0,
+    jokerCenter: false,
+    bloodFirstSpin: false,
+    debtDefer: false,
+    debtNoGrowth: false,
+    debtTicketsHalf: false,
+    doubleTakeShare: DOUBLE_TAKE_SHARE,
+    takeStreakReset: false,
   };
   for (const pact of pacts) {
+    if (!isPactId(pact.id)) continue; // чужая запись с кассеты не роняет эффекты
     if (!isPactActive(pact, round)) continue;
     switch (pact.id) {
       case 'tickets-shop':
@@ -524,6 +1047,142 @@ export function pactEffects(pacts: readonly Pact[], round: number): PactEffects 
         // Второе «забрать» в той же прокрутке отдаёт DOUBLE_TAKE_SHARE забранного (RoundScene.take); срок — 3 раунда.
         effects.doubleTake = true;
         break;
+      // ---------- Шаг 30 ----------
+      case 'spin-plus':
+        effects.spinsDelta += SPIN_PLUS_SPINS;
+        effects.skullShareDelta += SPIN_PLUS_SKULL_DELTA;
+        break;
+      case 'spin-cap':
+        effects.spinCapDelta += SPIN_CAP_BONUS;
+        effects.skullSpinCost += SPIN_CAP_SKULL_SPINS;
+        break;
+      case 'empty-spin':
+        effects.emptySpinSpins += EMPTY_SPIN_SPINS;
+        break;
+      case 'calm-win':
+        effects.skullShareDelta += CALM_WIN_SKULL_DELTA;
+        effects.winMul *= CALM_WIN_MUL;
+        break;
+      case 'half-step':
+        effects.skullHalfStep = true;
+        break;
+      case 'skull-growth': {
+        // Сделка считает раунды от взятия: первые три доля стоит на месте (как в раунде взятия),
+        // на пятом раунде рост вдвое — одна лишняя ступень роста (GAME_CONFIG.skullShareGrowth = 1 п.п.).
+        const elapsed = Math.max(0, round - firstRoundOf(pact));
+        if (elapsed <= 2) effects.skullShareDelta += skullShare(firstRoundOf(pact)) - skullShare(round);
+        else if (elapsed === SKULL_GROWTH_ROUNDS - 1) effects.skullShareDelta += skullShare(round) - skullShare(round - 1);
+        break;
+      }
+      case 'skull-cap':
+        effects.skullShareMax = Math.min(effects.skullShareMax, SKULL_CAP_SHARE);
+        effects.spinCapValue = SKULL_CAP_SPINS;
+        break;
+      case 'win-debt':
+        effects.winMul *= WIN_DEBT_WIN;
+        break;
+      case 'jackpot-double':
+        effects.jackpotWinMul *= JACKPOT_DOUBLE_WIN;
+        effects.jackpotWeightMul *= JACKPOT_DOUBLE_WEIGHT;
+        break;
+      case 'cherry-double':
+        effects.symbolWeightMul.cherry = (effects.symbolWeightMul.cherry ?? 1) * CHERRY_WEIGHT_MUL;
+        effects.symbolPayMul.cherry = (effects.symbolPayMul.cherry ?? 1) * CHERRY_PAY_MUL;
+        break;
+      case 'step-two':
+        effects.streakStepBonus += STEP_TWO_BONUS;
+        effects.skullDropSteps = Math.max(effects.skullDropSteps, STEP_TWO_SKULL_STEPS);
+        break;
+      case 'amulet-half':
+        effects.amuletPriceMul *= AMULET_HALF_PRICE;
+        effects.amuletCopiesDouble = true;
+        break;
+      case 'ticket-gift':
+        effects.ticketChipsMul *= TICKET_GIFT_CHIPS_MUL;
+        break;
+      case 'interest-win':
+        effects.interestBonus += INTEREST_WIN_BONUS;
+        effects.winMul *= INTEREST_WIN_MUL;
+        break;
+      case 'insurance-free':
+        effects.amuletFreeInsurance = true;
+        effects.insuranceMaxOne = true;
+        break;
+      case 'pot-start':
+        effects.potStart = Math.max(effects.potStart, POT_START_CHIPS);
+        break;
+      case 'piggy-lock':
+        // Копилка даёт больше, но кон забрать руками нельзя: он уйдёт сам в конце раунда (RoundScene.take).
+        effects.piggyBonus += PIGGY_LOCK_BONUS;
+        effects.noTake = true;
+        break;
+      case 'skull-refund':
+        effects.skullPotRefund = Math.max(effects.skullPotRefund, SKULL_REFUND_SHARE);
+        effects.takeOncePerRound = true;
+        break;
+      case 'pot-safe-double':
+        effects.potSafeFirst = true;
+        effects.skullDoubleBurn = true;
+        break;
+      case 'free-item':
+        effects.shelfSlotsDelta += FREE_ITEM_SHELF;
+        break;
+      case 'item-cheap':
+        effects.itemPriceMul *= ITEM_CHEAP_MUL;
+        effects.itemOfferDelta += ITEM_CHEAP_OFFER;
+        break;
+      case 'two-slots':
+        effects.shelfSlotsDelta += TWO_SLOTS_BONUS;
+        effects.skullShareDelta += TWO_SLOTS_SKULL_DELTA;
+        break;
+      case 'joker-slot':
+        effects.shelfSlotsDelta += JOKER_SLOT_SHELF;
+        break;
+      case 'amulet-copy':
+        effects.amuletPriceAdd += AMULET_COPY_PRICE_ADD;
+        break;
+      case 'socket-gift':
+        effects.amuletsClosed = true;
+        break;
+      case 'amulet-save':
+        effects.amuletDeathSave = true;
+        break;
+      case 'rare-only':
+        effects.rareAmuletForced = true;
+        effects.amuletPerShop = RARE_ONLY_AMULETS;
+        break;
+      case 'symbol-run':
+        if (pact.symbol) effects.symbolLuck = { id: pact.symbol.id, plus: SYMBOL_LUCK_PLUS, minus: SYMBOL_LUCK_MINUS };
+        break;
+      case 'machine-pick':
+        effects.shopDiscount *= MACHINE_PICK_DISCOUNT;
+        break;
+      case 'joker-center':
+        effects.jokerCenter = true;
+        effects.winMul *= JOKER_CENTER_WIN;
+        break;
+      case 'blood-round':
+        effects.bloodFirstSpin = true;
+        effects.skullShareDelta += BLOOD_FIRST_SKULL_DELTA;
+        break;
+      case 'debt-defer':
+        effects.debtDefer = true;
+        break;
+      case 'debt-freeze':
+        effects.debtNoGrowth = true;
+        break;
+      case 'debt-tickets':
+        effects.debtTicketsHalf = true;
+        break;
+      case 'win-double-risk':
+        effects.winMul *= WIN_DOUBLE;
+        effects.skullUnblockable = true;
+        break;
+      case 'take-streak':
+        effects.doubleTake = true;
+        effects.doubleTakeShare = 1;
+        effects.takeStreakReset = true;
+        break;
     }
   }
   return effects;
@@ -535,7 +1194,14 @@ export function pactEffects(pacts: readonly Pact[], round: number): PactEffects 
  */
 export function pactDebt(debt: number, mul: number): number {
   if (!Number.isFinite(debt) || !Number.isFinite(mul)) return debt;
-  return Math.round((debt * mul) / DEBT_ROUND_TO) * DEBT_ROUND_TO;
+  return Math.max(0, Math.round((debt * mul) / DEBT_ROUND_TO) * DEBT_ROUND_TO);
+}
+
+/** Билеты после разовой платы сделки: в минус не уходят (карта не может забрать больше, чем есть). */
+export function pactTickets(tickets: number, delta: number): number {
+  const safe = Number.isFinite(tickets) ? Math.max(0, Math.floor(tickets)) : 0;
+  const shift = Number.isFinite(delta) ? Math.trunc(delta) : 0;
+  return Math.max(0, safe + shift);
 }
 
 /** Долг магазина и множитель, который останется: одно правило для ShopScene (openShop/skipClosedShop) и тестов. */
@@ -619,17 +1285,83 @@ export function skullShareWeightMul(share: number, delta: number): number {
 export function skullStreakAfter(streak: number, effects: PactEffects): number {
   if (effects.skullWipesStreak) return 0;
   const safe = Number.isFinite(streak) ? Math.max(0, Math.floor(streak)) : 0;
-  if (!effects.skullSoft) return streakAfterSkull(safe);
-  return Math.max(0, safe - 1);
+  const steps = Number.isFinite(effects.skullDropSteps) ? Math.max(0, Math.floor(effects.skullDropSteps)) : 0;
+  if (steps > 0) return Math.max(0, safe - steps);
+  if (effects.skullSoft) return Math.max(0, safe - 1);
+  // №7: полступени — доля потерь вдвое меньше обычной (две трети серии остаётся вместо трети).
+  if (effects.skullHalfStep) return Math.max(0, Math.ceil((safe * (1 + 1 / 3)) / 2));
+  return streakAfterSkull(safe);
 }
 
 /**
  * Сколько отдаст второе «забрать» в той же прокрутке (№15): DOUBLE_TAKE_SHARE только что забранного.
  * Сделки нет, первого забирания не было (0, минус, NaN, ∞) — 0, то есть второго забирания не бывает.
  */
-export function pactDoubleTake(isOn: boolean, lastTaken: number): number {
+export function pactDoubleTake(isOn: boolean, lastTaken: number, share = DOUBLE_TAKE_SHARE): number {
   if (!isOn || !Number.isFinite(lastTaken) || lastTaken <= 0) return 0;
-  return Math.round(lastTaken * DOUBLE_TAKE_SHARE);
+  const safe = Number.isFinite(share) ? Math.min(1, Math.max(0, share)) : DOUBLE_TAKE_SHARE;
+  return Math.round(lastTaken * safe);
+}
+
+/**
+ * Потолок прокруток раунда с поправками сделок: №2 «+2 к потолку» и №10 «потолок 10».
+ * spinCapValue (№10) — абсолютный: он не может поднять потолок выше обычного, только опустить.
+ */
+export function pactSpinCap(base: number, effects: PactEffects): number {
+  const safeBase = Number.isFinite(base) ? Math.max(1, Math.floor(base)) : 1;
+  const delta = Number.isFinite(effects.spinCapDelta) ? Math.trunc(effects.spinCapDelta) : 0;
+  const raised = Math.max(1, safeBase + delta);
+  const fixed = Number.isFinite(effects.spinCapValue) && effects.spinCapValue > 0 ? Math.floor(effects.spinCapValue) : 0;
+  return fixed > 0 ? Math.min(raised, fixed) : raised;
+}
+
+/**
+ * Поправка к доле черепов с учётом потолка сделки №10: если доля с поправкой выше skullShareMax,
+ * поправка урезается ровно до потолка. Мусор — поправка как есть.
+ */
+export function pactSkullDelta(share: number, delta: number, max: number): number {
+  if (!Number.isFinite(delta)) return 0;
+  if (!Number.isFinite(share) || !Number.isFinite(max) || max >= 1) return delta;
+  if (share + delta <= max) return delta;
+  return Math.max(-1, max - share);
+}
+
+/** №39: джокер в центре каждой сетки. Сетка не меняется на месте — возвращается новая. */
+export function pactJokerCenter(grid: Grid, effects: PactEffects): Grid {
+  if (!effects.jokerCenter) return grid;
+  if (!Array.isArray(grid) || grid.length === 0) return grid;
+  const row = Math.floor(grid.length / 2);
+  if (!Array.isArray(grid[row]) || grid[row].length === 0) return grid;
+  const col = Math.floor(grid[row].length / 2);
+  return grid.map((cells, r) => (r === row ? cells.map((cell, c) => (c === col ? JOKER : cell)) : cells));
+}
+
+/** №14/№36: множитель выплаты символа из сделки (1 — обычная цена). */
+export function pactSymbolPay(symbol: SlotSymbol, effects: PactEffects): number {
+  const mul = effects.symbolPayMul?.[symbol.id] ?? 1;
+  return Number.isFinite(mul) && mul > 0 ? mul : 1;
+}
+
+/** №12: во сколько раз больше платит джекпот (1 — обычно; улучшение №34 считается отдельно). */
+export function pactJackpotWin(isJackpot: boolean, effects: PactEffects): number {
+  return isJackpot && Number.isFinite(effects.jackpotWinMul) && effects.jackpotWinMul > 0 ? effects.jackpotWinMul : 1;
+}
+
+/**
+ * №45: сколько билетов закрывает половину долга и сколько фишек останется доплатить.
+ * Один билет — DEBT_TICKETS_PER_TICKET (10%) долга, но не больше половины (пять билетов).
+ * Баланс, долг и билеты — мусор/ноль/минус: план пустой (0 билетов, весь долг фишками).
+ */
+export function pactDebtTicketPlan(debt: number, tickets: number): { tickets: number; chips: number } {
+  const total = Number.isFinite(debt) && debt > 0 ? debt : 0;
+  const have = Number.isFinite(tickets) && tickets > 0 ? Math.floor(tickets) : 0;
+  if (total === 0 || have === 0) return { tickets: 0, chips: total };
+  const unit = Math.round(total * DEBT_TICKETS_PER_TICKET);
+  if (unit <= 0) return { tickets: 0, chips: total }; // билет не закрывает даже целой фишки — не тратим
+  const half = Math.round(total * DEBT_TICKETS_SHARE);
+  const use = Math.min(5, have, Math.ceil(half / unit)); // не больше половины долга — пяти билетов
+  const covered = Math.min(half, unit * use);
+  return { tickets: use, chips: Math.max(0, total - covered) };
 }
 
 /**

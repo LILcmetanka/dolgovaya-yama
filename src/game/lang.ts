@@ -297,6 +297,8 @@ const TEXTS = {
   pactCost: { ru: 'ПЛАТИШЬ', en: 'YOU PAY' },
   pactRefuse: { ru: 'ОТКАЗАТЬСЯ', en: 'REFUSE' }, // кнопка внизу сукна, перед ней ✕
   pactPickSymbol: { ru: 'ВЫБЕРИ СИМВОЛ', en: 'PICK A SYMBOL' }, // карта №11: ряд кнопок-символов на сукне
+  pactPickMachine: { ru: 'ВЫБЕРИ АВТОМАТ', en: 'PICK A MACHINE' }, // карта №38: три кнопки-автомата на сукне
+  pactAmuletBurned: { ru: 'АМУЛЕТ СГОРЕЛ', en: 'THE AMULET BURNED' }, // сделка №34: следующий купленный сгорает сразу
   pactNews: { ru: 'СДЕЛКА: {0} / {1}', en: 'DEAL: {0} / {1}' }, // новость на стекле, когда сделку взяли
   pactOver: { ru: 'СДЕЛКА КОНЧИЛАСЬ', en: 'THE DEAL IS OVER' }, // новость на стекле, когда срок вышел
   pactNoRoom: { ru: 'НЕТ МЕСТА ПОД АМУЛЕТ', en: 'NO ROOM FOR AN AMULET' }, // карта №13: сосуд занят — взять нельзя

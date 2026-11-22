@@ -20,6 +20,7 @@ export interface WeightContext {
   skullMul?: number; // поправка веса черепа от сделки Дилера (dealerGame.skullShareWeightMul); без неё — 1
   symbolLuck?: SymbolLuck; // сделка №11: выбранному символу +, остальным −; без неё веса обычные
   symbolBonus?: Partial<Record<string, number>>; // улучшения №23/24: клеверу и вишне + к весу (upgrades.symbolWeightBonus)
+  symbolWeightMul?: Partial<Record<string, number>>; // сделка №14: множители веса символов (вишни реже вдвое)
   // Действия вне прокрутки (шаг 29): обмен весов двух символов (№2) и проданные символы (№8) — до конца раунда.
   // Через них же считается доля черепов на плашке, поэтому прокрутка и плашка показывают одно число.
   swapSymbols?: { from: string; to: string } | null;
@@ -55,6 +56,8 @@ export function symbolWeightOf(symbol: SlotSymbol, base: WeightOf, ctx: WeightCo
   const bonus = ctx.symbolBonus?.[symbol.id] ?? 0;
   const withBonus = bonus > 0 && machined > 0 ? machined + bonus : machined;
   let weight = boostWeight(symbol, withBonus, ctx.effects); // чеснок: череп легче, вишни: вишня тяжелее
+  const symbolMul = ctx.symbolWeightMul?.[symbol.id];
+  if (Number.isFinite(symbolMul) && symbolMul! > 0) weight *= symbolMul!; // сделка №14: вишни реже вдвое
   if (ctx.symbolLuck !== undefined) weight = symbolLuckWeight(symbol, weight, ctx.symbolLuck); // сделка №11
   if (ctx.skullMul !== undefined && isSkull(symbol)) weight *= ctx.skullMul; // сделка Дилера: черепов больше
   if (ctx.effects.risk && isSkull(symbol)) weight *= RISK_SKULL_FACTOR; // риск: черепа втрое чаще

@@ -1,4 +1,5 @@
 import { interestCoins, TICKETS_PER_DEBT } from '../amulets';
+import { pactDebtTicketPlan, pactEffects } from '../dealerGame';
 import { amuletTexture, TICKET_TEXTURE } from '../decor';
 import { isDevMode } from '../devmode';
 import { CHIP_RECORD } from '../gameConfig';
@@ -122,6 +123,19 @@ export abstract class CollectorScene extends SaveScene {
     if (this.isGameOver) return;
     this.finishTutorial(); // Коллектор пришёл — тьма рассеивается совсем (и обучение запоминается)
     if (!this.hasEnoughForDebt()) {
+      // Сделка №45: половину долга можно закрыть билетами. Один билет — 10% долга, но не больше половины;
+      // остаток должен покрываться фишками. Решение принимается сразу: иначе игрок просто не увидел бы выхода.
+      if (pactEffects(this.pacts, this.round).debtTicketsHalf) {
+        const plan = pactDebtTicketPlan(this.debt, this.tickets);
+        if (plan.tickets > 0 && plan.chips <= this.balance) {
+          const covered = this.debt - plan.chips;
+          this.tickets -= plan.tickets;
+          this.balance += covered; // билеты превратились в фишки ровно на свою долю долга
+          this.sfx.play('ticket');
+          this.effects.popup(`−${plan.tickets} 🎟`, GOLD_TEXT);
+          this.refreshHud();
+        }
+      }
       if (this.canDeferDebt()) {
         this.deferDebt(); // «Отсрочка»: долг уйдёт к следующему раунду, яма и KABOOM подождут
         return;
@@ -138,7 +152,8 @@ export abstract class CollectorScene extends SaveScene {
 
   /** Улучшение №10: отсрочка куплена и в этом забеге ещё не тратилась. */
   private canDeferDebt(): boolean {
-    return this.upgradeEffects.deferOnce && !this.deferredThisRun;
+    // Улучшение №10 или сделка №43 «отсрочка на раунд»: и та и другая — раз за забег.
+    return (this.upgradeEffects.deferOnce || pactEffects(this.pacts, this.round).debtDefer) && !this.deferredThisRun;
   }
 
   /**
@@ -189,7 +204,9 @@ export abstract class CollectorScene extends SaveScene {
       (x, y) => {
         this.balance -= this.debt;
         // Улучшение №13 (шаг 28): +5 п.п. к «Процентам» — доля приходит из upgradeEffects, не из сцены.
-        const interest = interestCoins(this.balance, this.amuletIds(), this.upgradeEffects.interestBonus);
+        // Сделка №19: свои проценты работают и без амулета «Проценты» — это её собственный процент на остаток.
+        const pactInterest = Math.floor(this.balance * pactEffects(this.pacts, this.round).interestBonus);
+        const interest = interestCoins(this.balance, this.amuletIds(), this.upgradeEffects.interestBonus) + pactInterest;
         if (interest > 0) {
           this.earn(interest); // проценты — доход забега (не штраф): они тоже идут в цель 1 000 000
           this.amuletRack.trigger('interest');
@@ -535,7 +552,9 @@ export abstract class CollectorScene extends SaveScene {
    * Улучшение №30 (28б): один амулет не сгорает при смерти — витрина предлагает его бесплатно, раз за забег.
    */
   private showMemorySlot(): void {
-    const free = freeMemorySave(this.upgradeEffects, this.amuletSavedThisRun);
+    // Сделка №34: один амулет не сгорает при смерти — бесплатный перенос, как у улучшения №30, но раз за забег.
+    const pactFree = pactEffects(this.pacts, this.round).amuletDeathSave && !this.amuletSavedThisRun;
+    const free = freeMemorySave(this.upgradeEffects, this.amuletSavedThisRun) || pactFree;
     const options = memoryOptions(this.amulets.map((amulet) => amulet.id), this.tickets, free ? 1 : 0);
     if (options.length === 0) return; // амулетов не было или билетов не хватает — слот не показываем
     this.memoryOptions = options;

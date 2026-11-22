@@ -204,6 +204,15 @@ export class ItemShelf {
     });
   }
 
+  /**
+   * Сколько клеток открыто сейчас (сделки шага 30: №28 +2 места, №26/№30 −1). Дверцы закрытых отсеков
+   * снова встают на место; предметы, что уже лежали, не выбрасываются — сцена сама решает, куда их девать.
+   */
+  setOpenCount(slots: number): void {
+    const open = Math.max(0, Math.min(this.doors.length, Math.floor(slots)));
+    this.doors.forEach((door, slot) => door.setVisible(slot >= open));
+  }
+
   /** Подсказка клетки: что за предмет и что он делает. */
   private hintFor(slot: number): [string, string] | null {
     const item = this.shelfItems[slot];

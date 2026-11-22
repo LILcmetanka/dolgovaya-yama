@@ -412,11 +412,12 @@ test('связка №8 «смена автомата отложена / чер�
   assert.equal(D.pactEffects([{ id: 'machine-delay', untilRound: 0 }], 1).noMachineSwap, false, 'битый срок — сделки нет');
 });
 
-test('сделка №9 из пула удалена: 15 карт, раздача по-прежнему даёт три', () => {
+test('пул сделок: 15 старых + 37 карт шага 30, раздача по-прежнему даёт три', () => {
   // Решение автора 22.11.2026 (шаг 33): с одной ямой за забег второй запас недостижим, карта ничего не давала.
   // id удалённой карты собираем из частей: строки карты в коде и в grep'ах быть не должно, а проверить её отсутствие надо.
   const GONE = ['extra', 'breath'].join('-');
-  assert.equal(D.PACTS.length, 15, 'в пуле 15 карт — было 16, №9 убрана');
+  assert.equal(D.PACTS.length, 52, 'в пуле 52 карты: 15 старых и 37 новых шага 30');
+  assert.equal(new Set(D.PACTS.map((spec) => spec.id)).size, D.PACTS.length, 'id карт уникальны — дублей нет');
   assert.equal(D.PACTS.some((spec) => spec.id === GONE), false, 'карты «ещё дыхание» в пуле нет');
   assert.equal(D.isPactId(GONE), false, 'старая плёнка с этой сделкой читается как незнакомая сделка');
   assert.deepEqual(D.readPacts([{ id: GONE, untilRound: 999 }]), [], 'и не возвращает сделку в забег');
@@ -503,4 +504,215 @@ test('связка №15 «забрать дважды 3 раунда / втор
   assert.equal(D.pactDoubleTake(true, -5), 0, 'минус — нет');
   assert.equal(D.pactDoubleTake(true, Number.NaN), 0, 'мусор — нет');
   assert.equal(D.pactDoubleTake(true, Number.POSITIVE_INFINITY), 0, '∞ — нет');
+});
+
+// ---------- Шаг 30: 37 карт третьей партии (DONTLIKE.md §2) ----------
+// Группы по 5–6 карт: у каждой проверено, что её число/флаг действительно меняет то, что читает сцена или симулятор.
+// Пять карт не добавлены: №31, 37, 41 — точные дубли уже принятых, №42, 47, 49, 50 — без механики (QUESTIONS.md).
+
+test('шаг 30, блок 1: прокрутки (№1, 2, 5) и черепа (№6, 7)', () => {
+  const spinPlus = D.pactEffects([D.pactOf('spin-plus', TAKEN)], TAKEN);
+  assert.equal(spinPlus.spinsDelta, D.SPIN_PLUS_SPINS, '№1: +1 прокрутка');
+  assert.equal(spinPlus.skullShareDelta, D.SPIN_PLUS_SKULL_DELTA, '№1: черепа чаще на 1%');
+
+  const spinCap = D.pactEffects([D.pactOf('spin-cap', TAKEN)], TAKEN);
+  assert.equal(spinCap.spinCapDelta, D.SPIN_CAP_BONUS, '№2: потолок +2');
+  assert.equal(spinCap.skullSpinCost, D.SPIN_CAP_SKULL_SPINS, '№2: череп отнимает прокрутку');
+  assert.equal(D.pactSpinCap(30, spinCap), 32, '№2: потолок 30 → 32');
+
+  const empty = D.pactEffects([D.pactOf('empty-spin', TAKEN)], TAKEN);
+  assert.equal(empty.emptySpinSpins, D.EMPTY_SPIN_SPINS, '№5: пустая прокрутка даёт прокрутку');
+  assert.ok(D.EMPTY_SPIN_DEBT_MUL > 1, '№5: долг следующего раунда дороже');
+
+  const calm = D.pactEffects([D.pactOf('calm-win', TAKEN)], TAKEN);
+  assert.equal(calm.skullShareDelta, D.CALM_WIN_SKULL_DELTA, '№6: черепа реже');
+  assert.equal(calm.winMul, D.CALM_WIN_MUL, '№6: выигрыш −10%');
+
+  const half = D.pactEffects([D.pactOf('half-step', TAKEN)], TAKEN);
+  assert.equal(half.skullHalfStep, true, '№7: полступени');
+  const normal = D.skullStreakAfter(9, D.pactEffects([], TAKEN));
+  const halfStep = D.skullStreakAfter(9, half);
+  assert.ok(halfStep > normal, `№7: 9 → ${halfStep}, а не ${normal}`);
+  assert.equal(D.skullStreakAfter(1, half), 1, '№7: с серии 1 полступени не снимают ничего');
+  assert.equal(D.pactTickets(0, -D.HALF_STEP_TICKETS), 0, '№7: билеты в минус не уходят');
+});
+
+test('шаг 30, блок 2: черепа и выигрыш (№9, 10, 11, 12, 14, 15)', () => {
+  const growth = D.pactOf('skull-growth', 5);
+  assert.equal(D.pactEffects([growth], 5).skullShareDelta, 0, '№9: в первом раунде доля как была');
+  assert.ok(D.pactEffects([growth], 7).skullShareDelta < 0, '№9: в третьем раунде доля заморожена');
+  assert.ok(D.pactEffects([growth], 9).skullShareDelta > 0, '№9: на пятом раунде рост вдвое');
+
+  const cap = D.pactEffects([D.pactOf('skull-cap', TAKEN)], TAKEN);
+  assert.equal(cap.skullShareMax, D.SKULL_CAP_SHARE, '№10: доля не выше 25%');
+  assert.equal(cap.spinCapValue, D.SKULL_CAP_SPINS, '№10: потолок прокруток 10');
+  assert.equal(D.pactSpinCap(30, cap), 10, '№10: потолок опускается до 10');
+  assert.ok(Math.abs(0.3 + D.pactSkullDelta(0.3, 0.05, cap.skullShareMax) - 0.25) < 1e-12, '№10: поправка урезается до потолка');
+
+  const winDebt = D.pactEffects([D.pactOf('win-debt', TAKEN)], TAKEN);
+  assert.equal(winDebt.winMul, D.WIN_DEBT_WIN, '№11: паттерны +20%');
+  assert.equal(D.pactDebt(200, D.WIN_DEBT_MUL), 220, '№11: долг +8% разово');
+
+  const jackpot = D.pactEffects([D.pactOf('jackpot-double', TAKEN)], TAKEN);
+  assert.equal(D.pactJackpotWin(true, jackpot), D.JACKPOT_DOUBLE_WIN, '№12: джекпот платит вдвое');
+  assert.equal(D.pactJackpotWin(false, jackpot), 1, '№12: прочие паттерны не трогаем');
+  const weight = D.pactPatternWeight(jackpot);
+  const top = P.PATTERNS.find((pattern) => pattern.multiplier === P.TOP_MULTIPLIER);
+  assert.equal(weight(top, 10), 10 * D.JACKPOT_DOUBLE_WEIGHT, '№12: джекпот вдвое реже');
+
+  const cherry = D.pactEffects([D.pactOf('cherry-double', TAKEN)], TAKEN);
+  const cherrySymbol = R.SYMBOLS.find((symbol) => symbol.id === 'cherry');
+  assert.equal(D.pactSymbolPay(cherrySymbol, cherry), D.CHERRY_PAY_MUL, '№14: вишни платят вдвое');
+  const base = R.weightsForRound(TAKEN);
+  const ctx = { machineId: 'classic', amulets: [], effects: I.noEffects(), symbolWeightMul: cherry.symbolWeightMul };
+  assert.ok(SK.symbolWeightOf(cherrySymbol, base, ctx, false) < base(cherrySymbol), '№14: вишни реже вдвое');
+  const lemon = R.SYMBOLS.find((symbol) => symbol.id === 'lemon');
+  assert.equal(SK.symbolWeightOf(lemon, base, ctx, false), base(lemon), '№14: другие символы не трогаем');
+  const hit = { pattern: P.PATTERNS[0], symbol: cherrySymbol, cells: P.PATTERNS[0].cells };
+  assert.equal(A.amuletPatternWin([hit], [], (symbol) => D.pactSymbolPay(symbol, cherry)), cherrySymbol.price * P.PATTERNS[0].multiplier * D.CHERRY_PAY_MUL, '№14: выплата через amuletPatternWin');
+
+  const step = D.pactEffects([D.pactOf('step-two', TAKEN)], TAKEN);
+  assert.equal(step.streakStepBonus, D.STEP_TWO_BONUS, '№15: шаг +1');
+  assert.equal(D.skullStreakAfter(9, step), 7, '№15: череп роняет на две ступени');
+});
+
+test('шаг 30, блок 3: экономика и старт (№17, 18, 19, 20, 21, 22)', () => {
+  const half = D.pactEffects([D.pactOf('amulet-half', TAKEN)], TAKEN);
+  assert.equal(half.amuletPriceMul, D.AMULET_HALF_PRICE, '№17: амулеты за полцены');
+  assert.equal(half.amuletCopiesDouble, true, '№17: вторая копия вдвое дороже');
+  assert.equal(A.insuranceCopyPrice(3, 1), 6, '№17: механика второй копии — та же, что у страховки');
+
+  const gift = D.pactEffects([D.pactOf('ticket-gift', TAKEN)], TAKEN);
+  assert.ok(gift.ticketChipsMul > 1, '№18: билеты за фишки дороже');
+  assert.ok(I.ticketForChips(1000, 0, gift.ticketChipsMul) > I.ticketForChips(1000, 0), '№18: цена билета выросла');
+
+  const interest = D.pactEffects([D.pactOf('interest-win', TAKEN)], TAKEN);
+  assert.ok(interest.interestBonus > 0, '№19: проценты есть');
+  assert.ok(interest.winMul < 1, '№19: выигрыш срезан');
+
+  const ins = D.pactEffects([D.pactOf('insurance-free', TAKEN)], TAKEN);
+  assert.equal(ins.amuletFreeInsurance, true, '№20: страховка бесплатно');
+  assert.equal(ins.insuranceMaxOne, true, '№20: одна страховка на забег');
+
+  const pot = D.pactEffects([D.pactOf('pot-start', TAKEN)], TAKEN);
+  assert.equal(pot.potStart, D.POT_START_CHIPS, '№21: кон 150 фишек');
+
+  const piggy = D.pactEffects([D.pactOf('piggy-lock', TAKEN)], TAKEN);
+  assert.equal(piggy.piggyBonus, D.PIGGY_LOCK_BONUS, '№22: копилка +2');
+  assert.equal(piggy.noTake, true, '№22: кон забрать руками нельзя');
+  assert.ok(A.piggyCoins(3, ['piggy'], piggy.piggyBonus) > A.piggyCoins(3, ['piggy'], 0), '№22: копилка правда больше');
+});
+
+test('шаг 30, блок 4: кон, предметы и полка (№23, 24, 25, 26, 27, 28, 30)', () => {
+  const refund = D.pactEffects([D.pactOf('skull-refund', TAKEN)], TAKEN);
+  assert.equal(refund.skullPotRefund, D.SKULL_REFUND_SHARE, '№23: череп возвращает половину кона');
+  assert.equal(refund.takeOncePerRound, true, '№23: забрать раз в раунд');
+
+  const safe = D.pactEffects([D.pactOf('pot-safe-double', TAKEN)], TAKEN);
+  assert.equal(safe.potSafeFirst, true, '№24: первый череп щадит кон');
+  assert.equal(safe.skullDoubleBurn, true, '№24: следующий сжигает вдвое');
+
+  assert.ok(D.CHIPS_START_CHIPS > 0 && D.CHIPS_START_DEBT_MUL > 1, '№25: фишки в плюс, долг в плюс');
+  assert.equal(D.pactDebt(0, D.CHIPS_START_DEBT_MUL), 0, '№25: долг не уходит в минус');
+
+  const freeItem = D.pactEffects([D.pactOf('free-item', TAKEN)], TAKEN);
+  assert.equal(freeItem.shelfSlotsDelta, D.FREE_ITEM_SHELF, '№26: −1 место на полке');
+
+  const cheap = D.pactEffects([D.pactOf('item-cheap', TAKEN)], TAKEN);
+  assert.equal(cheap.itemPriceMul, D.ITEM_CHEAP_MUL, '№27: предметы −20%');
+  assert.equal(cheap.itemOfferDelta, D.ITEM_CHEAP_OFFER, '№27: в витрине на один меньше');
+  const shield = I.ITEMS.find((item) => item.id === 'shield');
+  assert.ok(I.itemPrice(shield, 1000, cheap.itemPriceMul) < I.itemPrice(shield, 1000), '№27: цена предмета упала');
+
+  const slots = D.pactEffects([D.pactOf('two-slots', TAKEN)], TAKEN);
+  assert.equal(slots.shelfSlotsDelta, D.TWO_SLOTS_BONUS, '№28: +2 места');
+  assert.equal(slots.skullShareDelta, D.TWO_SLOTS_SKULL_DELTA, '№28: черепа чаще');
+
+  const joker = D.pactEffects([D.pactOf('joker-slot', TAKEN)], TAKEN);
+  assert.equal(joker.shelfSlotsDelta, D.JOKER_SLOT_SHELF, '№30: джокер занимает место полки');
+});
+
+test('шаг 30, блок 5: амулеты, символ и автомат (№32, 33, 34, 35, 36, 38)', () => {
+  const copy = D.pactEffects([D.pactOf('amulet-copy', TAKEN)], TAKEN);
+  assert.equal(copy.amuletPriceAdd, D.AMULET_COPY_PRICE_ADD, '№32: все амулеты +1 билет');
+
+  const socket = D.pactEffects([D.pactOf('socket-gift', TAKEN)], TAKEN);
+  assert.equal(socket.amuletsClosed, true, '№33: амулеты не продаются');
+  assert.equal(socket.amuletPerShop, 0, '№33: ограничения витрины нет');
+
+  const save = D.pactEffects([D.pactOf('amulet-save', TAKEN)], TAKEN);
+  assert.equal(save.amuletDeathSave, true, '№34: амулет не сгорает при смерти');
+
+  const rare = D.pactEffects([D.pactOf('rare-only', TAKEN)], TAKEN);
+  assert.equal(rare.rareAmuletForced, true, '№35: в витрине редкий');
+  assert.equal(rare.amuletPerShop, D.RARE_ONLY_AMULETS, '№35: один амулет за магазин');
+
+  const seven = R.SYMBOLS.find((symbol) => symbol.id === 'seven');
+  const run = D.pactOf('symbol-run', TAKEN, seven);
+  assert.equal(run.untilRound, TAKEN + D.SYMBOL_RUN_ROUNDS - 1, '№36: до конца забега');
+  assert.deepEqual(D.pactEffects([run], TAKEN).symbolLuck, { id: 'seven', plus: D.SYMBOL_LUCK_PLUS, minus: D.SYMBOL_LUCK_MINUS }, '№36: те же +2/−0,5');
+
+  const machine = D.pactSpec('machine-pick');
+  assert.equal(machine.needsMachine, true, '№38: нужен выбор автомата');
+  assert.equal(D.pactEffects([D.pactOf('machine-pick', TAKEN)], TAKEN).shopDiscount, D.MACHINE_PICK_DISCOUNT, '№38: скидка магазина −10%');
+});
+
+test('шаг 30, блок 6: сетка, кровь и долг (№39, 40, 43, 44, 45)', () => {
+  const joker = D.pactEffects([D.pactOf('joker-center', TAKEN)], TAKEN);
+  const lemon = R.SYMBOLS.find((symbol) => symbol.id === 'lemon');
+  const grid = Array.from({ length: R.GRID_ROWS }, () => new Array(R.GRID_COLUMNS).fill(lemon)); // все клетки — лимоны
+  const withJoker = D.pactJokerCenter(grid, joker);
+  assert.equal(withJoker[1][2].id, R.JOKER.id, '№39: в центре джокер');
+  assert.equal(grid[1][2].id, 'lemon', '№39: исходная сетка не меняется');
+  assert.ok(joker.winMul < 1, '№39: выигрыш −10%');
+
+  const blood = D.pactEffects([D.pactOf('blood-round', TAKEN)], TAKEN);
+  assert.equal(blood.bloodFirstSpin, true, '№40: первая прокрутка кровавая');
+  assert.equal(blood.skullShareDelta, D.BLOOD_FIRST_SKULL_DELTA, '№40: черепа чаще');
+
+  const defer = D.pactEffects([D.pactOf('debt-defer', TAKEN)], TAKEN);
+  assert.equal(defer.debtDefer, true, '№43: отсрочка');
+  assert.ok(D.DEBT_DEFER_COST_MUL > 1, '№43: долг дороже на 25%');
+
+  const freeze = D.pactEffects([D.pactOf('debt-freeze', TAKEN)], TAKEN);
+  assert.equal(freeze.debtNoGrowth, true, '№44: долг не растёт');
+  assert.equal(D.DEBT_FREEZE_NEXT_MUL, 2, '№44: следующий вдвое');
+
+  const tickets = D.pactEffects([D.pactOf('debt-tickets', TAKEN)], TAKEN);
+  assert.equal(tickets.debtTicketsHalf, true, '№45: половину долга можно закрыть билетами');
+  assert.deepEqual(D.pactDebtTicketPlan(1000, 10), { tickets: 5, chips: 500 }, '№45: не больше пяти билетов');
+  assert.deepEqual(D.pactDebtTicketPlan(1000, 1), { tickets: 1, chips: 900 }, '№45: один билет — 10%');
+  assert.deepEqual(D.pactDebtTicketPlan(1000, 0), { tickets: 0, chips: 1000 }, '№45: без билетов долг фишками');
+  assert.deepEqual(D.pactDebtTicketPlan(0, 3), { tickets: 0, chips: 0 }, '№45: нулевой долг — плана нет');
+});
+
+test('шаг 30, блок 7: риск и забирание (№46, 48) и никаких минусов', () => {
+  const risky = D.pactEffects([D.pactOf('win-double-risk', TAKEN)], TAKEN);
+  assert.equal(risky.winMul, D.WIN_DOUBLE, '№46: выигрыш ×2');
+  assert.equal(risky.skullUnblockable, true, '№46: щит череп не отбивает');
+
+  const take = D.pactEffects([D.pactOf('take-streak', TAKEN)], TAKEN);
+  assert.equal(take.doubleTake, true, '№48: второе забирание');
+  assert.equal(take.doubleTakeShare, 1, '№48: второе отдаёт весь кон');
+  assert.equal(take.takeStreakReset, true, '№48: серия сбрасывается');
+  assert.equal(D.pactDoubleTake(true, 1000, take.doubleTakeShare), 1000, '№48: 100% первого забирания');
+
+  // Ни одна карта не даёт отрицательный долг, прокрутки, билеты или места — всё клампится.
+  for (const spec of D.PACTS) {
+    const effects = D.pactEffects([D.pactOf(spec.id, TAKEN, R.SYMBOLS.find((symbol) => symbol.id === 'seven'))], TAKEN);
+    assert.ok(D.pactDebt(0, D.CHEAP_SHOP_DEBT_MUL) >= 0, `${spec.id}: долг не минус`);
+    assert.ok(D.pactSpinCap(1, effects) >= 1, `${spec.id}: прокруток не меньше одной`);
+    assert.ok(D.pactTickets(0, -99) === 0, `${spec.id}: билеты не минус`);
+    assert.ok(effects.shelfSlotsDelta + I.MAX_SLOTS >= 0, `${spec.id}: полка не минус`);
+    assert.ok(effects.effectSlotsDelta + I.EFFECT_SLOTS >= 0, `${spec.id}: столбик не минус`);
+    assert.ok(Number.isFinite(effects.itemPriceMul) && effects.itemPriceMul > 0, `${spec.id}: цена предмета > 0`);
+    assert.ok(Number.isFinite(effects.amuletPriceMul) && effects.amuletPriceMul > 0, `${spec.id}: цена амулета > 0`);
+    assert.ok(Number.isFinite(effects.interestBonus) && effects.interestBonus >= 0, `${spec.id}: проценты не минус`);
+    assert.ok(Number.isFinite(effects.potStart) && effects.potStart >= 0, `${spec.id}: стартовый кон не минус`);
+    assert.ok(Number.isFinite(effects.skullPotRefund) && effects.skullPotRefund >= 0 && effects.skullPotRefund <= 1, `${spec.id}: возврат кона 0…1`);
+  }
+  // pactEffects не падает на мусоре: неизвестный id, битый срок, чужая запись.
+  assert.doesNotThrow(() => D.pactEffects([{ id: 'nope', untilRound: 5 }], 5), 'незнакомый id не роняет эффекты');
+  assert.doesNotThrow(() => D.pactEffects([], Number.NaN), 'NaN-раунд не роняет эффекты');
+  assert.equal(D.pactEffects([{ id: 'take-streak', untilRound: 0 }], 1).doubleTake, false, 'битый срок — сделки нет');
 });

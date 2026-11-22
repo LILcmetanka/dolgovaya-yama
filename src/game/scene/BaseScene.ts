@@ -156,6 +156,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isTapeRestart = false;
   protected deferredThisRun = false; // улучшение №10: отсрочка в этом забеге уже была (липкая, как rescueUsed)
   protected amuletSavedThisRun = false; // улучшение №30 (28б): бесплатный перенос амулета при смерти уже был в этом забеге
+  protected pactAmuletBurns = false; // сделка №34: следующий купленный амулет сгорит сразу
   protected amuletChipUsedThisRun = false; // улучшение №39 (28в): амулет за фишки уже брали — откат кассетой это не возвращает
   protected freeGiftGiven = false; // улучшение №40 (28в): подарок первого магазина уже выдан
   protected startSymbolId: string | null = null; // улучшение №33 (28в): выбранный первый символ забега
@@ -232,6 +233,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.runsPlayed = this.isTapeRestart ? runNumber() : beginRun(); // откат кассетой — тот же забег, номер не двигаем (№8)
     this.deferredThisRun = false; // №10: отсрочка снова доступна
     this.amuletSavedThisRun = false; // №30: перенос амулета при смерти снова доступен один раз
+    this.pactAmuletBurns = false; // сделка №34: в новом забеге «следующий амулет сгорит» ещё не назначен
     this.amuletChipUsedThisRun = false; // №39: амулет за фишки в новом забеге снова доступен
     this.freeGiftGiven = false; // №40: подарок первого магазина ещё не выдан
     this.startSymbolId = null; // №33: выбираем символ заново в каждом новом забеге

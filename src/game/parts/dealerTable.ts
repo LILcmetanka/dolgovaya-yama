@@ -3,6 +3,7 @@ import { createDealerFelt, DEALER_FELT_TEXTURE } from '../decor';
 import { pactSymbolsAvailable, type PactId, type PactSpec } from '../dealerGame';
 import { SCREEN } from '../layout';
 import { t } from '../lang';
+import { MACHINES, type MachineId } from '../machines';
 import type { SlotSymbol } from '../rules';
 import { addText, GOLD_TEXT, GREEN_TEXT, POPUP_DEPTH, RED_TEXT } from '../theme';
 
@@ -46,6 +47,7 @@ interface Card {
   cost: Phaser.GameObjects.Text;
   id: PactId | null; // что лежит на карте сейчас; null — карта пустая и не нажимается
   needsSymbol: boolean; // карта №11: клик не берёт сделку, а открывает выбор символа
+  needsMachine: boolean; // карта №38: клик открывает выбор автомата
 }
 
 /**
@@ -57,7 +59,7 @@ interface Card {
  */
 export class DealerTable {
   private readonly scene: Phaser.Scene;
-  private readonly accept: (id: PactId, symbol?: SlotSymbol) => void;
+  private readonly accept: (id: PactId, symbol?: SlotSymbol, machine?: MachineId) => void;
   private readonly onRefuse: () => void;
   private readonly felt: Phaser.GameObjects.Image;
   private readonly cards: Card[] = [];
@@ -67,6 +69,7 @@ export class DealerTable {
   private picks: Phaser.GameObjects.Text[] = []; // кнопки-символы: создаются, когда карта их попросила
   private pickSymbols: readonly SlotSymbol[] = []; // из чего выбирать (dealerGame.pactSymbols)
   private pendingId: PactId | null = null; // карта, которая ждёт выбора символа; null — выбора нет
+  private pendingMachine = false; // ждём выбор автомата (№38), а не символа
   private isClosing = false; // стол уже уезжает: второй клик не должен взять вторую сделку
 
   /** accept(id, symbol?) — кликнули по карте сделки (или по символу для №11), refuse() — по «✕ ОТКАЗАТЬСЯ». */
@@ -137,18 +140,19 @@ export class DealerTable {
       label(COST_LABEL_Y, t('pactCost'), RED_TEXT),
       cost,
     ]);
-    const card: Card = { container, bonus, cost, id: null, needsSymbol: false };
+    const card: Card = { container, bonus, cost, id: null, needsSymbol: false, needsMachine: false };
     container.setSize(CARD_W, CARD_H).setDepth(DEPTH).setVisible(false);
     container.setInteractive({ useHandCursor: true }).disableInteractive();
     container.on('pointerdown', () => {
       if (!card.id) return;
-      if (!card.needsSymbol) {
+      if (!card.needsSymbol && !card.needsMachine) {
         this.accept(card.id);
         return;
       }
-      // №11: сначала символ — сделку возьмёт клик по нему, а не по карте (DealerScene.acceptPact).
+      // №11/№38: сначала выбор — сделку возьмёт клик по кнопке, а не по карте (DealerScene.acceptPact).
       // Выбирать не из чего — карта ведёт себя как отказ: клика в пустоту не бывает.
-      if (pactSymbolsAvailable(this.pickSymbols)) this.showPicks(card.id);
+      if (card.needsMachine) this.showPicks(card.id, true);
+      else if (pactSymbolsAvailable(this.pickSymbols)) this.showPicks(card.id, false);
       else this.onRefuse();
     });
     // Наведение: карта чуть подрастает — видно, что её можно взять.
@@ -183,11 +187,13 @@ export class DealerTable {
       if (!offer) {
         card.id = null;
         card.needsSymbol = false;
+        card.needsMachine = false;
         card.container.setVisible(false).disableInteractive();
         return;
       }
       card.id = offer.id;
       card.needsSymbol = offer.needsSymbol === true;
+      card.needsMachine = offer.needsMachine === true;
       card.bonus.setText(t(offer.bonus));
       card.cost.setText(t(offer.cost));
       card.container.setVisible(true).setAlpha(0).setScale(1).setY(CARD_Y + 16);
@@ -208,15 +214,19 @@ export class DealerTable {
    * Клик по символу берёт сделку с ним, «←» слева возвращает к картам (сделку не берём),
    * «✕ ОТКАЗАТЬСЯ» внизу — отказ от Дилера целиком.
    */
-  private showPicks(id: PactId): void {
-    if (this.isClosing || this.pendingId !== null || this.pickSymbols.length === 0) return;
+  private showPicks(id: PactId, machine: boolean): void {
+    if (this.isClosing || this.pendingId !== null) return;
+    const options = machine ? MACHINES.length : this.pickSymbols.length;
+    if (options === 0) return;
     this.pendingId = id;
+    this.pendingMachine = machine;
     for (const card of this.cards) card.container.disableInteractive().setVisible(false);
-    const step = PICK_SIGN_SIZE + 2 * PICK_PAD + PICK_GAP;
-    const start = SCREEN.x - ((this.pickSymbols.length - 1) * step) / 2; // ряд по центру сукна
-    this.picks = this.pickSymbols.map((symbol, index) => {
-      const button = addText(this.scene, start + index * step, PICK_Y, symbol.sign, {
-        fontSize: `${PICK_SIGN_SIZE}px`,
+    const step = machine ? PICK_SIGN_SIZE * 5 + 2 * PICK_PAD + PICK_GAP : PICK_SIGN_SIZE + 2 * PICK_PAD + PICK_GAP;
+    const start = SCREEN.x - ((options - 1) * step) / 2; // ряд по центру сукна
+    this.picks = new Array(options).fill(null).map((_, index) => {
+      const label = machine ? (MACHINES[index].sign || '○') : this.pickSymbols[index].sign;
+      const button = addText(this.scene, start + index * step, PICK_Y, label, {
+        fontSize: `${machine ? PICK_SIGN_SIZE - 6 : PICK_SIGN_SIZE}px`,
         color: GOLD_TEXT,
         backgroundColor: `#${CARD_FILL.toString(16)}`,
         padding: { x: PICK_PAD, y: PICK_PAD },
@@ -224,15 +234,17 @@ export class DealerTable {
       button.setInteractive({ useHandCursor: true });
       button.on('pointerdown', () => {
         if (this.pendingId === null || this.isClosing) return;
+        const wasMachine = this.pendingMachine;
         this.pendingId = null;
-        this.accept(id, symbol);
+        if (wasMachine) this.accept(id, undefined, MACHINES[index].id);
+        else this.accept(id, this.pickSymbols[index]);
       });
       button.on('pointerover', () => button.setScale(PICK_HOVER));
       button.on('pointerout', () => button.setScale(1));
       return button;
     });
     this.back.setPosition(start - step, PICK_Y).setVisible(true).setInteractive({ useHandCursor: true });
-    this.pickHint.setVisible(true);
+    this.pickHint.setText(t(machine ? 'pactPickMachine' : 'pactPickSymbol')).setVisible(true);
   }
 
   /**
@@ -250,6 +262,7 @@ export class DealerTable {
   /** Убрать ряд кнопок-символов: выбор отменён (сделка не взята) или стол закрылся. */
   private hidePicks(): void {
     this.pendingId = null;
+    this.pendingMachine = false;
     for (const button of this.picks) button.destroy();
     this.picks = [];
     this.pickHint.setVisible(false);

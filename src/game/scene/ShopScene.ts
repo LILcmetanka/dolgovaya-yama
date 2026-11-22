@@ -1,6 +1,6 @@
 import { addCopy, amuletPrice, countOf, insuranceCopyPrice, maxCopiesOf, randomAmuletOffer, socketPrice, withRareAmulet, type Amulet } from '../amulets';
 import { amuletKey, itemKey, see, WHO_COLLECTOR } from '../codex';
-import { pactEffects, shopDebt, shopRoundOf } from '../dealerGame';
+import { DEBT_FREEZE_NEXT_MUL, pactEffects, shopDebt, shopRoundOf } from '../dealerGame';
 import { canWin, DRUM_SECTORS, drumChips, drumPrice, prizeItem, randomSector, type DrumPrize } from '../drum';
 import { chipsForTickets, itemPrice, MAX_SLOTS, offerReplacement, offerRowCount, randomOffer, slotPrice, TICKETS_PER_SHOP, ticketForChips, type ShopItem } from '../items';
 import { t } from '../lang';
@@ -72,14 +72,18 @@ export abstract class ShopScene extends DealerScene {
     this.collector.flipNote(this.debt);
     // Оффер — под автомат, который стоит: «Удача» у «Тихого» бесполезна (клевера нет).
     // Улучшение №37 (28в): рядов предметов на один больше — панель строится с этим числом ещё в GameScene.
-    const offer = randomOffer(this.round, (item) => machineItemAllowed(this.machineId, item), offerRowCount(this.upgradeEffects.offerRows));
+    // Сделка №27: в витрине на один предмет меньше; рядов не меньше одного.
+    const rowDelta = pactEffects(this.pacts, this.round - 1).itemOfferDelta;
+    const rows = Math.max(1, offerRowCount(this.upgradeEffects.offerRows + rowDelta));
+    const offer = randomOffer(this.round, (item) => machineItemAllowed(this.machineId, item), rows);
     this.offer = offer;
     // Чемодан открыт — витрина амулетов новая; закрыт — в магазине амулетов нет вовсе.
-    const isAmulets = this.amuletsUnlocked();
+    // Сделка №33: в этом забеге амулеты не продаются вовсе — чемодан закрыт.
+    const isAmulets = this.amuletsUnlocked() && !pactEffects(this.pacts, this.round - 1).amuletsClosed;
     const amuletOffer = isAmulets ? this.amuletOfferForShop() : [];
     this.amuletOffer = amuletOffer;
     // Улучшение №39: цена амулета в фишках — столько, сколько стоят его билеты по курсу билета этого магазина.
-    this.chipRate = ticketForChips(this.balance, 0, this.priceMul(), this.upgradeEffects.ticketShareStart);
+    this.chipRate = ticketForChips(this.balance, 0, this.priceMul() * pactEffects(this.pacts, this.round - 1).ticketChipsMul, this.upgradeEffects.ticketShareStart);
     this.amuletChipPrices = amuletOffer.map((amulet) => chipsForTickets(this.amuletPriceNow(amulet), this.chipRate));
     this.seeInShop(offer.map((item) => itemKey(item.id)), amuletOffer.map((amulet) => amuletKey(amulet.id)));
     this.drumSpins = 0; // в новом магазине барабан снова дешёвый
@@ -162,8 +166,10 @@ export abstract class ShopScene extends DealerScene {
    * отложенный в прошлом раунде (debtCarry). Отсрочка при повторе раунда не тратится: число остаётся прежним.
    */
   private applyShopDebt(keepDebt: boolean): void {
-    const next = shopDebt(this.debt, this.round, this.debtNextMul, keepDebt, this.upgradeEffects.debtGrowthMul);
-    if (keepDebt) {
+    // Сделка №44: долг этого раунда не растёт — следующий магазин оставляет то же число, а долг после него ×2.
+    const freeze = !keepDebt && pactEffects(this.pacts, this.round - 1).debtNoGrowth;
+    const next = shopDebt(this.debt, this.round, this.debtNextMul, keepDebt || freeze, this.upgradeEffects.debtGrowthMul);
+    if (keepDebt || freeze) {
       this.debt = next.debt; // раунд повторяется: долг остаётся ровно прежним, выкуп ждёт следующего магазина
     } else {
       // «Долговая биржа» (действие №10, шаг 29): выкупленный заранее долг уменьшает следующий на свою долю.
@@ -172,7 +178,7 @@ export abstract class ShopScene extends DealerScene {
       this.debtCarry = 0; // отложенный долг уже в этом числе — второй раз не прибавляем
       if (cut > 0) this.actionState = { ...this.actionState, debtCut: 0 }; // выкуп одноразовый: второй раз не спишется
     }
-    this.debtNextMul = next.debtNextMul;
+    this.debtNextMul = freeze ? DEBT_FREEZE_NEXT_MUL : next.debtNextMul;
   }
 
   /**
@@ -197,7 +203,9 @@ export abstract class ShopScene extends DealerScene {
    * нижняя граница те же (roundPrice). Все места, где показана или списана цена предмета, идут через эту дверь.
    */
   private itemPriceNow(item: ShopItem): number {
-    return itemPrice(item, this.debt, this.priceMul() * this.upgradeEffects.itemPriceMul);
+    // Сделка №27: предметы −20% — множитель к общей скидке магазина.
+    const pactMul = pactEffects(this.pacts, this.round - 1).itemPriceMul;
+    return itemPrice(item, this.debt, this.priceMul() * this.upgradeEffects.itemPriceMul * pactMul);
   }
 
   /**
@@ -222,15 +230,33 @@ export abstract class ShopScene extends DealerScene {
    */
   private amuletOfferForShop(): Amulet[] {
     const bonus = this.upgradeEffects.amuletMaxCopies;
-    const offer = randomAmuletOffer(this.amuletIds(), bonus);
-    if (!this.upgradeEffects.rareAmuletFirstShop || this.closedDebts() !== 1) return offer;
-    return withRareAmulet(offer, this.amuletIds(), bonus);
+    const effects = pactEffects(this.pacts, this.round - 1);
+    // Сделка №35: в витрине всегда редкий амулет и только один амулет за магазин.
+    let offer = randomAmuletOffer(this.amuletIds(), bonus).filter((amulet) => this.copiesLeft(amulet) > 0);
+    if (effects.rareAmuletForced || (this.upgradeEffects.rareAmuletFirstShop && this.closedDebts() === 1)) {
+      offer = withRareAmulet(offer, this.amuletIds(), bonus);
+    }
+    const limit = Number.isFinite(effects.amuletPerShop) && effects.amuletPerShop > 0 ? Math.floor(effects.amuletPerShop) : 0;
+    return limit > 0 ? offer.slice(0, limit) : offer;
   }
 
-  /** Цена амулета в витрине: скидка магазина (№2), «вдвое дороже» за копию страховки (№5) и −1 билет (№26). */
+  /** Потолок копий с учётом сделки №20: страховку можно держать только одну. */
+  private copiesLeft(amulet: Amulet): number {
+    const max = maxCopiesOf(amulet, this.upgradeEffects.amuletMaxCopies);
+    const cap = pactEffects(this.pacts, this.round - 1).insuranceMaxOne && amulet.id === 'insurance' ? 1 : max;
+    return Math.max(0, cap - countOf(this.amuletCounts, amulet.id));
+  }
+
+  /**
+   * Цена амулета в витрине: скидка магазина (№2), «вдвое дороже» за копию страховки (№5) и −1 билет (№26).
+   * Сделки шага 30: №17 — полцены и вторая копия вдвое дороже, №20 — страховка бесплатно, №32 — все дороже на 1 билет.
+   */
   private amuletPriceNow(amulet: Amulet): number {
-    const price = amuletPrice(amulet, this.priceMul(), this.upgradeEffects.amuletTicketsOff);
     const effects = pactEffects(this.pacts, this.round - 1);
+    if (effects.amuletFreeInsurance && amulet.id === 'insurance') return 0;
+    const mul = this.priceMul() * effects.amuletPriceMul;
+    const price = amuletPrice(amulet, mul, this.upgradeEffects.amuletTicketsOff) + effects.amuletPriceAdd;
+    if (effects.amuletCopiesDouble) return insuranceCopyPrice(price, countOf(this.amuletCounts, amulet.id));
     if (!effects.insuranceDoubles || amulet.id !== 'insurance') return price;
     return insuranceCopyPrice(price, countOf(this.amuletCounts, 'insurance'));
   }
@@ -311,7 +337,7 @@ export abstract class ShopScene extends DealerScene {
       this.showTicketLimit(); // почему ряд погас — подсказкой, как отказ амулету
       return;
     }
-    const price = ticketForChips(this.balance, this.ticketsBought, this.priceMul(), this.upgradeEffects.ticketShareStart);
+    const price = ticketForChips(this.balance, this.ticketsBought, this.priceMul() * pactEffects(this.pacts, this.round - 1).ticketChipsMul, this.upgradeEffects.ticketShareStart);
     if (price > this.balance) {
       this.sfx.play('deny');
       this.shop.deny(this.shop.ticketRow); // не хватает фишек — ценник билета трясётся
@@ -377,7 +403,7 @@ export abstract class ShopScene extends DealerScene {
   private buyAmulet(place: number): void {
     const amulet = this.amuletOffer[place];
     if (!amulet) return;
-    if (countOf(this.amuletCounts, amulet.id) >= maxCopiesOf(amulet, this.upgradeEffects.amuletMaxCopies)) {
+    if (this.copiesLeft(amulet) <= 0) {
       this.sfx.play('deny');
       this.amuletCase.deny(place); // копий уже под потолок — ценник трясётся
       return;
@@ -403,6 +429,17 @@ export abstract class ShopScene extends DealerScene {
       this.amulets.push(amulet); // гнездо занято сразу: второй быстрый клик его уже не получит
     }
     addCopy(this.amuletCounts, amulet.id);
+    // Сделка №34: следующий купленный амулет сгорает сразу — билеты за него не возвращаются.
+    if (this.pactAmuletBurns) {
+      this.pactAmuletBurns = false;
+      this.amuletCounts[amulet.id] = Math.max(0, countOf(this.amuletCounts, amulet.id) - 1);
+      if (isNew) this.amulets.pop();
+      this.amuletOffer[place] = null;
+      this.sfx.play('burn', 0.2);
+      this.screen.announceNews(t('pactAmuletBurned'));
+      this.afterPurchase();
+      return;
+    }
     const count = countOf(this.amuletCounts, amulet.id); // сколько копий станет после этой покупки
     this.amuletCase.sell(place, (x, y) => {
       // Гнездо за панелью: амулет гаснет, пройдя первые ~200 px к нему, — будто уходит за жалюзи, а не летит через витрину.
@@ -426,7 +463,7 @@ export abstract class ShopScene extends DealerScene {
       this.amuletCase.deny(place);
       return;
     }
-    if (countOf(this.amuletCounts, amulet.id) >= maxCopiesOf(amulet, this.upgradeEffects.amuletMaxCopies)) {
+    if (this.copiesLeft(amulet) <= 0) {
       this.sfx.play('deny');
       this.amuletCase.deny(place);
       return;
@@ -549,7 +586,7 @@ export abstract class ShopScene extends DealerScene {
    */
   protected refreshShop(): void {
     // Третий аргумент — цена билета: ряд билетов в торговом автомате живёт по фишкам на руках и покупкам за забег.
-    this.shop.refresh(this.balance, this.shelf.includes(null), ticketForChips(this.balance, this.ticketsBought, this.priceMul(), this.upgradeEffects.ticketShareStart));
+    this.shop.refresh(this.balance, this.shelf.includes(null), ticketForChips(this.balance, this.ticketsBought, this.priceMul() * pactEffects(this.pacts, this.round - 1).ticketChipsMul, this.upgradeEffects.ticketShareStart));
     // Амулет в витрине готов, если есть свободное гнездо (для нового) или он уже стоит (копию докупаем в то же гнездо).
     const amuletReady = this.amuletOffer.map((amulet) => {
       if (amulet === null) return false;

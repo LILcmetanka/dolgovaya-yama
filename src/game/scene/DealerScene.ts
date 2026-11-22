@@ -1,20 +1,34 @@
-import { addCopy, randomAmuletOffer } from '../amulets';
+import { addCopy, countOf, MAX_SOCKETS, maxCopiesOf, randomAmuletOffer, type Amulet } from '../amulets';
 import { see, WHO_DEALER } from '../codex';
 import {
   CHEAP_SHOP_DEBT_MUL,
+  CHIPS_START_CHIPS,
+  CHIPS_START_DEBT_MUL,
   DEBT_CUT_MUL,
+  DEBT_DEFER_COST_MUL,
   DEBT_NEXT_MUL,
+  DEBT_TICKETS_OFF,
+  EMPTY_SPIN_DEBT_MUL,
+  FREE_ITEM_SHELF,
+  HALF_STEP_TICKETS,
+  JOKER_SLOT_SHELF,
   offerPacts,
   PACT_TICKETS,
   pactDebt,
   pactLive,
   pactOf,
   pactSymbols,
+  pactTickets,
+  POT_START_DEBT_MUL,
+  TWO_SLOTS_BONUS,
+  WIN_DEBT_MUL,
   type PactSpec,
   type PactId,
 } from '../dealerGame';
-import { CENTER_X, GRID_Y } from '../layout';
+import { ITEMS, MAX_SLOTS, randomOffer } from '../items';
+import { CENTER_X, GRID_Y, VENDING_BIN } from '../layout';
 import { t } from '../lang';
+import { machineItemAllowed, MACHINES, type MachineId } from '../machines';
 import type { SlotSymbol } from '../rules';
 import { LAMP_PURPLE } from '../theme';
 import { RoundScene } from './RoundScene';
@@ -62,7 +76,7 @@ export abstract class DealerScene extends RoundScene {
    * Такую сделку, которая ещё действует, взять нельзя (dealerGame.pactLive, как отказ бота в симуляторе):
    * дубликат не выдал бы ни бафа второй раз, ни билетов, но продлил бы срок — это был бы обман карты.
    */
-  protected acceptPact(id: PactId, symbol?: SlotSymbol): void {
+  protected acceptPact(id: PactId, symbol?: SlotSymbol, machine?: MachineId): void {
     if (!this.isDealing || this.isDealerClosing) return;
     const spec = this.pactOffer.find((pact) => pact.id === id);
     if (!spec) return;
@@ -76,21 +90,53 @@ export abstract class DealerScene extends RoundScene {
       this.sfx.play('deny');
       return;
     }
+    // №38: автомат выбирается только из трёх существующих; без выбора карта не берётся.
+    if (spec.needsMachine && (!machine || !MACHINES.some((specMachine) => specMachine.id === machine))) {
+      this.sfx.play('deny');
+      return;
+    }
     // №13: бесплатный амулет некуда поставить (нет свободного сосуда или брать уже нечего) — карта не берётся,
     // стол остаётся, а игроку у курсора всплывает короткая надпись: стекло под сукном не видно.
     if (spec.id === 'free-amulet' && !this.freeAmuletCandidate()) {
-      this.sfx.play('deny');
-      this.tooltip.show(t('pactNoRoom'), '');
-      this.time.delayedCall(PACT_DENY_HINT_TIME, () => this.tooltip.hide());
+      this.denyPact();
+      return;
+    }
+    // Шаг 30: бесплатный предмет/джокер и копия амулета тоже требуют места/кандидата, а гнездо — свободного места.
+    // Полка сделки сначала укорачивается на место — свободное место ищем уже в новом пределе.
+    if (spec.id === 'free-item' || spec.id === 'joker-slot') {
+      const nextSlots = Math.max(0, this.slots - 1);
+      if (!this.shelf.slice(0, nextSlots).includes(null)) {
+        this.denyPact();
+        return;
+      }
+    }
+    if (spec.id === 'amulet-copy' && this.amuletCopyCandidate() === null) {
+      this.denyPact();
+      return;
+    }
+    if (spec.id === 'socket-gift' && this.sockets >= MAX_SOCKETS) {
+      this.denyPact();
       return;
     }
     this.isDealerClosing = true;
     this.dealerTable.close(() => this.endDealerGame());
     this.pacts.push(pactOf(spec.id, this.round, lucky));
+    // №38: выбранный автомат встаёт сразу — корпус и монитор обновляются тем же путём, что при смене в начале раунда.
+    if (spec.needsMachine && machine) {
+      this.machineId = machine;
+      this.showNewMachine();
+    }
     this.itemShelf.refreshPulses(); // сделка могла укоротить столбик — пульс полки пересчитать
     this.applyPactOnce(spec.id);
     this.sfx.play('item');
     this.screen.announceNews(t('pactNews', t(spec.bonus), t(spec.cost)));
+  }
+
+  /** Карту взять нельзя, но стол оставляем: короткая надпись у курсора — стекло под сукном не видно. */
+  private denyPact(): void {
+    this.sfx.play('deny');
+    this.tooltip.show(t('pactNoRoom'), '');
+    this.time.delayedCall(PACT_DENY_HINT_TIME, () => this.tooltip.hide());
   }
 
   /**
@@ -113,9 +159,101 @@ export abstract class DealerScene extends RoundScene {
       case 'free-amulet':
         this.gainFreeAmulet();
         break;
+      // ---------- Шаг 30 ----------
+      case 'empty-spin':
+        this.debtNextMul = EMPTY_SPIN_DEBT_MUL; // долг следующего раунда дороже
+        break;
+      case 'half-step':
+        this.tickets = pactTickets(this.tickets, -HALF_STEP_TICKETS); // плата — билет сразу, в минус не уходит
+        break;
+      case 'win-debt':
+        this.debt = pactDebt(this.debt, WIN_DEBT_MUL); // долг +8% разово
+        break;
+      case 'ticket-gift':
+        this.gainPactTickets();
+        break;
+      case 'pot-start':
+        this.debtNextMul = POT_START_DEBT_MUL;
+        break;
+      case 'chips-start':
+        this.earn(CHIPS_START_CHIPS); // фишки идут в доход забега, как все приходы на табло
+        this.debt = pactDebt(this.debt, CHIPS_START_DEBT_MUL);
+        break;
+      case 'free-item':
+        this.adjustShelf(FREE_ITEM_SHELF); // сначала короче полка, потом подарок — он должен влезть в новый предел
+        this.gainFreeItem(false);
+        break;
+      case 'two-slots':
+        this.adjustShelf(TWO_SLOTS_BONUS);
+        break;
+      case 'joker-slot':
+        this.adjustShelf(JOKER_SLOT_SHELF); // сначала короче полка
+        this.gainFreeItem(true); // «подмена» — предмет-джокер, который ставит джокера в клетку
+        break;
+      case 'amulet-copy':
+        this.gainAmuletCopy();
+        break;
+      case 'socket-gift':
+        if (this.sockets < MAX_SOCKETS) {
+          this.amuletRack.openSocket(this.sockets); // гнездо открывается с той же анимацией, что при покупке
+          this.sockets += 1;
+        }
+        break;
+      case 'amulet-save':
+        this.pactAmuletBurns = true; // следующий купленный амулет сгорит сразу (ShopScene.buyAmulet)
+        break;
+      case 'debt-defer':
+        this.debtNextMul = DEBT_DEFER_COST_MUL; // отсрочка дороже: +25% к следующему долгу
+        break;
+      case 'debt-tickets':
+        this.tickets = pactTickets(this.tickets, -DEBT_TICKETS_OFF);
+        break;
     }
     this.collector.markNote(this.debt); // долг на записке — уже с поправкой сделки
     this.refreshHud();
+  }
+
+  /** Сколько слотов полки добавить (+) или убрать (−); новые клетки сразу открываются. */
+  private adjustShelf(delta: number): void {
+    const next = Math.max(0, Math.min(MAX_SLOTS, this.slots + delta));
+    if (next > this.slots) {
+      for (let slot = this.slots; slot < next; slot += 1) {
+        this.shelf.push(null);
+        this.itemShelf.openSlot(slot); // дверца отсека открывается, как при покупке места
+      }
+    }
+    this.slots = next;
+    this.itemShelf.setOpenCount(next);
+    this.itemShelf.refreshPulses();
+  }
+
+  /** Бесплатный предмет на свободное место полки: обычный из пула раунда или «подмена» (джокер). */
+  private gainFreeItem(joker: boolean): void {
+    let slot = -1;
+    for (let index = 0; index < this.slots; index += 1) {
+      if (this.shelf[index] === null) { slot = index; break; }
+    }
+    if (slot < 0) return;
+    const item = joker
+      ? ITEMS.find((entry) => entry.id === 'swap')
+      : randomOffer(this.round, (entry) => machineItemAllowed(this.machineId, entry), 1)[0];
+    if (!item) return;
+    this.shelf[slot] = item;
+    this.itemShelf.putItem(slot, item, VENDING_BIN.x, VENDING_BIN.y); // лоток торгового автомата — откуда падает
+    this.itemShelf.refreshPulses();
+  }
+
+  /** Кандидат на бесплатную копию амулета: уже купленный амулет, у которого не выбран потолок копий. */
+  private amuletCopyCandidate(): Amulet | null {
+    return this.amulets.find((amulet) => countOf(this.amuletCounts, amulet.id) < maxCopiesOf(amulet, this.upgradeEffects.amuletMaxCopies)) ?? null;
+  }
+
+  /** Сделка №32: копия случайного уже купленного амулета — без билетов и без нового гнезда. */
+  private gainAmuletCopy(): void {
+    const candidate = this.amuletCopyCandidate();
+    if (!candidate) return;
+    addCopy(this.amuletCounts, candidate.id);
+    this.amuletRack.setAmulets(this.amulets, this.amuletCounts);
   }
 
   /**

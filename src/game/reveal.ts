@@ -1,5 +1,6 @@
 import { amuletPatternWin, type AmuletId } from './amulets';
 import type { PatternHit } from './patterns';
+import type { SlotSymbol } from './rules';
 
 /**
  * Поэтапный показ выигравших паттернов (DONTLIKE 19.11, «Улучшения» п.1, как в Clover Pit): сетка встала, а паттерны
@@ -55,8 +56,14 @@ export interface RevealStep {
  * Одна формула на всю игру: её зовут и addToPot (начисление кона), и revealSteps (показ по шагам). Пока формула жила
  * в двух местах, число в окошке и число на кону могли разойтись от одной правки в одном из них.
  */
-export function winGain(hits: PatternHit[], owned: AmuletId[], multiplier: number, factor: number): number {
-  return Math.round(amuletPatternWin(hits, owned) * multiplier * factor);
+export function winGain(
+  hits: PatternHit[],
+  owned: AmuletId[],
+  multiplier: number,
+  factor: number,
+  payMul?: (symbol: SlotSymbol) => number,
+): number {
+  return Math.round(amuletPatternWin(hits, owned, payMul) * multiplier * factor);
 }
 
 /**
@@ -64,12 +71,18 @@ export function winGain(hits: PatternHit[], owned: AmuletId[], multiplier: numbe
  * Рамки не копятся: шаг отдаёт только свой hit, прошлую рамку снимает SlotScreen.startWinStep, — а shown считаем
  * по всему префиксу, потому что в окошке копятся показанные суммы: так последнее число совпадает с начисленным.
  */
-export function revealSteps(hits: PatternHit[], owned: AmuletId[], multiplier: number, factor: number): RevealStep[] {
+export function revealSteps(
+  hits: PatternHit[],
+  owned: AmuletId[],
+  multiplier: number,
+  factor: number,
+  payMul?: (symbol: SlotSymbol) => number,
+): RevealStep[] {
   const steps: RevealStep[] = [];
   let previous = 0;
   for (let i = 0; i < hits.length; i++) {
     // Тот же расчёт, что в addToPot: число на шаге — это выигрыш первых i+1 паттернов целиком.
-    const shown = winGain(hits.slice(0, i + 1), owned, multiplier, factor);
+    const shown = winGain(hits.slice(0, i + 1), owned, multiplier, factor, payMul);
     steps.push({ hit: hits[i], shown, delta: shown - previous });
     previous = shown;
   }

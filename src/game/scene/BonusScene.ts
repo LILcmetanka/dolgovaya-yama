@@ -1,5 +1,5 @@
 import { freeSpinsFor, isJackpot, JACKPOT_SPINS, JACKPOT_TICKETS, luckyGrid } from '../bonus';
-import { pactEffects, pactPatternWeight } from '../dealerGame';
+import { pactEffects, pactPatternWeight, pactSpinCap } from '../dealerGame';
 import { cellsOf } from '../evil';
 import { t } from '../lang';
 import { CENTER_X, cellX, cellY, GRID_Y, SPIN_LAMPS_Y } from '../layout';
@@ -77,7 +77,8 @@ export abstract class BonusScene extends PhaseScene {
     const tickets = JACKPOT_TICKETS + this.upgradeEffects.jackpotTickets;
     this.tickets += tickets;
     // У потолка прокруток добавляется меньше (или ничего) — показываем фактически добавленное, чтобы «+3» не врало.
-    const added = spinsAfterBonus(this.spinsLeft, JACKPOT_SPINS, MAX_SPINS_PER_ROUND + this.upgradeEffects.spinCapBonus) - this.spinsLeft;
+    const cap = pactSpinCap(MAX_SPINS_PER_ROUND + this.upgradeEffects.spinCapBonus, pactEffects(this.pacts, this.round));
+    const added = spinsAfterBonus(this.spinsLeft, JACKPOT_SPINS, cap) - this.spinsLeft;
     this.spinsLeft += added;
     this.sfx.play('ticket', 0.3);
     // Строка «Джекпот: билеты +N, прокрутки +N» раньше висела внизу монитора на стене; оттуда её убрал автор
