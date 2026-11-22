@@ -326,7 +326,7 @@ export class Cassette {
     this.scene.tweens.add({ targets: vcr.glow, alpha: GLOW_MIN, duration: GLOW_TIME, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
   }
 
-  /** Сейчас нельзя ни записать, ни вставить (идёт прокрутка, последний шанс…) — кассета трясётся. */
+  /** Сейчас нельзя ни записать, ни вставить (идёт прокрутка, спасение…) — кассета трясётся. */
   denyUse(): void {
     if (!this.available || this.isMoving) return;
     const vcr = this.vcr;

@@ -19,6 +19,7 @@ const TRIGGER_TIME = 140; // амулет сработал: подпрыгива
 const TRIGGER_SCALE = 1.35;
 const COPY_LABEL_DX = SOCKET_RADIUS; // метка «×N» — настолько левее центра гнезда, чтобы не столкнуться с «+N%»
 const COPY_LABEL_UP = 10; // и настолько выше подписи коллекционера костей (bonesLabel)
+const RESCUE_DIM_ALPHA = 0.35; // в раунде спасения амулеты заморожены: притушены, но стоят в гнёздах
 
 /**
  * Гнёзда для амулетов на верхушке корпуса, по три слева и справа от табло.
@@ -68,6 +69,15 @@ export class AmuletRack {
       stroke: '#000000',
       strokeThickness: 3,
     }).setOrigin(0.5);
+  }
+
+  /** Раунд спасения: амулеты заморожены — притушить значки и подписи, не убирая их с корпуса. */
+  setDimmed(isDimmed: boolean): void {
+    const alpha = isDimmed ? RESCUE_DIM_ALPHA : 1;
+    for (const badge of this.badges) badge.setAlpha(alpha);
+    for (const cap of this.caps) cap.setAlpha(alpha);
+    for (const label of this.copyLabels) label.setAlpha(alpha);
+    this.bonesLabel.setAlpha(alpha);
   }
 
   /** Подсказка гнезда: название амулета (с «×N» при копиях) и что он делает. */

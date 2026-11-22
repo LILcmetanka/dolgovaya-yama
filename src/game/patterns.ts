@@ -34,7 +34,7 @@ export const PATTERNS: Pattern[] = [
   { id: 'jackpot', multiplier: 100, cells: allCells() }, // все 15 клеток: джекпот платит в сто раз
 ];
 
-/** Самый сильный паттерн: сильнее него на сетке ничего не собрать (последнему шансу важно — цели выше не бывает). */
+/** Самый сильный паттерн: сильнее него на сетке ничего не собрать (по нему сделка «джекпот» узнаёт джекпот). */
 export const TOP_MULTIPLIER = Math.max(...PATTERNS.map((pattern) => pattern.multiplier));
 
 /**

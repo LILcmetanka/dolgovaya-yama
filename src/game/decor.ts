@@ -1660,6 +1660,7 @@ export function createDealerFelt(scene: Phaser.Scene, felt: Box): void {
 export const DUST_TEXTURE = 'dust';
 export const SCANLINES_TEXTURE = 'scanlines';
 export const VIGNETTE_TEXTURE = 'vignette';
+export const VIGNETTE_RED_TEXTURE = 'vignette-red'; // красное свечение по краям в раунде спасения
 const VIGNETTE_RADII = { inner: 260, outer: 710 }; // светлая середина и тёмный край — для вида шириной VIEW_WIDTH
 
 export function createAtmosphereTextures(scene: Phaser.Scene, screen: Box): void {
@@ -1679,20 +1680,28 @@ export function createAtmosphereTextures(scene: Phaser.Scene, screen: Box): void
   }
   if (!scene.textures.exists(VIGNETTE_TEXTURE)) {
     // Тень на весь вид. Она мягкая, чёткость ей не нужна — в обычном размере, без TEXTURE_SCALE.
-    const width = Math.ceil(VIEW_WIDTH);
-    const texture = scene.textures.createCanvas(VIGNETTE_TEXTURE, width, 640);
-    if (texture) {
-      // Градиент — на canvas 2D: Graphics.generateTexture градиенты пропускает.
-      const ctx = texture.context;
-      const { inner, outer } = VIGNETTE_RADII;
-      const shade = ctx.createRadialGradient(VIEW_CENTER_X, 320, inner, VIEW_CENTER_X, 320, outer); // середина светлая, к краям темнее
-      shade.addColorStop(0, 'rgba(0, 0, 0, 0)');
-      shade.addColorStop(1, 'rgba(0, 0, 0, 0.95)');
-      ctx.fillStyle = shade;
-      ctx.fillRect(0, 0, width, 640);
-      texture.refresh(); // передать нарисованное в видеокарту
-    }
+    makeVignetteTexture(scene, VIGNETTE_TEXTURE, '0, 0, 0', 0.95);
   }
+  if (!scene.textures.exists(VIGNETTE_RED_TEXTURE)) {
+    // Красное свечение по краям: раунд спасения — «как в играх, когда жизней мало». В середине прозрачно.
+    makeVignetteTexture(scene, VIGNETTE_RED_TEXTURE, '220, 38, 38', 0.9);
+  }
+}
+
+/** Мягкое свечение по краям вида: внутренний радиус прозрачный, внешний — цвета rgb с прозрачностью edgeAlpha. */
+function makeVignetteTexture(scene: Phaser.Scene, key: string, rgb: string, edgeAlpha: number): void {
+  const width = Math.ceil(VIEW_WIDTH);
+  const texture = scene.textures.createCanvas(key, width, 640);
+  if (!texture) return;
+  // Градиент — на canvas 2D: Graphics.generateTexture градиенты пропускает.
+  const ctx = texture.context;
+  const { inner, outer } = VIGNETTE_RADII;
+  const shade = ctx.createRadialGradient(VIEW_CENTER_X, 320, inner, VIEW_CENTER_X, 320, outer);
+  shade.addColorStop(0, `rgba(${rgb}, 0)`);
+  shade.addColorStop(1, `rgba(${rgb}, ${edgeAlpha})`);
+  ctx.fillStyle = shade;
+  ctx.fillRect(0, 0, width, 640);
+  texture.refresh(); // передать нарисованное в видеокарту
 }
 
 /** Знак паузы — две полоски. Белый: в углу экрана его делают бледным (setAlpha), на экране паузы — крупным. */

@@ -91,7 +91,7 @@ export class Atm {
 
   /**
    * Выехать: хватает фишек — на экране долг; не хватает — на экране красное мигающее GOOD LUCK.
-   * Выехал — ready(); после GOOD LUCK сцена начинает последний шанс (CollectorScene).
+   * Выехал — ready(); после GOOD LUCK сцена начинает раунд спасения (CollectorScene).
    */
   slideIn(debt: number, isEnough: boolean, ready: () => void): void {
     this.scene.tweens.killTweensOf(this.demand);

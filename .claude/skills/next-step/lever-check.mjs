@@ -85,7 +85,7 @@ try {
         || ['showCharge', 'setChargeVisible'].some((k) => typeof p[k] === 'function'),
       isSpinning: g.isSpinning, isRerolling: g.isRerolling, isDealing: g.isDealing, isShopping: g.isShopping,
       spinsLeft: g.spinsLeft, spinsThisRun: g.spinsThisRun, freeSpins: g.freeSpins,
-      isAwaitingPayment: g.isAwaitingPayment, isLastChance: g.isLastChance, isRoundOver: g.isRoundOver,
+      isAwaitingPayment: g.isAwaitingPayment, isRescue: g.isRescue, isRoundOver: g.isRoundOver,
       isGameOver: g.isGameOver, isPaused: g.isPaused,
       balance: g.balance, pot: g.pot, debt: g.debt, progress: localStorage.getItem('dolgovaya-yama-progress'),
     });
@@ -190,13 +190,13 @@ try {
   // ---------- 5. Прокрутки раунда до 0 → Коллектор ----------
   let s = afterSpin2;
   for (let guard = 0; guard < 40; guard++) {
-    if (s.spinsLeft === 0 || s.isRoundOver || s.isAwaitingPayment || s.isLastChance || s.isGameOver) break;
+    if (s.spinsLeft === 0 || s.isRoundOver || s.isAwaitingPayment || s.isRescue || s.isGameOver) break;
     await pressSpace();
     s = await waitIdle();
     if (s.isGameOver) break;
   }
   console.log(`     прокруток осталось: ${s.spinsLeft}, кон: ${s.pot}, банк: ${s.balance}, долг: ${s.debt}`);
-  check(s.spinsLeft === 0 || s.isRoundOver || s.isAwaitingPayment || s.isLastChance,
+  check(s.spinsLeft === 0 || s.isRoundOver || s.isAwaitingPayment || s.isRescue,
     'прокрутки раунда доиграны до 0 (spinsLeft ' + s.spinsLeft + ')');
   const collector = await (async () => {
     const t0 = Date.now();
@@ -205,12 +205,12 @@ try {
     while (Date.now() - t0 < 15000) {
       cur = await state();
       atmOut = await val('window.__g.collector ? window.__g.collector.isAtmOut : false');
-      if (atmOut || cur.isAwaitingPayment || cur.isLastChance) break;
+      if (atmOut || cur.isAwaitingPayment || cur.isRescue) break;
       await sleep(150);
     }
     return { ...cur, atmOut };
   })();
-  check(collector.atmOut === true || collector.isAwaitingPayment === true || collector.isLastChance === true,
+  check(collector.atmOut === true || collector.isAwaitingPayment === true || collector.isRescue === true,
     'пришёл Коллектор (банкомат выехал или ждём оплату)');
   check(collector.hasChargeBar === false, 'шкала не вернулась вместе с Коллектором — её больше нет вовсе');
   check(collector.reveal === null || collector.reveal.isActive === false, 'тьмы на экране больше нет');

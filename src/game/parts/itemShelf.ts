@@ -36,6 +36,7 @@ const SHAKE_TIME = 50; // один рывок тряски «нельзя»
 const SPEND_TIME = 400; // включённый предмет сработал: летит к месту и тает
 const NEW_ITEM_SCALE = 1.15; // купленный предмет «дышит» (увеличивается во столько раз), пока его не нажмут: видно, что он нажимается
 const NEW_ITEM_BREATH = 550; // один вдох, мс
+const RESCUE_DIM_ALPHA = 0.35; // в раунде спасения предметы заморожены: притушены, но остаются на месте
 
 /**
  * Включённые предметы у экрана: только активные, сверху вниз, на четырёх местах (EFFECT_SLOTS в items.ts).
@@ -71,7 +72,7 @@ export class ItemShelf {
   /**
    * slots — сколько клеток открыто; use — что делать, когда кликнули по предмету в клетке;
    * discard — когда кликнули по включённому предмету у экрана (игрок освобождает его место);
-   * canDiscard — можно ли снимать сейчас: во время прокрутки, Дилера или последнего шанса случайный клик ничего не портит;
+   * canDiscard — можно ли снимать сейчас: во время прокрутки, Дилера или спасения случайный клик ничего не портит;
    * usable — можно ли предмет сейчас включить: дышит только то, что реально нажать, а то пульс врёт (DONTLIKE, стр. 3).
    */
   constructor(
@@ -126,7 +127,7 @@ export class ItemShelf {
 
   /** Клик по значку: снимаем, только если сцена разрешает сейчас, — иначе значок не трогаем. */
   private tryFadeOut(id: SlotEffectId, discard: (id: SlotEffectId) => void): void {
-    if (!this.canDiscard()) return; // прокрутка, Дилер, решение по перемешке, последний шанс — клик ничего не портит
+    if (!this.canDiscard()) return; // прокрутка, Дилер, решение по перемешке, спасение — клик ничего не портит
     this.fadeOut(id, discard);
   }
 
@@ -266,6 +267,19 @@ export class ItemShelf {
       if (canUse && !this.breathing.has(slot)) this.breathe(slot);
       else if (!canUse) this.stopBreathing(slot);
     });
+  }
+
+  /**
+   * Раунд спасения: предметы и амулеты заморожены. Здесь только вид — притушить полку, дверцы и столбик
+   * включённых предметов; нажать их всё равно нельзя, потому что canAct() в спасении false (RoundScene.useItem).
+   */
+  setDimmed(isDimmed: boolean): void {
+    const alpha = isDimmed ? RESCUE_DIM_ALPHA : 1;
+    for (const item of this.items) item.setAlpha(alpha);
+    for (const door of this.doors) door.setAlpha(alpha);
+    for (const spot of this.effectSpots) spot.setAlpha(alpha);
+    for (const icon of this.effectIcons.values()) icon.setAlpha(alpha);
+    for (const count of this.effectCounts.values()) count.setAlpha(alpha);
   }
 
   /** Пульс выключен: твины убиты, предмет стоит ровно в клетке (обычные scale и alpha). */

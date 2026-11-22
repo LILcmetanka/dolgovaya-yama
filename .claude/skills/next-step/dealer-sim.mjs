@@ -29,7 +29,7 @@ const PACT_PRIORITY = [
 const ROUNDS = 30; // длина модельного забега
 const DICE_CHANCE = 0.95; // кубик приходит почти каждый раунд (его вес подстраивает evil.diceWeight)
 const DEATH_CHANCE = 0.12; // провал последнего шанса: счёт идёт назад, сроки сделок едут с ним
-const LAST_CHANCE_STEP = 2; // насколько счёт уходит назад (rules.WON_DEBT_ROUND_STEP)
+const RESCUE_STEP = 1; // провал спасения («второе дыхание»): счёт на один назад; выживание его не откатывает
 
 /** Что бот берёт со стола: первая по приоритету сделка, которой у него ещё нет (или null — отказ). */
 const pick = (offers, pacts, round) =>
@@ -129,7 +129,7 @@ for (let game = 0; game < 5000; game++) {
       deaths += 1;
       deathsClosed += effects.shopClosed ? 1 : 0;
       const before = round;
-      round = Math.max(1, round - LAST_CHANCE_STEP);
+      round = Math.max(1, round - RESCUE_STEP);
       const shifted = D.shiftPacts(pacts, round - before);
       if (effects.shopClosed && !D.pactEffects(pacts, round).shopClosed && D.pactEffects(shifted, round).shopClosed) savedByShift += 1;
       pacts = shifted;

@@ -36,6 +36,7 @@ import {
   type SlotEffectId,
 } from '../items';
 import { t } from '../lang';
+import { RESCUE_SKULL_SHARE } from '../lastChance';
 import { machineAtRoundStart, machineWinFactor } from '../machines';
 import { phaseAt } from '../phases';
 import { skullShareOf, symbolWeightOf, type WeightContext } from '../skullShare';
@@ -260,7 +261,7 @@ export abstract class RoundScene extends MachineScene {
    * Бесплатные прокрутки сюда не попадают: черепов в них нет всегда, а строка — про обычную прокрутку.
    */
   private skullShareNext(): number {
-    if (this.isLastChance) return 0; // последний шанс: сетка чистая, черепов в ней нет — строка честно показывает 0
+    if (this.isRescue) return RESCUE_SKULL_SHARE; // спасение: в сетке своя доля черепов — показываем её, а не раунда
     if (pactEffects(this.pacts, this.round).noSkulls) return 0; // сделка «нет черепов»: их и правда нет
     return this.currentSkullShare(); // то же число считает ачивка «50 на 50»: один код, а не два
   }
@@ -819,7 +820,7 @@ export abstract class RoundScene extends MachineScene {
    * оставшиеся лампочки подмигивают: дальше крутишь себе в плюс или отдаёшь долг раньше (записка светится — refreshHud).
    */
   private markDebt(): void {
-    if (this.isLastChance) return; // в последнем шансе раунд кончился: записку и новость не трогаем
+    if (this.isRescue) return; // в спасении раунд кончился: записку и новость не трогаем
     const isEnough = this.hasEnoughForDebt();
     this.collector.markNote(this.debt);
     if (!isEnough || this.isDebtNewsShown || this.isRoundOver) return;
@@ -891,7 +892,7 @@ export abstract class RoundScene extends MachineScene {
   /**
    * Игрок кликнул по включённому предмету у экрана и освободил его место: предмет больше ничего не делает.
    * Значок к этому моменту уже погас (ItemShelf.fadeOut) — остаётся снять сам эффект и переставить столбик.
-   * Не между прокрутками (крутится, Дилер, решение по перемешке, последний шанс) — нельзя: значок вернётся на место.
+   * Не между прокрутками (крутится, Дилер, решение по перемешке, спасение) — нельзя: значок вернётся на место.
    */
   protected discardEffect(id: SlotEffectId): void {
     if (!this.canAct()) {
@@ -1008,7 +1009,7 @@ export abstract class RoundScene extends MachineScene {
     this.tookThisSpin = false; // сделка №15: в новом раунде «забрать» ещё не было
     this.tookExtraThisSpin = false;
     this.lastTakeAmount = 0;
-    this.isBloodNext = false; // кровь из последнего шанса не переходит в новый раунд
+    this.isBloodNext = false; // кровь из прошлого раунда не переходит в новый
     this.showItemEffects(); // спокойные огни — по новому раунду (кровь погасла)
     this.spinsLeft = spinsPerRound(SPINS_PER_ROUND, ids);
     // Фаза 2: +1 прокрутка в раунде (замечание 19). Фазу берём по закрытым долгам сразу, а не this.phase:
@@ -1042,7 +1043,7 @@ export abstract class RoundScene extends MachineScene {
     return true;
   }
 
-  /** В автомат вошли новые символы — новость на экране, а на мониторе они появляются. Один раз за раунд: после последнего шанса номер раунда меньше, новости нет. */
+  /** В автомат вошли новые символы — новость на экране, а на мониторе они появляются. Один раз за раунд: номер раунда запоминается. */
   private announceNewSymbols(): void {
     if (this.round <= this.newsRound) return;
     this.newsRound = this.round;

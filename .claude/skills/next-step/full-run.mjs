@@ -9,17 +9,18 @@
 //   SIM_SEED=<число>   — подменить Math.random детерминированным ГКЧ: прогон повторяется, сид печатается в отчёте
 //   SIM_CHASE_RECORD=1 — забег не кончается на 1 000 000: тот же забег идёт дальше до 10 000 000 (CHIP_RECORD) или смерти,
 //                        как «ДАЛЬШЕ» на экране победы; в отчёт — доля дошедших до 10 млн и медиана их раунда и минут
-//   SIM_NO_LAST_CHANCE=1 — диагностика без последнего шанса: нехватка фишек сразу конец забега (с ним спасается 95%
-//                          и забег упирается в 14+ долгов — числа ничего не говорят о правилах)
+//   SIM_NO_RESCUE=1    — диагностика без спасения: нехватка фишек сразу конец забега
 //   SIM_REFUSE_PACTS=1 — бот отказывается от всех сделок Дилера: эталон «как до шага 9» для сравнения баланса
 //   SIM_TICKET_SHARE_START / _STEP / _MAX — доля фишек на руках за билет (items.ts: 0,4 / 0,3 / 1 — старт, шаг и потолок);
 //                        по умолчанию — числа игры, эти ручки замеряют другую цену без правки items.ts
 //   SIM_TICKETS_PER_SHOP=<целое ≥ 0> — сколько билетов можно купить за один заход в магазин (правило игры
 //                        items.TICKETS_PER_SHOP); 0 — без потолка; по умолчанию — потолок игры
-//   SIM_LC_BUY=0       — без докупки действия в последнем шансе (эталон шага 13 для сравнения баланса)
-//   SIM_LC_BUY_MAX / _START / _STEP / _MAX_SHARE — числа докупки (lastChance.ts: 3 докупки, доли 0,25/0,15/0,55);
-//                        это ручки замера, по умолчанию — числа игры
-//   SIM_LC_BUY_GOAL=frozen — диагностика: цель после докупки не растёт (не правило игры, а замер)
+//   SIM_RESCUE_SKULL=<0…1> — доля черепов в раунде спасения (lastChance.RESCUE_SKULL_SHARE, 0,5);
+//                        ручка калибровки, в игре — число из lastChance.ts
+//   SIM_RESCUE_FREEZE=<целое ≥ 1> — сколько столбцов можно заморозить между прокрутками спасения
+//                        (lastChance.RESCUE_FREEZE_PER_SPIN, в игре 1); ручка калибровки
+//   SIM_RESCUE_DEBT=frozen|curve — какой долг после выживания в спасении: frozen — следующий равен текущему,
+//                        curve — считается от номера раунда (debtForRound(round + 1)); по умолчанию — число игры
 //   SIM_BELL_SKULL=<шаг> — шаг поправки колокольчика к доле черепов за срабатывание (amulets.BELL_SKULL_STEP, 0,01);
 //                        0 — правило выключено (как до шага 25), потолок всегда из amulets.BELL_SKULL_MAX
 //   SIM_SKULL_SHARE=constant — старая доля черепов (26/121 ≈ 0,215) вместо роста 18→30% по раундам (замечание 19)
@@ -36,7 +37,7 @@
 // MachineScene — ржавчина и смена автомата; BonusScene — короны, клевер, джекпот; PhaseScene — фазы;
 // ShopScene — витрины по закрытым долгам, предметы, амулеты с гнёздами, барабан;
 // SaveScene — кассета (запись и откат); DealerScene — сделки Дилера; CollectorScene — расплата и последний шанс
-// (последний шанс живёт в last-chance-sim.mjs). Правила и числа — из rules, patterns, items, amulets, evil,
+// (раунд спасения живёт в last-chance-sim.mjs). Правила и числа — из rules, patterns, items, amulets, evil,
 // bonus, phases, machines, drum, dealerGame, save; копий чисел в симуляторе нет.
 // Политика игрока (BASE_STRATEGY) — это не правила игры, а выбор за игрока: «забрать», когда кон добирает долг
 // или дорос до абсолютного порога SIM_TAKE_POT (180 фишек; при долге 10к+ доля долга не набиралась никогда и бот
@@ -51,7 +52,7 @@
 //
 // Проверки и страховки — разные вещи, и в отчёте они считаются отдельно. 5 ПРОВЕРОК ловят настоящую ошибку: долг —
 // debtForRound(раунд) плюс законные сдвиги сделок («долг −10%» и «+20%» из №12, «+8%» из №2), все числа конечны, табло билетов = учёт и не в минусе, откат по правилу игры
-// (запись есть, не из будущего), исходы последнего шанса = число шансов.
+// (запись есть, не из будущего), исходы спасения = число спасений.
 // 9 СТРАХОВОК повторяют то, что уже держит сам код (потолок прокруток и технический предохранитель фриспинов,
 // места в столбике, пять источников билетов, расход ≤ остатка, кассета не раньше 3-го долга, серия на closeRound,
 // откат только между прокрутками) — они сработают только после чьей-то правки. Внизу прогона печатается
@@ -75,17 +76,17 @@
 //  • обучение (тьма первого забега), звук, анимации и панели не моделируются: KABOOM — просто конец забега,
 //    а время считается по SECONDS.
 //
-// Последний шанс (решение автора 2026-11-14): цель считается от денег, а не от входной сетки. Паттерн должен
-// оплатить долю LAST_CHANCE_GOAL_SHARE нехватки фишек, выраженную в множителе (lastChance.lastChanceGoal);
-// цена символа — из раунда (chancePrice), множитель серии и множители выигрыша — как в addToPot. Входная сетка
-// уже бьёт цель — победа сразу (instant). Прежнее правило «побей свой же паттерн» спасало 95% нехваток и
-// растягивало забег; долю можно переопределить без правки кода: SIM_LC_SHARE=0.2|0.5|1. Диагноз с числами
-// печатает SIM_ROUNDS=1; подробно — HANDOFF.md, «Симулятор».
+// Раунд спасения (решение автора 22.11.2026): долг оплатить нечем — 5 прокруток, доля черепов RESCUE_SKULL_SHARE,
+// нужен хотя бы один платящий паттерн. Амулеты и предметы заморожены; после прокрутки бот морозит до RESCUE_FREEZE_PER_SPIN столбцов.
+// Выжил — счёт раунда идёт вперёд, а долг не прощается: 'frozen' оставляет его прежним (rescueDebtMul),
+// 'curve' считает заново от номера раунда (debtForRound(round + 1)); не выжил — «второе дыхание» или KABOOM.
+// Долю черепов можно переопределить без правки кода: SIM_RESCUE_SKULL=0.5. Диагноз с числами печатает SIM_ROUNDS=1;
+// подробно — HANDOFF.md, «Симулятор».
 import { fileURLToPath } from 'node:url';
-import { BUY_GOAL_FROZEN, BUY_ON, BUY_RULES, chanceReport, playLastChance, roundReport, SHARE } from './last-chance-sim.mjs';
+import { playRescue, rescueReport, roundReport, SKULL_SHARE, SPINS as RESCUE_SPINS, FREEZE as RESCUE_FREEZE } from './last-chance-sim.mjs';
 
 const SRC = process.env.SIM_SRC ?? fileURLToPath(new URL('../../../src/game/', import.meta.url));
-// lastChance.ts нужен здесь для потолка цели (BEST_WITHOUT_JACKPOT) в сводке; правила цели — в last-chance-sim.
+// lastChance.ts нужен здесь для множителя долга после спасения (rescueDebtMul); правила спасения — в last-chance-sim.
 const LC = await import(SRC + 'lastChance.ts');
 // Сид: SIM_SEED=<число> подменяет Math.random детерминированным ГКЧ — прогон повторяем, сид печатается в отчёте.
 // Без SIM_SEED — обычный случайный прогон, сид в отчёте «—».
@@ -128,9 +129,8 @@ const CHASE_RECORD = process.env.SIM_CHASE_RECORD === '1';
 const AMULET_POWER = { bones: 5.39, boost: 5.11, interest: 5.09, insurance: 5.02, cut: 4.88, cherryPit: 4.69, vest: 4.66, greed: 4.61, piggy: 4.43, skullPocket: 4.41, bell: 4.08 };
 const ITEM_ORDER = ['garlic', 'triple', 'cigarette', 'shield', 'cherries', 'bells', 'diamonds', 'luck', 'shuffle', 'swap', 'risk', 'hammer', 'candle', 'luckSpin'];
 // Модель времени: сколько секунд занимает действие на экране. Числа не из игры — это оценка, для «минут забега».
-// lastChance — весь эпизод: GOOD LUCK, чистая прокрутка, два действия, чемодан; secondWind — пауза перед магазином.
-// lastChanceBuy — одна докупка действия (шаг 14): столько стоит игроку ещё одна прокрутка по времени.
-const SECONDS = { spin: 2.5, take: 1, dealer: 6, collector: 2.5, shop: 10, rewind: 5, rec: 1, lastChance: 12, lastChanceBuy: 2, secondWind: 2 };
+// rescue — весь раунд спасения: 5 прокруток с заморозкой столбцов; secondWind — пауза перед магазином.
+const SECONDS = { spin: 2.5, take: 1, dealer: 6, collector: 2.5, shop: 10, rewind: 5, rec: 1, rescue: 16, secondWind: 2 };
 
 // ---------- Диагностика замечания 19: старые правила против новых ----------
 // Доля черепов до правки была постоянной, а фаза 2 множила её вес и росла множителем. Теперь доля растёт по раундам,
@@ -143,8 +143,11 @@ const LEGACY_SKULL_RATIO = 26 / 95; // SKULL_RATIO кода до правки: �
 const LEGACY_PHASE_STEP = LEGACY || process.env.SIM_PHASE_STEP === '2'; // старый +1 к шагу множителя в фазе 2
 const PHASE_BONUS_SPINS = !LEGACY && process.env.SIM_PHASE_SPINS !== '0'; // +1 прокрутка от фазы 2 в начале раунда
 const LEGACY_PHASE_SKULL = LEGACY ? 1.2 : phaseSkullFactor(); // старый ×1,2 к весу черепа в фазе 2
-const NO_LAST_CHANCE = process.env.SIM_NO_LAST_CHANCE === '1'; // нехватка фишек — сразу конец забега
+const NO_RESCUE = process.env.SIM_NO_RESCUE === '1'; // нехватка фишек — сразу конец забега
 const REFUSE_PACTS = process.env.SIM_REFUSE_PACTS === '1'; // эталон без сделок: бот отказывается от всех карт
+// Режим долга после спасения: 'frozen' (следующий долг = текущему) или 'curve' (следующий долг — debtForRound(round + 1)).
+// По умолчанию — число игры (lastChance.RESCUE_DEBT_MODE); SIM_RESCUE_DEBT — ручка замера третьей трактовки.
+const RESCUE_DEBT = LC.rescueDebtModeOf(process.env.SIM_RESCUE_DEBT ?? LC.RESCUE_DEBT_MODE);
 
 /** SIM_PHASE_SKULL=<число> — как SIM_SEED: не число — падаем сразу, иначе вес черепа молча стал бы NaN. */
 function phaseSkullFactor() {  const raw = process.env.SIM_PHASE_SKULL;
@@ -304,7 +307,7 @@ const multiplier = (s) => Math.min(R.multiplierForStreak(s.streak, streakStep(s)
 
 function newRun() {
   return {
-    round: 1, debt: R.debtForRound(1), balance: 0, tickets: 0, spinsLeft: R.SPINS_PER_ROUND, pot: 0, streak: 0,
+    round: 1, debtRound: 1, debtBase: R.debtForRound(1), debtOps: [], debt: R.debtForRound(1), balance: 0, tickets: 0, spinsLeft: R.SPINS_PER_ROUND, pot: 0, streak: 0,
     slots: I.START_SLOTS, shelf: new Array(I.START_SLOTS).fill(null), effects: I.noEffects(), sockets: A.START_SOCKETS,
     amulets: [], amuletCounts: {}, bones: 0, roundShields: 0,
     machineId: 'classic', // BaseScene: забег начинается с классического
@@ -313,7 +316,7 @@ function newRun() {
     // peakBalance — самый большой баланс за забег; millionRound/millionSeconds — когда earned перевалил CHIP_GOAL.
     earned: 0, peakBalance: 0, millionRound: null, millionSeconds: null,
     recordRound: null, recordSeconds: null, // когда earned перевалил 10 000 000 (CHIP_RECORD) — для SIM_CHASE_RECORD
-    secondWindLeft: S.SECOND_WIND_START, // сколько провалов последнего шанса простят (failLastChance); кассета не пополняет, сделка №9 даёт ещё
+    secondWindLeft: S.SECOND_WIND_START, // сколько провалов спасения простят (failRescue); кассета не пополняет, сделка №9 даёт ещё
     breathTaken: false, // сделка №9 уже бралась: одна на забег, откат этой памяти не снимает
     bankKeptThisRound: false, // сделка №10: первый череп в этом раунде кон уже не сжёг
     bellSkull: 0, // колокольчик (шаг 25): сколько к доле черепов набежало срабатываниями 🔔 в этом раунде
@@ -321,6 +324,7 @@ function newRun() {
     insuranceSaves: 0, // сколько раз страховка сработала в раунде (копий до двух — столько и спасений)
     pacts: [], // сделки Дилера (dealerGame.Pact): что действует в раунде, решает D.pactEffects
     debtNextMul: 1, // сделка №12: следующий долг дороже во столько раз (сбрасывается на назначении)
+    keepDebtRound: false, // спасение оставило долг прошлого круга: openShop не должен переписать debtRound
   };
 }
 
@@ -377,16 +381,20 @@ function rawWeightOf(s, isFree) {
  * с набором этих чисел, а не с одним: застрявший с прошлого раунда долг (настоящая ошибка) в набор не попадёт.
  */
 function debtOk(s) {
-  const base = R.debtForRound(s.round);
-  for (const assign of [1, D.DEBT_NEXT_MUL]) {
-    const debt = D.pactDebt(base, assign);
-    const cut = D.pactDebt(debt, D.DEBT_CUT_MUL);
-    const cheap = D.pactDebt(debt, D.CHEAP_SHOP_DEBT_MUL);
-    // Обе карты могли лечь в один раунд: порядок применения даёт два разных округления.
-    const values = [debt, cut, cheap, D.pactDebt(cut, D.CHEAP_SHOP_DEBT_MUL), D.pactDebt(cheap, D.DEBT_CUT_MUL)];
-    if (values.includes(s.debt)) return true;
+  // Долг, который пережил спасение, помнит, от какого числа и какие сделки его двигали: debtBase — долг сразу
+  // после takeDebtForRound, debtOps — «−10%» и «+8%» в порядке применения. Порядок важен из-за округления до 10.
+  const round = s.debtRound ?? s.round;
+  const base = R.debtForRound(round);
+  const stored = s.debtBase ?? s.debt;
+  // Само основание — formula-долг круга или он же с «следующий долг +20%». Иначе долг взялся из ниоткуда.
+  if (stored !== base && stored !== D.pactDebt(base, D.DEBT_NEXT_MUL)) return false;
+  let value = stored;
+  for (const op of s.debtOps ?? []) {
+    value = D.pactDebt(value, op === 'cut' ? D.DEBT_CUT_MUL : D.CHEAP_SHOP_DEBT_MUL);
   }
-  return false;
+  // На поздних раундах долг огромный (debtForRound растёт в 3,6 раза), и округление до 10 на таких числах
+  // теряет точность: сравниваем с относительным допуском, а не побитово.
+  return Math.abs(value - s.debt) <= Math.max(10, Math.abs(s.debt) * 1e-9);
 }
 
 function violate(g, name) {
@@ -578,9 +586,13 @@ function dealer(s, st, g) {
   // дыхание и ступень серии (№9), бесплатный амулет (№13).
   switch (pick.id) {
     case 'tickets-shop': gainTickets(s, g, 'pact', D.PACT_TICKETS); break;
-    case 'cheap-shop': s.debt = D.pactDebt(s.debt, D.CHEAP_SHOP_DEBT_MUL); break;
+    case 'cheap-shop':
+      s.debt = D.pactDebt(s.debt, D.CHEAP_SHOP_DEBT_MUL);
+      s.debtOps.push('cheap');
+      break;
     case 'debt-cut':
       s.debt = D.pactDebt(s.debt, D.DEBT_CUT_MUL);
+      s.debtOps.push('cut');
       s.debtNextMul = D.DEBT_NEXT_MUL;
       break;
     case 'extra-breath':
@@ -808,8 +820,12 @@ function beforeSpin(s, st, g) {
   // когда долг уже покрыт — забираем кон от абсолютного порога SIM_TAKE_POT. Второй случай и есть правка 19.11:
   // раньше порог был 0,5 × долга, и при долге 10к+ кон не набирался никогда — бот крутил фриспины до предохранителя
   // (забег 294 минуты), и замеры на жёстких кривых врали.
+  // Шаг 27: спасение оставляет долг прежним, и текущий долг может быть меньше номинального долга круга.
+  // Бот, как игрок, всё равно целится в нормальную прибыль круга (debtForRound), а не в маленький долг.
   // Ржавая смерть отдельно: столбец с черепами сжигает кон, его тоже забираем при любом пороге.
-  let take = s.balance < need ? s.balance + s.pot >= need : s.pot >= SIM_TAKE_POT;
+  const nominal = Math.max(0, R.debtForRound(s.round) - s.balance);
+  const takeTarget = Math.max(need, nominal, SIM_TAKE_POT);
+  let take = s.balance + s.pot >= takeTarget;
   if (s.rustyColumn !== null && s.lastGrid) {
     const skulls = s.lastGrid.filter((line) => R.isSkull(line[s.rustyColumn])).length;
     if (skulls >= st.rustSkulls) take = true;
@@ -830,7 +846,7 @@ function beforeSpin(s, st, g) {
 function runSave(s) {
   return {
     round: s.round, spinsLeft: s.spinsLeft, pot: s.pot, streak: s.streak, isBloodNext: s.isBloodNext,
-    luckyClovers: s.luckyClovers, roundShields: s.roundShields, debt: s.debt, balance: s.balance, tickets: s.tickets,
+    luckyClovers: s.luckyClovers, roundShields: s.roundShields, debtRound: s.debtRound, debtBase: s.debtBase, debtOps: s.debtOps, debt: s.debt, balance: s.balance, tickets: s.tickets,
     slots: s.slots, shelf: s.shelf, effects: s.effects, sockets: s.sockets, amulets: s.amulets,
     amuletCounts: s.amuletCounts, bones: s.bones, machineId: s.machineId,
     pacts: s.pacts, debtNextMul: s.debtNextMul, diceDrought: s.diceDrought, secondWindLeft: s.secondWindLeft, breathTaken: s.breathTaken, insuranceSaves: s.insuranceSaves,
@@ -955,6 +971,14 @@ function freeSlot(s) { return s.shelf.indexOf(null); }
 function takeDebtForRound(s, g) {
   const debt = D.pactDebt(R.debtForRound(s.round), s.debtNextMul);
   s.debtNextMul = 1; // множитель действует ровно на один долг
+  // Какому раунду принадлежит долг. После спасения долг остался прежним, и openShop не должен объявить его
+  // долгом нового круга (иначе проверка debtOk справедливо ругается): keepDebtRound ставит winRescue-ветка.
+  if (!s.keepDebtRound) {
+    s.debtRound = s.round;
+    s.debtBase = debt; // от чего считаются «−10%» и «+8%» этого долга
+    s.debtOps = [];
+  }
+  s.keepDebtRound = false;
   // Замер баланса долгов: у последней оплаты теперь известен настоящий следующий долг (после последнего шанса
   // раунд может откатиться, и следующий долг будет тем же — debtForRound(round + 1) в collector() бы соврал).
   if (g.lastBalanceRow) { g.lastBalanceRow.nextDebt = debt; g.lastBalanceRow = null; }
@@ -1119,11 +1143,11 @@ function openShop(s, st, g, econ) {
 /**
  * Расплата: 'paid' | 'survived' | 'secondWind' | 'dead'.
  * Фишек хватило — долг уходит, «Проценты» капают, за долг билет (CollectorScene.payDebt).
- * Не хватило — последний шанс (CollectorScene.startLastChance): одна чистая сетка и два действия, правила и
- * политика — в last-chance-sim.mjs. Победа: чемодан платит долг, фишки целы, билета нет, счёт −1 (269-277).
+ * Не хватило — раунд спасения (CollectorScene.startRescue): 5 прокруток, паттерн спасает, правила и
+ * политика — в last-chance-sim.mjs. Победа: долг остаётся тем же, фишки целы, счёт раунда идёт вперёд (winRescue).
  * Провал: пока есть запас «второго дыхания» — забег живёт, запас тратится; запасов нет — KABOOM
  * (обычный забег — один запас, сделка №9 кладёт ещё). Кон к этому моменту уже забран
- * closeRound, серию последний шанс не трогает (startLastChance гасит только pot).
+ * closeRound, серию спасение не трогает (startRescue гасит только pot).
  */
 function collector(s, g) {
   g.time += SECONDS.collector;
@@ -1142,40 +1166,28 @@ function collector(s, g) {
     check(s, g);
     return 'paid';
   }
-  if (NO_LAST_CHANCE) {
-    // Диагностика (SIM_NO_LAST_CHANCE=1): последнего шанса и «второго дыхания» нет — нехватка фишек сразу конец забега.
-    // g.lastChances всё равно растёт: проверка «исходы последнего шанса = число шансов» иначе разошлась бы.
+  if (NO_RESCUE) {
+    // Диагностика (SIM_NO_RESCUE=1): спасения и «второго дыхания» нет — нехватка фишек сразу конец забега.
+    // g.lastChances всё равно растёт: проверка «исходы спасения = число спасений» иначе разошлась бы.
     g.lastChances += 1;
     g.dead += 1;
     return 'dead';
   }
-  // Нехватка: сетка без амулетов, предметов, фазы и автомата — как CollectorScene.cleanWeight. Цель — от денег:
-  // скольких фишек не хватило, множитель серии и множители выигрыша (амулеты и автомат, как в addToPot).
+  // Нехватка: раунд спасения (CollectorScene.startRescue). Сетка спасения — платящие символы раунда и черепа
+  // с долей SKULL_SHARE; амулеты и предметы заморожены, поэтому их веса и множители сюда не входят.
+  // Бот крутит до победы или до конца прокруток и морозит по одному столбцу (политика — last-chance-sim.mjs).
   const need = s.debt - s.balance;
-  const streak = multiplier(s);
-  const factor = A.winFactor(ids(s), s.bones) * M.machineWinFactor(s.machineId) * D.pactEffects(s.pacts, s.round).winMul;
-  const lastChance = playLastChance({ round: s.round, diceDrought: s.diceDrought, need, streak, factor, balance: s.balance });
+  const rescue = playRescue({ round: s.round });
   g.lastChances += 1;
-  g.lcActions += lastChance.actions;
-  // Докупка действия (шаг 14) платится фишками на руках: банк уменьшается ровно на заплаченное.
-  if (lastChance.paid > 0) s.balance -= lastChance.paid;
-  g.lcBuys += lastChance.bought;
-  g.lcPaid += lastChance.paid;
-  g.time += SECONDS.lastChanceBuy * lastChance.bought;
-  if (lastChance.instant) g.instantWins += 1;
-  if (lastChance.firstWin && !lastChance.instant) g.firstActionWins += 1; // цель была побита уже после первого действия
-  if (lastChance.firstWin && !lastChance.won) g.firstWinLost += 1; // второе действие снесло уже собранную победу
-  g.time += SECONDS.lastChance;
-  // Кривая для study(): где случался шанс, какая цель вышла из нехватки и побили ли её. goal — по правилу игры
-  // (доля LAST_CHANCE_GOAL_SHARE), goalFull — та же цель при share = 1 («закрой весь долг»), для сравнения.
-  // bought/paid — докупка шага 14: сколько действий куплено за шанс и сколько фишек за них отдано.
+  g.rescueSpins += rescue.spins;
+  g.rescueFrozen += rescue.frozen;
+  g.time += SECONDS.rescue;
+  // Кривая для study(): где приходило спасение, сколько не хватало и чем кончилось.
   g.collectorSamples.push({
-    round: s.round, debt: s.debt, balance: s.balance, diceDrought: s.diceDrought,
-    goal: lastChance.goal, goalFull: lastChance.goalFull, won: lastChance.won, actions: lastChance.actions,
-    instant: lastChance.instant, firstWin: lastChance.firstWin, need, streak, factor,
-    bought: lastChance.bought, paid: lastChance.paid,
+    round: s.round, debt: s.debt, balance: s.balance, need,
+    won: rescue.won, spins: rescue.spins, frozen: rescue.frozen,
   });
-  if (lastChance.won) { g.survived += 1; return 'survived'; }
+  if (rescue.won) { g.survived += 1; return 'survived'; }
   if (s.secondWindLeft <= 0) { g.dead += 1; return 'dead'; } // запасы кончились — KABOOM
   s.secondWindLeft -= 1;
   g.secondWind += 1;
@@ -1196,7 +1208,7 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon()) {
   const g = {
     time: 0, tape: 'forSale', record: null, recordCounters: null, tapesBought: 0, tapeClosedAtBuy: 0, recs: 0, rewinds: 0,
     illegalRewinds: 0, maxClosed: 0, collectorSamples: [],
-    lastChances: 0, survived: 0, secondWind: 0, dead: 0, instantWins: 0, firstActionWins: 0, firstWinLost: 0, lcActions: 0, lcBuys: 0, lcPaid: 0, attempts: 0, // последний шанс (шаг 68б) и докупка (шаг 14)
+    lastChances: 0, survived: 0, secondWind: 0, dead: 0, rescueSpins: 0, rescueFrozen: 0, attempts: 0, // раунд спасения (шаг 27): прокруток и заморозок на спасение
     freeSpinsGiven: 0, freeInRound: 0, freeMax: 0, crownEvents: 0, guardStops: 0, // бесплатные прокрутки: счётчик предохранителя, за раунд, максимум за раунд, срабатывания предохранителя
     shuffleUsed: 0, swapUsed: 0, // перемешка и подмена (шаг 63б): сколько раз применили
     normalSpins: 0, spins: 0, paidSpins: 0, // прокрутки: платные и всего
@@ -1236,13 +1248,22 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon()) {
     }
     if (res === 'dead') break; // KABOOM: второе дыхание уже было
     if (goalReached(s)) break; // «Проценты» после долга перевалили цель
-    // Выигранный последний шанс: счёт на один долг назад (WON_DEBT_ROUND_STEP = 2, магазин прибавит единицу → N − 1).
+    // Выжил в спасении: долг не откатывается и остаётся тем же (решение автора 22.11.2026). Счёт раунда идёт
+    // вперёд (openShop прибавит единицу), а debtNextMul возвращает следующий долг к текущему — как в игре
+    // (CollectorScene.winRescue: rescueDebtMul). Назад пути нет.
     // Провал («второе дыхание»): долг не закрыт — счёт не двигаем (FAILED_DEBT_ROUND_STEP = 1), следующий долг тот же.
     // Счёт раундов идёт назад — сроки сделок едут вместе с ним (CollectorScene: shiftPacts): сделка живёт
     // столько раундов, сколько их реально сыграно, а не «до номера раунда».
     const roundBefore = s.round;
-    if (res === 'survived') s.round = Math.max(0, s.round - R.WON_DEBT_ROUND_STEP);
-    else if (res === 'secondWind') s.round = Math.max(0, s.round - R.FAILED_DEBT_ROUND_STEP);
+    if (res === 'survived') {
+      // Долг после спасения: 'frozen' — следующий долг равен текущему (rescueDebtMul + keepDebtRound);
+      // 'curve' — долг не прощается, но считается от номера раунда (debtForRound(round + 1), как в обычном раунде),
+      // поэтому debtNextMul не трогаем, а openShop заведёт долг нового круга сам.
+      if (RESCUE_DEBT === 'frozen') {
+        s.debtNextMul = LC.rescueDebtMul(s.debt, R.debtForRound(s.round + 1));
+        s.keepDebtRound = true; // долг остаётся прежним: openShop не объявляет его долгом нового круга
+      }
+    } else if (res === 'secondWind') s.round = Math.max(0, s.round - R.FAILED_DEBT_ROUND_STEP);
     s.pacts = D.shiftPacts(s.pacts, s.round - roundBefore);
     openShop(s, st, g, econ);
     if (goalReached(s)) break; // фишки барабана
@@ -1307,13 +1328,6 @@ export function summarizeRuns(runs) {
   const mean = (f) => runs.reduce((a, r) => a + f(r), 0) / runs.length;
   const sorted = runs.map((r) => r.closed).sort((a, b) => a - b);
   const minutes = runs.map((r) => r.time / 60).sort((a, b) => a - b);
-  // Цель последнего шанса: медиана по всем приходам Коллектора (goal) и та же цель при share = 1 (goalFull).
-  const samples = runs.flatMap((r) => r.collectorSamples);
-  const goalAtCap = samples.filter((sample) => sample.goal >= LC.BEST_WITHOUT_JACKPOT).length / Math.max(samples.length, 1);
-  // Докупка действия (шаг 14): где бот её брал и как часто такие шансы спасались — против шансов без докупки.
-  const boughtSamples = samples.filter((sample) => sample.bought > 0);
-  const freeSamples = samples.filter((sample) => !(sample.bought > 0));
-  const rescueOf = (list) => (list.length ? list.filter((sample) => sample.won).length / list.length : 0);
   const violations = {};
   const safeguards = {};
   for (const run of runs) {
@@ -1342,26 +1356,19 @@ export function summarizeRuns(runs) {
     // Забег умер в 6-м раунде или раньше: после 5-го раунда ни один долг не закрыт (закрыто ≤ 5).
     flop5: mean((r) => (r.closed <= 5 ? 1 : 0)),
     minutes: mean((r) => r.time / 60), minutesMedian: minutes[Math.floor(minutes.length / 2)], over10: mean((r) => (r.time > 600 ? 1 : 0)),
+    finalDebtMedian: medianOf(runs.map((r) => r.finalDebt)), // долг, на котором забег кончился (медиана)
     tapesBought: mean((r) => r.tapesBought), bought: mean((r) => (r.tapesBought > 0 ? 1 : 0)), rewinds: mean((r) => r.rewinds),
     illegalRewinds: mean((r) => r.illegalRewinds),
-    // Последний шанс (шаг 68б): сколько раз приходил, сколько спасено, сколько из них мгновенно, дыхание и KABOOM.
+    // Раунд спасения (шаг 27): сколько раз приходил, сколько выжило, за сколько прокруток и с какими заморозками.
     lastChances: mean((r) => r.lastChances), survived: mean((r) => r.survived), secondWind: mean((r) => r.secondWind),
-    dead: mean((r) => r.dead), instantWins: mean((r) => r.instantWins), lcActions: mean((r) => r.lcActions),
+    dead: mean((r) => r.dead),
     attempts: mean((r) => r.attempts), attemptsMedian: medianOf(runs.map((r) => r.attempts)), // попыток раунда за забег
-    firstActionWins: mean((r) => r.firstActionWins), firstWinLost: mean((r) => r.firstWinLost),
-    // Докупка действия (шаг 14): сколько куплено за забег, сколько фишек заплачено, сколько шансов с ней и без.
-    lcBuys: mean((r) => r.lcBuys), lcPaid: mean((r) => r.lcPaid),
-    buyChances: boughtSamples.length, buyChanceShare: boughtSamples.length / Math.max(samples.length, 1),
-    buyRescue: rescueOf(boughtSamples), noBuyRescue: rescueOf(freeSamples),
+    rescueSpins: mean((r) => r.rescueSpins / Math.max(r.lastChances, 1)),
+    rescueFrozen: mean((r) => r.rescueFrozen / Math.max(r.lastChances, 1)),
     rescue: runs.reduce((a, r) => a + r.survived, 0) / Math.max(runs.reduce((a, r) => a + r.lastChances, 0), 1),
     rescuePerRun: mean((r) => (r.lastChances > 0 ? r.survived / r.lastChances : 0)), // среднее по забегам от долей: короче забег — сильнее вес
-    instantShare: mean((r) => (r.lastChances > 0 ? r.instantWins / r.lastChances : 0)),
     secondWindMax: Math.max(...runs.map((r) => r.secondWind)), // со сделкой №9 максимум — SECOND_WIND_MAX = 2 использования за забег
-    noChance: mean((r) => (r.lastChances === 0 ? 1 : 0)), // забеги, где последний шанс не приходил ни разу
-    // Цель последнего шанса: медиана нужного множителя и доля приходов, где её закрывает только джекпот (потолок ×10).
-    goalMedian: medianOf(samples.map((sample) => sample.goal)),
-    goalFullMedian: medianOf(samples.map((sample) => sample.goalFull)),
-    goalAtCap,
+    noChance: mean((r) => (r.lastChances === 0 ? 1 : 0)), // забеги, где спасение не приходило ни разу
     guard: mean((r) => (r.guardHit ? 1 : 0)), // доля забегов, упёршихся в предохранитель 400 раундов (бот копит быстрее долга)
     shops: mean((r) => r.shops), spins: mean((r) => r.spins), paidSpins: mean((r) => r.paidSpins),
     maxRoundSpins: mean((r) => r.maxRoundSpins), overCap: mean((r) => r.roundsOverCap / Math.max(r.attempts, 1)), // доля раундов, где прокруток больше MAX_SPINS_PER_ROUND
@@ -1394,27 +1401,26 @@ export function summarize(st, games, econ) {
 }
 
 /**
- * Один проход: сводка забегов и разбивка последнего шанса по раундам — где он случался, какая была цель,
- * сколько не хватало, был ли он побит и сколько действий ушло. Этим живёт last-chance-sim.mjs.
+ * Один проход: сводка забегов и разбивка спасения по раундам — где оно приходило, сколько не хватало,
+ * чем кончилось и сколько прокруток и заморозок ушло. Этим живёт last-chance-sim.mjs.
  */
 export function study(games = 2000) {
   const runs = [];
-  const byRound = new Map(); // раунд → { deficit: [], goal: [], count, won, instant, actions }
+  const byRound = new Map(); // раунд → { deficit: [], count, won, spins, frozen }
   for (let game = 0; game < games; game++) {
     const run = runGame(BASE_STRATEGY, defaultEcon());
     runs.push(run);
     for (const sample of run.collectorSamples) {
       let row = byRound.get(sample.round);
       if (!row) {
-        row = { deficit: [], goal: [], count: 0, won: 0, instant: 0, actions: 0 };
+        row = { deficit: [], count: 0, won: 0, spins: 0, frozen: 0 };
         byRound.set(sample.round, row);
       }
       row.deficit.push(sample.debt - sample.balance);
-      row.goal.push(sample.goal);
       row.count += 1;
       if (sample.won) row.won += 1;
-      if (sample.instant) row.instant += 1;
-      row.actions += sample.actions;
+      row.spins += sample.spins;
+      row.frozen += sample.frozen;
     }
   }
   return { summary: summarizeRuns(runs), rounds: byRound, samples: runs.flatMap((run) => run.collectorSamples) };
@@ -1435,9 +1441,8 @@ export function report(name, x) {
   const pct = (n) => Math.round(n * 100) + '%';
   const chips = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
   console.log(`${name.padEnd(44)} в конце ${f(x.closed)} (мед ${x.median}), пик ${f(x.peak)} (среднее максимумов по забегам), 1-й ${pct(x.first)}, 10+ ${pct(x.ten)}, после 5-го раунда без долгов ${pct(x.flop5)}, рекорд ${x.best} | ${f(x.minutes, 1)} мин (мед ${f(x.minutesMedian, 1)}, >10 ${pct(x.over10)}) | попыток раунда ${f(x.attempts, 1)} (мед ${x.attemptsMedian}), магазинов ${f(x.shops, 1)}, прокруток ${f(x.spins, 0)} (платных ${f(x.paidSpins, 0)}), макс. за раунд ${f(x.maxRoundSpins, 0)} (больше потолка в ${pct(x.overCap)} раундов) | кассет ${f(x.tapesBought)} (берут ${pct(x.bought)}), откатов ${f(x.rewinds)} | множитель 1-й прокрутки ${f(x.firstSpinMult)}, упёрлись в 400 раундов ${pct(x.guard)} | сид ${SEED ?? '—'} | нарушений ${f(sum(Object.values(x.violations)), 0)}, страховок ${f(sum(Object.values(x.safeguards)), 0)}`);
-  console.log(`${''.padEnd(44)} последний шанс: шансов ${f(x.lastChances)} за забег (не было у ${pct(x.noChance)}), спасено ${pct(x.rescue)} (${f(x.survived)} из ${f(x.lastChances)}; среднее по забегам ${pct(x.rescuePerRun)}), мгновенных ${pct(x.instantShare)}, цель мед ×${f(x.goalMedian, 1)} (полная нехватка ×${f(x.goalFullMedian, 1)}, у потолка ×10 — ${pct(x.goalAtCap)}), цель побита после 1-го действия ${pct(x.firstActionWins / Math.max(x.lastChances, 1e-9))} (в т.ч. позже снесена ${pct(x.firstWinLost / Math.max(x.lastChances, 1e-9))}), второе дыхание ${f(x.secondWind)} (макс ${x.secondWindMax}), KABOOM ${f(x.dead)}, действий на шанс ${f(x.lcActions / Math.max(x.lastChances, 1e-9), 1)}, доля цели ${f(SHARE, 2)}`);
-  // Докупка действия (шаг 14): сколько куплено и почём, и спасаются ли такие шансы чаще обычных.
-  console.log(`${''.padEnd(44)} докупка действия: ${f(x.lcBuys)} за забег (заплачено ${chips(x.lcPaid)} фишек), шансов с докупкой ${x.buyChances} (${pct(x.buyChanceShare)}), спасено с докупкой ${pct(x.buyRescue)} / без ${pct(x.noBuyRescue)} | докупок ${BUY_RULES.max}, доли ${f(BUY_RULES.start, 2)}/${f(BUY_RULES.step, 2)}/${f(BUY_RULES.maxShare, 2)}${BUY_ON ? '' : ', выключена'}${BUY_GOAL_FROZEN ? ', цель заморожена' : ''}`);
+  console.log(`${''.padEnd(44)} спасение: шансов ${f(x.lastChances)} за забег (не было у ${pct(x.noChance)}), выжило ${pct(x.rescue)} (${f(x.survived)} из ${f(x.lastChances)}; среднее по забегам ${pct(x.rescuePerRun)}), прокруток на спасение ${f(x.rescueSpins, 2)} (всего ${RESCUE_SPINS}), заморожено столбцов ${f(x.rescueFrozen, 2)}, второе дыхание ${f(x.secondWind)} (макс ${x.secondWindMax}), KABOOM ${f(x.dead)}, доля черепов ${f(SKULL_SHARE, 2)}, заморозок за прокрутку ${RESCUE_FREEZE}, долг после спасения ${RESCUE_DEBT}`);
+  console.log(`${''.padEnd(44)} долг в конце забега мед ${chips(x.finalDebtMedian)}, минут мед ${f(x.minutesMedian, 1)}`);
   console.log(`${''.padEnd(44)} билеты: за долг ${f(x.ticketIncome.debt)}, ранняя оплата ${f(x.ticketIncome.early)}, 🎟×3 ${f(x.ticketIncome.scatter)}, джекпот ${f(x.ticketIncome.jackpot)}, барабан ${f(x.ticketIncome.drum)}, сделка ${f(x.ticketIncome.pact)} | сделок взято ${f(x.pactsTaken)}, отказов ${f(x.pactsRefused)}, магазинов закрыто сделкой ${f(x.shopsClosed)} | по видам (за забег): ${PACT_SHORT.map(([id, name]) => `${name} ${f(x.pactsById[id])}`).join(', ')} | вторых забираний ${f(x.doubleTakes)}, амулетов по сделке ${f(x.amuletsFree)} | автомат: смен ${f(x.machineSwaps, 0)} | куплено: амулетов ${f(x.amulets)}, гнёзд ${f(x.sockets)}, предметов ${f(x.items)}, мест ${f(x.slots)}, прокруток барабана ${f(x.drumSpins)}, ранних оплат ${f(x.paidEarly)} | отказов по местам ${f(x.itemSlotsDenied)} | билетов куплено ${f(x.ticketsBought)} за забег | фриспины до ${f(x.freeMax, 1)} за раунд, предохранитель ${B.FREE_SPINS_GUARD} срезал ${f(x.guardStops)} раз (у ${pct(x.guardRuns)} забегов)`);
   // Строка цели: в SIM_CHASE_RECORD=1 к ней добавляется вторая ступень — 10 000 000 и кто до неё дошёл.
   const recordLine = CHASE_RECORD
@@ -1471,7 +1476,7 @@ export function invariantReport(summaries) {
   const names = Object.keys(total);
   const guardsFired = Object.keys(guarded);
   if (names.length === 0) {
-    console.log('проверки: 0 нарушений (5): долг из набора debtForRound + сдвиги сделок (№2, №12); все числа конечны; табло билетов = учёт и не в минусе; откат по правилу игры (запись есть, не из будущего); исходы последнего шанса = число шансов');
+    console.log('проверки: 0 нарушений (5): долг из набора debtForRound + сдвиги сделок (№2, №12); все числа конечны; табло билетов = учёт и не в минусе; откат по правилу игры (запись есть, не из будущего); исходы спасения = число спасений');
   } else {
     console.log('проверки: НАРУШЕНИЯ');
     for (const [name, count] of Object.entries(total).sort((a, b) => b[1] - a[1])) console.log(`  ${name}: ${count}`);
@@ -1499,7 +1504,7 @@ if (import.meta.filename === process.argv[1]) {
     // Отдельный прогон: разбивка последнего шанса по раундам, диагноз цели и сводка вместо вариантов стратегии.
     const result = study(games);
     roundReport(result);
-    chanceReport(result.samples);
+    rescueReport(result.samples);
     report('как в игре (study)', result.summary);
     summaries.push(result.summary);
   } else if (pinned.pinnedMachine) {

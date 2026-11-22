@@ -1,168 +1,201 @@
-import { roundPrice } from './items';
-import { PATTERNS, TOP_MULTIPLIER, type SpinResult } from './patterns';
-import { isPaying, SYMBOLS, weightsForRound, type SlotSymbol } from './rules';
+import { findPatterns } from './patterns';
+import { GRID_COLUMNS, GRID_ROWS, isPaying, randomSymbol, skullRatioFromShare, SYMBOLS, weightsForRound, type Grid, type SlotSymbol, type WeightOf } from './rules';
 
 /**
- * Последний шанс: фишек на долг не хватило — на экране банкомата GOOD LUCK, автомат делает ОДНУ прокрутку сам,
- * но чистую: без черепов и злых символов (🕷 🔒 🩸 🎲), чтобы дальше решал игрок, а не удача.
- * Сетка остаётся, и у игрока два действия: перекрутить столбец или поставить джокера в клетку (заморозка столбца —
- * бесплатно, она действий не тратит). Действия кончились, цель не взята — можно докупить ещё одно действие за долю
- * фишек на руках (шаг 14, до LAST_CHANCE_BUY_MAX раз, каждая следующая докупка дороже).
- * Собрал паттерн, который оплачивает долю нехватки фишек (см. LAST_CHANCE_GOAL_SHARE), —
- * чемодан платит долг, фишки целы, билета нет, счёт на один долг назад. Не собрал — провал: первый за забег даёт
- * «второе дыхание» (счёт −1 и магазин), второй — KABOOM.
- * Здесь только числа и маленькие правила; как идут прокрутки и окно действий — в CollectorScene. Без Phaser.
+ * Раунд спасения (шаг 27) — вместо старого «последнего шанса» с докупкой действий.
+ * Автор описал механику словами (DONTLIKE §1, 22.11.2026): долг оплатить нечем, на экране банкомата GOOD LUCK,
+ * всё уходит в красный, даётся 5 прокруток, доля черепов 50–70%, надо собрать хотя бы один паттерн.
+ * После прокрутки можно заморозить или разморозить один столбец (не больше одного действия за ход);
+ * прокручиваются только незамороженные столбцы, поэтому последняя прокрутка может идти по одному столбцу.
+ * Собрал паттерн — выжил, и долг не прощается: он либо остаётся прежним ('frozen'), либо считается заново
+ * от номера раунда ('curve', выбран замером) — назад пути нет; не собрал — смерть.
+ * Амулеты и предметы в раунде спасения заморожены: их правила сюда не входят вовсе.
+ * Здесь только числа и маленькие правила; как идут прокрутки, окно и красный свет — в CollectorScene, Atmosphere,
+ * SlotScreen и RescueBar. Без Phaser.
  */
 
-/** Символы, которых в последнем шансе нет: иначе игрок ничего не решает — всё сожгут черепа или злые знаки. */
-export const LAST_CHANCE_BANNED = ['skull', 'dice', 'spider', 'lock', 'blood'];
+/** Сколько прокруток даётся в раунде спасения. */
+export const RESCUE_SPINS = 5;
 
-/** Сколько действий у игрока: перекрут столбца или джокер. Заморозка столбца бесплатная и сюда не входит. */
-export const LAST_CHANCE_ACTIONS = 2;
+/**
+ * Доля клеток-черепов в раунде спасения. Автор просил 50–70%. Замер `full-run.mjs` (шаг 27, 300 забегов, сид 1):
+ * при 50% спасение выживает 53% (реальный риск), при 10% — 92% (спасение становится формальностью).
+ * Цена авторской доли: до 1 млн доходит 0% забегов вместо 2–3% — при выживании 53% забег кончается на 4–5 долгах,
+ * а доход не успевает догнать кривую долга. Промежуточной доли, которая держит и риск, и 1 млн, нет:
+ * 1 млн требуют ~45 раундов, то есть выживание около 92%. Значение калибруется SIM_RESCUE_SKULL.
+ */
+export const RESCUE_SKULL_SHARE = 0.5;
+/** Потолок доли черепов из описания автора: выше 70% паттерн почти не собрать. */
+export const RESCUE_SKULL_SHARE_MAX = 0.7;
+/** Нижняя граница: доля меньше 10% делает спасение почти гарантированным. */
+export const RESCUE_SKULL_SHARE_MIN = 0.1;
 
-/** Столько горит GOOD LUCK на экране банкомата (столько же мигают красные огни автомата), прежде чем начнётся прокрутка, мс. */
+/**
+ * Сколько заморозок/разморозок разрешено между двумя прокрутками.
+ * Замер (шаг 27, ветка feature/layout-fullscreen): гипотеза «жёсткость от того, что за 5 прокруток замораживаются
+ * только 4 столбца» проверена ручкой SIM_RESCUE_FREEZE при авторских числах (5 прокруток, 50% черепов, долг curve,
+ * 300 забегов, сид 1). Выживание в спасении — 53 / 53 / 53%, до 1 млн — 0 / 0 / 0%, медиана 5,8 / 5,9 / 5,8 мин
+ * при 1 / 2 / 3 заморозках. Бот морозит в среднем 0,93 / 1,09 / 1,12 столбца за спасение: заморозок и так тратится
+ * около одной, потому что при 50% черепов почти нет столбцов без черепа и с парой — морозить нечего, а лишняя
+ * заморозка только сокращает число крутящихся столбцов. Жадная политика (морозить любой столбец без черепа)
+ * на FREEZE 1…4 тоже упирается в ~1,5 столбца и даёт 47–48% выживания. Значит заморозки не лимит:
+ * риск задаёт плотность черепов (RESCUE_SKULL_SHARE), а его трогать — решение автора. Оставлено авторское 1.
+ */
+export const RESCUE_FREEZE_PER_SPIN = 1;
+
+/** Столько горит GOOD LUCK на экране банкомата, прежде чем начнётся раунд спасения, мс. */
 export const GOOD_LUCK_TIME = 1600;
 
-/**
- * Доля нехватки фишек, которую должен оплатить паттерн последнего шанса: закрываем не весь долг, а пятую часть
- * того, чего не хватило. Доля выбрана автором 2026-11-14 по симуляции (1000 забегов на сид): 0,2 — спасено 71–72 %
- * нехваток, 0,5 — 53 %, 1,0 (весь долг) — 35 %. Прежнее правило «побей свой же паттерн» спасало 95 %, и забег не кончался.
- */
-export const LAST_CHANCE_GOAL_SHARE = 0.2;
-
-/**
- * Самый сильный паттерн без джекпота. Победа требует best > goal, поэтому цель выше этого потолка недостижима:
- * закрыть её может только джекпот, а рассчитывать на него нельзя. Сюда же обрезается цель (lastChanceGoal).
- */
-export const BEST_WITHOUT_JACKPOT = Math.max(
-  ...PATTERNS.filter((pattern) => pattern.id !== 'jackpot').map((pattern) => pattern.multiplier),
-);
-
-// Докупка прокрутки (шаг 14): действия кончились, цель не взята — можно купить ещё одно действие,
-// заплатив долю фишек НА РУКАХ. Доля растёт с каждой докупкой, поэтому третья заметно дороже первой,
-// и скупать действия без счёта невыгодно. Решения автора 15.11.2026: платим фишками (не билетами),
-// цена — процент от текущего банка, докупок 1–3, цель остаётся «нехватка долга» (LAST_CHANCE_GOAL_SHARE).
-/** Сколько докупок прокрутки можно сделать за один последний шанс. */
-export const LAST_CHANCE_BUY_MAX = 3;
-/** Доля фишек на руках за первую докупку. */
-export const LAST_CHANCE_BUY_SHARE_START = 0.25;
-/** Насколько доля растёт с каждой следующей докупкой. */
-export const LAST_CHANCE_BUY_SHARE_STEP = 0.15;
-/** Потолок доли: больше 55% фишек на руках за одну докупку не берут. */
-export const LAST_CHANCE_BUY_SHARE_MAX = 0.55;
-
-/**
- * Числа докупки одним объектом: симулятор подменяет их ручками SIM_LC_BUY_*, чтобы замерить другую цену
- * без правки констант (так же, как SIM_LC_SHARE подменяет долю цели). В игре — всегда LAST_CHANCE_BUY_RULES.
- */
-export interface LastChanceBuyRules {
-  max: number;
-  start: number;
-  step: number;
-  maxShare: number;
+/** Числа раунда спасения одним объектом: симулятор подменяет их ручками SIM_RESCUE_SKULL и SIM_RESCUE_FREEZE для замера. */
+export interface RescueRules {
+  spins: number;
+  skullShare: number;
+  freezePerSpin: number;
 }
 
-export const LAST_CHANCE_BUY_RULES: LastChanceBuyRules = {
-  max: LAST_CHANCE_BUY_MAX,
-  start: LAST_CHANCE_BUY_SHARE_START,
-  step: LAST_CHANCE_BUY_SHARE_STEP,
-  maxShare: LAST_CHANCE_BUY_SHARE_MAX,
+export const RESCUE_RULES: RescueRules = {
+  spins: RESCUE_SPINS,
+  skullShare: RESCUE_SKULL_SHARE,
+  freezePerSpin: RESCUE_FREEZE_PER_SPIN,
 };
 
-/** Доля фишек на руках за докупку после bought покупок: 25, 40, 55% и дальше 55%. Мусор и минус — первая доля. */
-export function lastChanceBuyShare(bought: number, rules: LastChanceBuyRules = LAST_CHANCE_BUY_RULES): number {
-  if (!Number.isFinite(bought) || bought < 0) return rules.start;
-  return Math.min(rules.maxShare, rules.start + rules.step * Math.floor(bought));
-}
-
-/** Цена докупки при balance фишек на руках: доля банка, округлённая до 5, но не меньше 5 (items.roundPrice). */
-export function lastChanceBuyPrice(balance: number, bought: number, rules: LastChanceBuyRules = LAST_CHANCE_BUY_RULES): number {
-  const bank = Number.isFinite(balance) && balance > 0 ? balance : 0;
-  return roundPrice(bank * lastChanceBuyShare(bought, rules));
+/** Доля черепов в допустимых границах: мусор — число игры, иначе зажимаем в 10–70%. */
+export function rescueSkullShare(share = RESCUE_SKULL_SHARE): number {
+  if (!Number.isFinite(share)) return RESCUE_SKULL_SHARE;
+  return Math.min(RESCUE_SKULL_SHARE_MAX, Math.max(RESCUE_SKULL_SHARE_MIN, share));
 }
 
 /**
- * Почему докупка недоступна: early — действия ещё не кончились (докупать рано), limit — докупки кончились,
- * poor — цена больше банка, hopeless — цель у потолка (её бьёт только джекпот).
+ * Веса сетки спасения: платящие символы раунда плюс черепа с заданной долей клеток. Злых символов, кубика, билетов,
+ * короны, клевера и джокера здесь нет: в спасении игрок собирает паттерн из обычных символов, а единственная
+ * опасность — череп. Доля черепов задаётся тем же skullRatioFromShare, что и в обычной прокрутке.
  */
-export type LastChanceBuyVerdict = 'ok' | 'early' | 'limit' | 'poor' | 'hopeless';
+export function rescueWeightOf(round: number, share = rescueSkullShare()): WeightOf {
+  const base = weightsForRound(round);
+  let others = 0;
+  for (const symbol of SYMBOLS) {
+    if (isPaying(symbol) && base(symbol) > 0) others += base(symbol);
+  }
+  const skullWeight = others * skullRatioFromShare(rescueSkullShare(share));
+  return (symbol: SlotSymbol): number => {
+    if (symbol.id === 'skull') return skullWeight;
+    return isPaying(symbol) && base(symbol) > 0 ? base(symbol) : 0;
+  };
+}
 
 /**
- * Единственное правило докупки — чистая функция, её зовут сцена и симулятор, своих копий условия они не держат.
- * Докупать можно только когда бесплатные действия кончились: при actionsLeft > 0 — early (покупка не нужна,
- * ничего не списывается). Дальше по порядку: limit — докупки кончились; poor — цена больше банка;
- * hopeless — цель у потолка, покупка только ухудшит (действие добавится, а цель останется недостижимой без джекпота).
+ * Собран ли в сетке хотя бы один платящий паттерн. Паттерн из черепов паттерном не считается: он не спасает,
+ * а именно от него и убегают. Джекпот (все 15 клеток) сюда входит — он тоже платящий.
  */
-export function lastChanceBuyVerdict(
-  actionsLeft: number,
-  bought: number,
-  balance: number,
-  goal: number,
-  rules: LastChanceBuyRules = LAST_CHANCE_BUY_RULES,
-): LastChanceBuyVerdict {
-  if (!Number.isFinite(actionsLeft) || actionsLeft > 0) return 'early';
-  if (bought >= rules.max) return 'limit';
-  const bank = Number.isFinite(balance) ? balance : 0;
-  if (lastChanceBuyPrice(bank, bought, rules) > bank) return 'poor';
-  if (goal >= BEST_WITHOUT_JACKPOT) return 'hopeless';
+export function rescueHasPattern(grid: Grid): boolean {
+  return findPatterns(grid).some((hit) => isPaying(hit.symbol));
+}
+
+/** Итог после прокрутки: собрал паттерн — выжил; прокрутки кончились — умер; иначе крутим дальше. */
+export type RescueOutcome = 'won' | 'continue' | 'dead';
+
+export function rescueOutcome(grid: Grid, spinsLeft: number): RescueOutcome {
+  if (rescueHasPattern(grid)) return 'won';
+  return Number.isFinite(spinsLeft) && spinsLeft > 0 ? 'continue' : 'dead';
+}
+
+/**
+ * Столбцы, которые крутятся: все, кроме замороженных. Значения вне 0…4 и мусор отбрасываются — испорченный вход
+ * не должен оставить спасение без прокрутки. Пустой список значит «крутить нечего»: сцена и симулятор это
+ * проверяют и не дают заморозить последний столбец (rescueFreezeVerdict).
+ */
+export function rescueSpinningColumns(frozen: readonly number[] = []): number[] {
+  const kept = new Set<number>();
+  for (const col of frozen) {
+    if (Number.isInteger(col) && col >= 0 && col < GRID_COLUMNS) kept.add(col);
+  }
+  const columns: number[] = [];
+  for (let col = 0; col < GRID_COLUMNS; col++) if (!kept.has(col)) columns.push(col);
+  return columns;
+}
+
+/** Почему заморозку/разморозку нельзя: ok — можно; used — ход уже потрачен; last — нельзя заморозить последний столбец; bad — нет такого. */
+export type RescueFreezeVerdict = 'ok' | 'used' | 'last' | 'bad';
+
+/**
+ * Одно правило заморозки — для сцены и симулятора: за ход разрешено ровно одно действие (used),
+ * последний незамороженный столбец морозить нельзя (иначе прокручивать нечего), несуществующий — нельзя (bad).
+ * Разморозить можно в любой момент, пока действие не потрачено: это тоже одно действие.
+ */
+export function rescueFreezeVerdict(frozen: readonly number[], col: number, used = false): RescueFreezeVerdict {
+  if (!Number.isInteger(col) || col < 0 || col >= GRID_COLUMNS) return 'bad';
+  if (used) return 'used';
+  const isFrozen = frozen.includes(col);
+  if (!isFrozen && rescueSpinningColumns(frozen).length <= 1) return 'last';
   return 'ok';
 }
 
-/** Бывает ли символ в чистой прокрутке последнего шанса. */
-export function isLastChanceSymbol(symbol: SlotSymbol): boolean {
-  return !LAST_CHANCE_BANNED.includes(symbol.id);
+/** Новый список замороженных после клика. null — ход нельзя (см. rescueFreezeVerdict). */
+export function rescueToggleFrozen(
+  frozen: readonly number[],
+  col: number,
+  used = false,
+): { frozen: number[]; used: boolean } | null {
+  if (rescueFreezeVerdict(frozen, col, used) !== 'ok') return null;
+  const next = new Set(frozen.filter((value) => Number.isInteger(value) && value >= 0 && value < GRID_COLUMNS));
+  if (next.has(col)) next.delete(col);
+  else next.add(col);
+  return { frozen: [...next].sort((a, b) => a - b), used: true };
 }
 
 /**
- * Цена символа, по которой считается цель: самая дорогая платящая клетка, которая бывает в автомате в этом раунде.
- * Считается по таблице символов и весам раунда, чтобы не разойтись с ними, если символы начнут входить позже или
- * подорожают; сейчас цена постоянна — 25 (7 входит с 1-го раунда и дороже всех), поэтому параметр round на неё не влияет.
+ * Прокрутка спасения: незамороженные столбцы получают новые символы, замороженные остаются как были.
+ * Пустая сетка (первая прокрутка) строится целиком. symbolAt можно подменить в тестах — тогда результат
+ * детерминирован; в игре это randomSymbol с весами rescueWeightOf.
  */
-export function chancePrice(round: number): number {
-  const weightOf = weightsForRound(round);
-  let price = 0;
-  for (const symbol of SYMBOLS) {
-    if (isPaying(symbol) && weightOf(symbol) > 0 && symbol.price > price) price = symbol.price;
+export function rescueSpin(
+  grid: Grid | null,
+  frozen: readonly number[],
+  weightOf: WeightOf,
+  symbolAt: () => SlotSymbol = () => randomSymbol(weightOf),
+): Grid {
+  const next: Grid = [];
+  for (let row = 0; row < GRID_ROWS; row++) next.push([]);
+  const frozenSet = new Set(frozen.filter((value) => Number.isInteger(value) && value >= 0 && value < GRID_COLUMNS));
+  for (let row = 0; row < GRID_ROWS; row++) {
+    for (let col = 0; col < GRID_COLUMNS; col++) {
+      const old = grid?.[row]?.[col];
+      next[row][col] = frozenSet.has(col) && old ? old : symbolAt();
+    }
   }
-  return price;
+  return next;
+}
+
+/** Сколько прокруток останется после одной: не ниже нуля, мусор — 0. */
+export function rescueSpinsAfter(spinsLeft: number): number {
+  return Number.isFinite(spinsLeft) ? Math.max(0, Math.floor(spinsLeft) - 1) : 0;
 }
 
 /**
- * Цель последнего шанса: какой множитель паттерна оплачивает долю share нехватки фишек.
- * Паттерн платит цену символа × множитель (patterns.ts), на кон выигрыш ложится × множитель серии и × множители
- * выигрыша (амулеты и автомат — как в addToPot RoundScene): goal = need × share / (price × streak × factor).
- * Нехватки нет — цель 0. Выше BEST_WITHOUT_JACKPOT цель не поднимается: там её закрывает только джекпот.
+ * Множитель «следующий долг» (debtNextMul из ShopScene.takeDebtForRound), при котором следующий долг равен текущему:
+ * спасение долг не откатывает и не прощает — он остаётся тем же (решение автора 22.11.2026).
+ * Мусор и неположительные числа — 1: долг тогда идёт обычной формулой debtForRound.
  */
-export function lastChanceGoal(
-  need: number,
-  price: number,
-  streakMultiplier: number,
-  winFactorValue: number,
-  share = LAST_CHANCE_GOAL_SHARE,
-): number {
-  if (need <= 0) return 0;
-  const goal = (need * share) / (Math.max(price, 1) * Math.max(streakMultiplier, 1) * Math.max(winFactorValue, 1));
-  return Math.min(goal, BEST_WITHOUT_JACKPOT);
-}
-
-/** Наименьший множитель паттерна, который бьёт цель: выше цели — победа. Такого нет — остаётся джекпот (TOP_MULTIPLIER). */
-export function goalPattern(goal: number): number {
-  const beating = PATTERNS.filter((pattern) => pattern.multiplier > goal).map((pattern) => pattern.multiplier);
-  return beating.length > 0 ? Math.min(...beating) : TOP_MULTIPLIER;
+export function rescueDebtMul(debt: number, nextDebt: number): number {
+  if (!Number.isFinite(debt) || !Number.isFinite(nextDebt) || debt <= 0 || nextDebt <= 0) return 1;
+  return debt / nextDebt;
 }
 
 /**
- * Лучший множитель среди паттернов сетки: 0 — паттернов нет, иначе самый сильный из собранных.
- * Джекпот (все 15 клеток) — TOP_MULTIPLIER, сильнее него не бывает.
+ * Какой долг после выживания в спасении (шаг 27, замер):
+ *  • 'frozen' — долг «замерзает»: следующий долг равен текущему (rescueDebtMul);
+ *  • 'curve'  — долг не прощается, но и не замерзает: следующий долг считается от номера раунда
+ *               (debtForRound(round + 1)), как в обычном раунде — незакрытый долг остаётся, но растёт по кривой.
+ * Замер full-run.mjs (300 забегов, сид 1) при 50% черепов: у обоих режимов выживание 53%, до 1 млн 0%;
+ * у 'frozen' долг навсегда отстаёт от номера раунда (к 40-му он в 10²³ раз меньше положенного), у 'curve' долг
+ * всегда равен debtForRound(раунд), поэтому выбран 'curve'. Ручка замера — SIM_RESCUE_DEBT.
  */
-export function bestMultiplier(result: SpinResult): number {
-  return result.hits.reduce((best, hit) => Math.max(best, hit.pattern.multiplier), 0);
-}
+export type RescueDebtMode = 'frozen' | 'curve';
 
-/**
- * Достигнута ли цель: собрать паттерн сильнее порога из нехватки фишек (lastChanceGoal).
- * Цель 0 значит «хоть какой-нибудь паттерн», и это тот же счёт: best > 0.
- */
-export function isLastChanceGoalMet(best: number, goal: number): boolean {
-  return best > goal;
+/** Режим долга после спасения в игре. Меняется только решением по замеру, а не ручкой симулятора. */
+export const RESCUE_DEBT_MODE: RescueDebtMode = 'curve';
+
+/** Режим из произвольного входа: всё, кроме 'curve', — 'frozen' (испорченная ручка не должна менять правило). */
+export function rescueDebtModeOf(raw: unknown = RESCUE_DEBT_MODE): RescueDebtMode {
+  return raw === 'curve' ? 'curve' : 'frozen';
 }

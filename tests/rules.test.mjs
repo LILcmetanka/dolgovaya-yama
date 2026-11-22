@@ -41,9 +41,8 @@ test('бесплатная прокрутка: черепа весят 0, пла
   assert.equal(symbolWeightOf(paying, base, ctx, true), symbolWeightOf(paying, base, ctx, false), 'платный символ весит столько же');
 });
 
-test('провал последнего шанса не растит долг: следующий раунд тот же', () => {
+test('провал спасения не растит долг: следующий раунд тот же', () => {
   assert.equal(RULES.FAILED_DEBT_ROUND_STEP, 1, 'провал: счёт не двигаем');
-  assert.equal(RULES.WON_DEBT_ROUND_STEP, 2, 'выигранный шанс: счёт на один долг назад');
   for (const round of [1, 3, 7, 12]) {
     const next = Math.max(0, round - RULES.FAILED_DEBT_ROUND_STEP) + 1; // магазин прибавит единицу
     assert.equal(RULES.debtForRound(next), RULES.debtForRound(round), `раунд ${round}: долг не вырос`);

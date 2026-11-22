@@ -97,7 +97,7 @@ test('shiftPacts: сроки едут со счётом раундов, что �
 });
 
 test('откат счёта не прячет сделку: магазин закрыт и после сдвига', () => {
-  // Взяли «магазин закрыт» в 6-м раунде. Провалили последний шанс — счёт 6 → 5 (WON_DEBT_ROUND_STEP = 2 в игре).
+  // Взяли «магазин закрыт» в 6-м раунде. Провалили спасение — счёт 6 → 5 (FAILED_DEBT_ROUND_STEP = 1 в игре).
   const taken = D.pactOf('tickets-shop', 6);
   const last = 6 + rounds('tickets-shop') - 1;
   const before = 5;
@@ -430,7 +430,7 @@ test('связка №9 «+1 запас второго дыхания (не бо
   // Повторно карту не берут: запись живёт весь забег, pactLive её видит.
   assert.equal(D.pactLive([breath], 'extra-breath', TAKEN + 1), true, 'на следующий раунд карта уже не берётся');
   assert.equal(D.pactLive([breath], 'extra-breath', breath.untilRound), true, 'и в последнем раунде срока');
-  // Два запаса кончились — третий провал последнего шанса кончает забег (как CollectorScene.failLastChance).
+  // Два запаса кончились — третий провал последнего шанса кончает забег (как CollectorScene.failRescue).
   const failures = [];
   let left = S.SECOND_WIND_START;
   left = take(left, 0).left;

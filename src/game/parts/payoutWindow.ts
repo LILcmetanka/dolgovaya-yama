@@ -27,13 +27,11 @@ import {
 const CHIP_X = 541; // фишка слева от суммы
 const CHIP_Y = 552; // фишка и «× 400» — посередине окошка
 const PAYOUT_TEXT_X = 563; // «× 400» — правее фишки
-const PAYOUT_TEXT_SIZE = 26; // обычная сумма в окошке
-// В последнем шансе строка длиннее («× 3400 / 662»), и при 26 px она залезала под купол кнопки «забрать» (x ≈ 741): мельче.
-const GOAL_TEXT_SIZE = 22;
+const PAYOUT_TEXT_SIZE = 26; // сумма в окошке
 // Кнопка «забрать» на самом табло — небольшая кнопка в металлической оправе без слов: купол светится золотым (черепа — красным).
 const BUTTON_X = 753;
 const BUTTON_Y = 552;
-// Левый край оправы кнопки с зазором 4 px: докуда доводить полосу последнего шанса, чтобы не накрыть саму кнопку.
+// Левый край оправы кнопки с зазором 4 px: докуда доводить полосу спасения, чтобы не накрыть саму кнопку.
 export const TAKE_BEZEL_LEFT = BUTTON_X - (TAKE_BEZEL_SIZE / 2 + 4); // 731
 const BUTTON_GLOW_RADIUS = 24; // мягкое свечение вокруг кнопки
 const BUTTON_GLOW_ALPHA = 0.25;
@@ -73,8 +71,7 @@ export class PayoutWindow {
   private readonly buttonDome: Phaser.GameObjects.Image; // купол — краснеет вместе с суммой при черепах
   private flyingChips = 1; // сколько фишек полетит при «забрать»
   private isLit = false; // окошко горит (или загорается)
-  private goal: number | null = null; // сколько надо собрать в последнем шансе; null — цели нет, окошко показывает просто кон
-  private pot = 0; // что сейчас на кону — для перерисовки, когда меняется цель
+  private pot = 0; // что сейчас на кону
 
   /** take — что делать, когда нажали кнопку «забрать» (Enter сцена ловит сама). */
   constructor(scene: Phaser.Scene, take: () => void) {
@@ -98,21 +95,12 @@ export class PayoutWindow {
   }
 
   /**
-   * Цель последнего шанса: сколько надо собрать. Пока она есть, окошко горит даже при пустом коне и показывает «× кон / цель»;
-   * null — обычная игра, окошко показывает просто кон и при нуле гаснет. Зовётся до showPot (см. refreshHud).
-   */
-  setGoal(goal: number | null): void {
-    this.goal = goal;
-    this.paintText();
-  }
-
-  /**
-   * Окошко показывает кон: есть что забрать или есть цель — горят «× сумма» и кнопка, иначе гаснет.
+   * Окошко показывает кон: есть что забрать — горят «× сумма» и кнопка, иначе гаснет.
    * Сцена зовёт это при каждом обновлении приборов, поэтому окошко не останется погашенным, когда на кону что-то есть.
    */
   showPot(pot: number, debt: number): void {
     this.pot = pot;
-    if (pot === 0 && this.goal === null) {
+    if (pot === 0) {
       this.turnOff(0);
       return;
     }
@@ -121,11 +109,10 @@ export class PayoutWindow {
     this.turnOn();
   }
 
-  /** Сумма в окошке: «× 400», а в последнем шансе — «× 400 / 150» (сколько собрано из цели); строка с целью мельче. */
+  /** Сумма в окошке: «× 400». */
   private paintText(): void {
-    const hasGoal = this.goal !== null;
-    this.payoutText.setFontSize(hasGoal ? GOAL_TEXT_SIZE : PAYOUT_TEXT_SIZE);
-    this.payoutText.setText(hasGoal ? `× ${this.pot} / ${this.goal}` : `× ${this.pot}`);
+    this.payoutText.setFontSize(PAYOUT_TEXT_SIZE);
+    this.payoutText.setText(`× ${this.pot}`);
   }
 
   /** Пока крутится или идёт расплата — кнопка тусклее. */

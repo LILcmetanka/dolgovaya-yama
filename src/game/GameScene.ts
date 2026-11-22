@@ -11,7 +11,6 @@ import { AmuletRack } from './parts/amuletRack';
 import { Atmosphere } from './parts/atmosphere';
 import { BrokenScreen } from './parts/brokenScreen';
 import { Cassette } from './parts/cassette';
-import { ChipCase } from './parts/chipCase';
 import { Collector } from './parts/collector';
 import { CornerButtons } from './parts/cornerButtons';
 import { DealerTable } from './parts/dealerTable';
@@ -21,7 +20,7 @@ import { AchievementWindow } from './parts/achievementWindow';
 import { ItemShelf } from './parts/itemShelf';
 import { machineSpec, machineWinFactor, type MachineId } from './machines';
 import { MachineBadge } from './parts/machineBadge';
-import { LastChanceBar, type LastChanceAction } from './parts/lastChanceBar';
+import { RescueBar } from './parts/lastChanceBar';
 import { MiniShop } from './parts/miniShop';
 import { MachinePanel } from './parts/panel';
 import { PauseScreen } from './parts/pauseScreen';
@@ -102,13 +101,12 @@ export class GameScene extends CollectorScene {
       (item) => this.canUseItem(item),
       this.tooltip,
     );
-    // Полоса последнего шанса — после полки: иконки перемешки и подмены уже нарисованы (createItemTextures).
-    this.lastChanceBar = new LastChanceBar(this, (action) => this.onLastChanceButton(action), this.tooltip);
+    // Полоса спасения — после полки: иконки перемешки и подмены уже нарисованы (createItemTextures).
+    this.rescueBar = new RescueBar(this);
     this.amuletRack = new AmuletRack(this, this.sockets, this.tooltip);
     if (!data.tape) this.grantMemoryAmulet(); // новый забег: амулет, выбранный на прошлой смерти, — сразу в гнездо
     // Полка с включёнными предметами и гнёзда амулетов — до Коллектора: его банкомат, GOOD LUCK и экран KABOOM ложатся поверх всего, что нарисовано раньше.
     this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
-    this.chipCase = new ChipCase(this);
     this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip);
     // Что из магазина открыто — по закрытым долгам: после отката кассетой раунд уже загружен (loadTape), и части строятся сразу видимыми.
     this.miniShop = new MiniShop(this, (row) => this.buyMini(row), this.tooltip, this.shop.layer);
@@ -258,6 +256,7 @@ export class GameScene extends CollectorScene {
     this.monitor.relabel();
     this.shop.relabel(); // кнопка выхода из магазина: надпись на новом языке
     this.relabelReroll(); // висит решение по перемешке — новость на стекле заново на новом языке
+    if (this.isRescue) this.rescueBar.relabel(); // спасение идёт — полоса заново на новом языке
     if (!this.isPaused) this.collector.flipNote(this.debt);
   }
 
@@ -460,7 +459,7 @@ export class GameScene extends CollectorScene {
   /**
    * Пробел: на паузе — продолжить, у монитора — назад к автомату, в магазине — назад к автомату, в игре — прокрутить,
    * после проигрыша — «заново» (через 0,8 с). Если висит обязательное решение по перемешке, spin() не крутит,
-   * а напоминает надписью на стекле. В последнем шансе пробел ничего не делает: там действуют клавиши 1–5 и мышь.
+   * а напоминает надписью на стекле. В раунде спасения Пробел — тоже прокрутка: spin() уводит в rescueSpinNow.
    */
   private onSpace(): void {
     if (this.isPaused) this.resumeGame();
@@ -474,7 +473,7 @@ export class GameScene extends CollectorScene {
 
   /**
    * Enter: на паузе — продолжить, банкомат выехал — отдать долг, у Дилера — отказаться от сделки, иначе — забрать кон.
-   * В последнем шансе кона нет: сцена его не берёт (canAct()).
+   * В раунде спасения кона нет: Enter ничего не делает, крутит рычаг или Пробел.
    */
   private onEnter(): void {
     if (this.isPaused) this.resumeGame();
@@ -490,20 +489,10 @@ export class GameScene extends CollectorScene {
    * в игре 1–8 — включить предмет с полки.
    */
   private onNumber(index: number): void {
-    if (this.isLastChance) this.onLastChanceKey(index); // в последнем шансе клавиши 1–5 — кнопки полосы
-    else if (this.isShopping) this.onShopNumber(index);
+    if (this.isRescue) return; // в спасении клавиш нет: столбец морозят кликом, прокрутку даёт рычаг
+    if (this.isShopping) this.onShopNumber(index);
     else if (index === TAPE_KEY) this.useTape();
     else if (index < MAX_SLOTS) this.useItem(index);
-  }
-
-  /**
-   * Клавиша 1–5 в последнем шансе: 1 — заморозка, 2 — перекрут, 3 — джокер, 4 — сдаться, 5 — докупить действие.
-   * Столбец и клетку выбирают мышью: на сетке кликают, это не клавиатура.
-   */
-  private onLastChanceKey(index: number): void {
-    const actions: LastChanceAction[] = ['freeze', 'reroll', 'joker', 'surrender', 'buy'];
-    const action = actions[index];
-    if (action) this.onLastChanceButton(action);
   }
 
   /** Клавиша в магазине: 1–3 — торговый автомат, 4–5 — маленький, 6–8 — витрина амулетов, 9 — кассета, 0 — барабан. */

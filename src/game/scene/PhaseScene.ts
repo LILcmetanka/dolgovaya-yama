@@ -15,7 +15,7 @@ export abstract class PhaseScene extends BaseScene {
   protected checkPhase(): void {
     const next = phaseAt(this.closedDebts());
     if (next === this.phase) return;
-    const back = next.number < this.phase.number; // счёт вернулся назад: последний шанс отыграл долг
+    const back = next.number < this.phase.number; // счёт вернулся назад: откат кассетой или провал спасения
     this.phase = next;
     // Откат фазы не объявляют: «ФАЗА 1» с красными огнями и знаками читалась бы как новая напасть.
     // Знаки фазы 2 при этом убираем — они висят до конца забега только пока фаза 2 идёт.

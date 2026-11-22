@@ -48,39 +48,22 @@ const TEXTS = {
   patternKnown: { ru: 'ПАТТЕРН ×{0}', en: 'PATTERN ×{0}' }, // он уже открывался раньше (например, до отката кассетой)
   rerollAskRespin: { ru: 'ПЕРЕКРУТИТЬ?', en: 'RESPIN?' }, // новость на стекле: перемешка заряжена
   rerollAskSwap: { ru: 'ПОДМЕНА?', en: 'SWAP?' },
-  // Последний шанс: цель (множитель паттерна), два действия и пять кнопок (пятая — докупка действия).
-  lcGoalPattern: { ru: 'ЦЕЛЬ: ПАТТЕРН ×{0}', en: 'GOAL: PATTERN ×{0}' },
-  lcGoalJackpot: { ru: 'ЦЕЛЬ: ТОЛЬКО ДЖЕКПОТ', en: 'GOAL: JACKPOT ONLY' },
-  lcActions: { ru: 'ДЕЙСТВИЙ: {0} · КЛАВИШИ 1–5', en: 'ACTIONS: {0} · KEYS 1–5' },
-  lcFreeze: { ru: 'Заморозка', en: 'Freeze' },
-  lcFreezeWhat: { ru: 'Клавиша 1. Столбец останется как есть, перекрут его не тронет. Бесплатно, действий не тратит', en: 'Key 1. The column stays as it is: a reroll won\'t touch it. Free, costs no actions' },
-  lcReroll: { ru: 'Перекрут', en: 'Respin' },
-  lcRerollWhat: { ru: 'Клавиша 2. Выбери столбец мышью — он выпадет заново чистыми символами. Одно действие', en: 'Key 2. Pick a column with the mouse — it drops again with clean symbols. One action' },
-  lcJoker: { ru: 'Джокер', en: 'Joker' },
-  lcJokerWhat: { ru: 'Клавиша 3. Выбери клетку мышью — в ней встанет 🃏. Одно действие', en: 'Key 3. Pick a cell with the mouse — a 🃏 takes its place. One action' },
-  lcSurrender: { ru: 'Сдаться', en: 'Give up' },
-  lcSurrenderWhat: { ru: 'Клавиша 4. Сразу провал последнего шанса', en: 'Key 4. Fail the last chance right away' },
-  // Докупка прокрутки (шаг 14): действия кончились и цель не взята — можно купить ещё одно действие.
-  // Цена — доля фишек на руках, с каждой докупкой доля растёт; платят фишками, цель остаётся «нехватка долга».
-  lcBuy: { ru: 'Докупить', en: 'Buy in' },
-  lcBuyWhat: {
-    ru: 'Клавиша 5. Ещё одно действие за долю фишек на руках; каждая следующая докупка дороже',
-    en: 'Key 5. One more action for a share of the chips in hand; every next buy costs more',
-  },
-  lcBuyPrice: { ru: 'ДОКУПИТЬ: {0}% ФИШЕК · {1}', en: 'BUY IN: {0}% OF CHIPS · {1}' },
-  lcBuyLimit: { ru: 'ДОКУПОК БОЛЬШЕ НЕТ', en: 'NO MORE BUY-INS' },
-  lcBuyPoor: { ru: 'НЕ ХВАТАЕТ ФИШЕК: {0}', en: 'NOT ENOUGH CHIPS: {0}' },
-  lcBuyHopeless: { ru: 'ЦЕЛЬ У ПОТОЛКА: НЕ ПОМОЖЕТ', en: 'GOAL AT THE CAP: WON\'T HELP' },
-  lcBuyMissed: { ru: 'ЦЕЛЬ НЕ ВЗЯТА · ДОКУПИТЬ ЕЩЁ?', en: 'GOAL MISSED · BUY ONE MORE?' },
-  lcSecondWind: { ru: 'ВТОРОЕ ДЫХАНИЕ', en: 'SECOND WIND' },
-  // Пояснение к попапу: почему забег жив, хотя последний шанс провален (DONTLIKE б.12).
+  // Раунд спасения (шаг 27): вместо старого последнего шанса. Красный экран, 5 прокруток, заморозка столбцов.
+  // Кнопок на полосе нет: столбец морозят кликом, прокрутку даёт рычаг. Долг после выживания остаётся тем же.
+  rescueTitle: { ru: 'СПАСЕНИЕ', en: 'RESCUE' },
+  rescueSpins: { ru: 'ОСТАЛОСЬ ПРОКРУТОК: {0}', en: 'SPINS LEFT: {0}' },
+  rescueGoal: { ru: 'СОБЕРИ ПАТТЕРН', en: 'LAND A PATTERN' },
+  rescueDebtStays: { ru: 'ДОЛГ ОСТАЁТСЯ', en: 'THE DEBT STAYS' },
+  rescueFreezeHint: { ru: 'Клик по столбцу — заморозить или разморозить. Одно действие за прокрутку', en: 'Click a column to freeze or unfreeze it. One action per spin' },
+  rescueFreezeUsed: { ru: 'Заморозка в этом ходу использована — крути рычаг', en: 'Freeze used this spin — pull the lever' },
+  rescueSurvived: { ru: 'ПАТТЕРН СОБРАН', en: 'PATTERN LANDED' },
+  rescueSecondWind: { ru: 'ВТОРОЕ ДЫХАНИЕ', en: 'SECOND WIND' },
+  // Пояснение к попапу: почему забег жив, хотя спасение провалено (DONTLIKE б.12).
   // Со сделкой №9 запасов может быть больше одного, поэтому «второй провал» заранее не обещаем.
-  lcSecondWindWhat: {
+  rescueSecondWindWhat: {
     ru: 'провал прощён: счёт на один долг назад. Запасы кончились — конец забега',
     en: 'the failure is forgiven: the score goes one debt back. No reserves left — the run ends',
   },
-  // Последний шанс, входная сетка уже перекрыла цель: долг закроется сам (DONTLIKE б.13).
-  lcAlreadyWin: { ru: 'СЕТКА УЖЕ БЬЁТ ЦЕЛЬ', en: 'THE GRID ALREADY BEATS THE GOAL' },
   // Память амулетов после смерти (шаг 26): один амулет погибшего забега переезжает в следующий за билеты.
   // Цены (2 за обычный, 3 за редкий) — числами под амулетами; название стоит в строке памяти после выбора.
   memoryTitle: { ru: 'ВИТРИНА ПАМЯТИ', en: 'MEMORY SHOWCASE' },
@@ -118,8 +101,8 @@ const TEXTS = {
   devExit: { ru: 'ВЫЙТИ', en: 'EXIT' },
   whoCollector: { ru: 'Коллектор', en: 'Collector' },
   whoCollectorWhat: {
-    ru: 'За долгом; не хватило фишек — последний шанс',
-    en: 'For the debt; short on chips — last chance',
+    ru: 'За долгом; не хватило фишек — раунд спасения',
+    en: 'For the debt; short on chips — rescue round',
   },
   whoDealer: { ru: 'Дилер', en: 'Dealer' },
   whoDealerWhat: {

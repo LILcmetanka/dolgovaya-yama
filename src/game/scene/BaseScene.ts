@@ -21,14 +21,13 @@ import type { AmuletRack } from '../parts/amuletRack';
 import type { Atmosphere } from '../parts/atmosphere';
 import type { BrokenScreen } from '../parts/brokenScreen';
 import type { Cassette } from '../parts/cassette';
-import type { ChipCase } from '../parts/chipCase';
 import type { Collector } from '../parts/collector';
 import type { DealerTable } from '../parts/dealerTable';
 import type { Drum } from '../parts/drum';
 import type { Effects } from '../parts/effects';
 import type { AchievementWindow } from '../parts/achievementWindow';
 import type { ItemShelf } from '../parts/itemShelf';
-import type { LastChanceBar } from '../parts/lastChanceBar';
+import type { RescueBar } from '../parts/lastChanceBar';
 import type { MachineBadge } from '../parts/machineBadge';
 import type { MiniShop } from '../parts/miniShop';
 import type { MachinePanel } from '../parts/panel';
@@ -90,7 +89,7 @@ function saveChipRecord(record: number): void {
  * Сцена игры собрана слоями — каждый слой в своём файле добавляет свою часть игры:
  * BaseScene (состояние забега и табло) → PhaseScene (фазы) → BonusScene (короны, клевер, джекпот) →
  * MachineScene (автомат: ржавчина, смена в начале раунда) → RoundScene (прокрутка, кон, предметы) → DealerScene (сделки Дилера) →
- * ShopScene (магазин) → SaveScene (кассета: записать забег и откатиться) → CollectorScene (расплата и последний шанс) →
+ * ShopScene (магазин) → SaveScene (кассета: записать забег и откатиться) → CollectorScene (расплата и спасение) →
  * GameScene (создаёт части и разбирает клавиши).
  *
  * Этот слой — состояние забега в простых полях и части автомата (их создаёт GameScene).
@@ -157,8 +156,8 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isVictoryPending = false; // цель взята, но победа ждёт конца текущего действия (CollectorScene.checkChipGoal)
   protected isAwaitingPayment = false; // банкомат выехал и фишек хватает — ждём «отдать» (клик по банкомату или Enter)
   protected isDealing = false; // идёт стол Дилера со сделками — крутить и забирать нельзя
-  protected isLastChance = false; // фишек не хватило: одна чистая прокрутка и два действия игрока (CollectorScene)
-  protected secondWindLeft = SECOND_WIND_START; // сколько провалов последнего шанса ещё простят: обычный забег — 1 (сделка №9 даёт ещё)
+  protected isRescue = false; // фишек не хватило: красный раунд спасения, 5 прокруток и заморозка столбцов (CollectorScene)
+  protected secondWindLeft = SECOND_WIND_START; // сколько провалов спасения ещё простят: обычный забег — 1 (сделка №9 даёт ещё)
   protected breathTaken = false; // сделка №9 «+1 запас дыхания» уже бралась: второй раз её не берут, откат этого не снимает
   protected insuranceSaves = 0; // сколько раз страховка уже спасла кон в этом раунде: копий две — сработок две
   protected pacts: Pact[] = []; // сделки Дилера (dealerGame.Pact): что из них действует в раунде, решает pactEffects
@@ -176,7 +175,6 @@ export abstract class BaseScene extends Phaser.Scene {
   protected panel!: MachinePanel; // табло, окошко множителя, лампочки прокруток, рычаг
   protected payout!: PayoutWindow; // окошко выплаты: электронное табло с коном и кнопкой «забрать»
   protected collector!: Collector; // записка с долгом, банкомат и экран DEATH
-  protected chipCase!: ChipCase; // чемодан с фишками: выжил в последнем шансе — долг оплачен
   protected itemShelf!: ItemShelf; // полка с предметами и включённые предметы у экрана
   protected amuletRack!: AmuletRack; // гнёзда с амулетами на верхушке корпуса
   protected shop!: Shop; // панель магазина: жалюзи с торговым автоматом, витриной амулетов, барабаном и кассетой
@@ -189,7 +187,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected dealerTable!: DealerTable; // стол Дилера поверх экрана
   protected atmosphere!: Atmosphere; // пыль, полосы на экране, мигание света, тёмные края от тревоги
   protected tooltip!: Tooltip; // подсказка при наведении мыши
-  protected lastChanceBar!: LastChanceBar; // полоса последнего шанса: цель, действия, кнопки
+  protected rescueBar!: RescueBar; // полоса спасения: остаток прокруток, цель, «долг остаётся», подсказка
   protected monitor!: WallScreen; // экран на стене справа: символы, паттерны, как играть
   protected effects!: Effects; // брызги фишек, всплывающие надписи, вспышка с тряской
   protected achievements!: AchievementWindow; // окно полученной ачивки по центру сетки
@@ -244,7 +242,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.tapeRecord = null;
     this.patternSet = [...openedPatterns()]; // открытое копится навсегда: «заново» и конец забега схемы не гасят
     this.isDealing = false;
-    this.isLastChance = false;
+    this.isRescue = false;
     this.secondWindLeft = SECOND_WIND_START;
     this.breathTaken = false;
     this.insuranceSaves = 0;
@@ -290,8 +288,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.panel.showSpinsLeft(this.spinsLeft);
     this.panel.showFreeSpins(this.freeSpins);
     this.collector.showGoal(this.balance, this.chipGoal); // цель забега — от фишек НА РУКАХ, не от оборота (решение автора 19.11)
-    // В последнем шансе цели в окошке нет: её показывает полоса последнего шанса, а «забрать» там нечего.
-    this.payout.setGoal(null);
+    // В спасении цели в окошке нет: её показывает полоса спасения, а «забрать» там нечего.
     this.payout.showPot(this.pot, this.debt);
     this.payout.setEnabled(this.canAct());
     this.collector.showPayable(this.canPayEarly());
@@ -548,7 +545,7 @@ export abstract class BaseScene extends Phaser.Scene {
       !this.isRewinding &&
       !this.isPaused &&
       !this.isAtMonitor &&
-      !this.isLastChance &&
+      !this.isRescue &&
       this.freeSpins === 0
     );
   }
@@ -574,7 +571,7 @@ export abstract class BaseScene extends Phaser.Scene {
     return this.tapeState === 'blank' && this.canAct();
   }
 
-  /** Можно ли откатиться: есть запись и сейчас между прокрутками (в последнем шансе и у Коллектора — уже нельзя). */
+  /** Можно ли откатиться: есть запись и сейчас между прокрутками (в спасении и у Коллектора — уже нельзя). */
   protected canRewind(): boolean {
     return this.tapeState === 'recorded' && !this.isRewinding && !this.isGameOver && !this.isVictoryPending && this.canAct();
   }

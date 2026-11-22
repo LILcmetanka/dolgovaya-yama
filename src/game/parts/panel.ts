@@ -308,7 +308,7 @@ export class MachinePanel {
     for (const sign of this.phaseSigns) sign.setVisible(visible);
   }
 
-  /** Фаза откатилась к первой (последний шанс вернул счёт назад): знаков фазы 2 больше нет — их убираем совсем. */
+  /** Фаза откатилась к первой (откат кассетой или провал спасения): знаков фазы 2 больше нет — их убираем совсем. */
   clearPhaseSigns(): void {
     this.hint.hide(); // табличка могла висеть на знаке — знака не станет
     for (const sign of this.phaseSigns) {

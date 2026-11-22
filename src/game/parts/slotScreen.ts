@@ -48,7 +48,7 @@ const NEWS_SIDE_PADDING = 20; // поле по бокам новости: над
 const NEWS_ICON_SCALE = 1.5; // значок автомата в новости — крупнее, чем на корпусе
 const NEWS_ICON_GAP = 12; // между значком и названием
 const LOCK_SHADE = 0.5; // столбец с замком темнеет: прозрачность тени
-// Замороженный столбец (последний шанс): голубой лёд поверх клеток, действий не тратит.
+// Замороженный столбец (раунд спасения): голубой лёд поверх клеток, прокрутка его не трогает.
 const FREEZE_FILL = 0x38bdf8;
 const FREEZE_ALPHA = 0.16;
 const FREEZE_EDGE = 0x7dd3fc;
@@ -126,7 +126,7 @@ export class SlotScreen {
   private readonly cells: Phaser.GameObjects.Image[][]; // клетки сетки: cells[ряд][столбец]
   private readonly cellHighlights: Phaser.GameObjects.Graphics; // рамки вокруг клеток найденных паттернов
   private readonly pickHighlight: Phaser.GameObjects.Graphics; // обводка клетки или столбца под мышью, пока выбирают
-  private readonly freezeFrames: Phaser.GameObjects.Rectangle[]; // лёд на замороженных столбцах (последний шанс)
+  private readonly freezeFrames: Phaser.GameObjects.Rectangle[]; // лёд на замороженных столбцах (раунд спасения)
   private readonly zones: Phaser.GameObjects.Zone[][]; // невидимые клик-зоны клеток: ловят мышь, только пока выбирают
   private pickMode: 'column' | 'cell' | null = null; // что выбирают сейчас; null — выбора нет
   private pickCallback: ((row: number, col: number) => void) | null = null; // кому отдать выбранную клетку
@@ -242,7 +242,7 @@ export class SlotScreen {
     });
   }
 
-  /** Пять ледяных рамок по столбцам: их показывает showFrozen, когда игрок замораживает столбец в последнем шансе. */
+  /** Пять ледяных рамок по столбцам: их показывает showFrozen, когда игрок морозит столбец в раунде спасения. */
   private drawFreezeFrames(): Phaser.GameObjects.Rectangle[] {
     const top = cellY(0) - CELL_SIZE / 2;
     const height = columnHeight();
@@ -369,6 +369,27 @@ export class SlotScreen {
       else this.spinColumn(col, weightOf, (row) => symbolTexture(grid[row][col]));
     }
     this.scene.time.delayedCall(columnStopTime(GRID_COLUMNS - 1) + RESULT_PAUSE, () => {
+      this.clearRust();
+      stopped();
+    });
+  }
+
+  /**
+   * Прокрутка только перечисленных столбцов: остальные стоят как есть. Так идёт раунд спасения: замороженные
+   * столбцы не крутятся, последняя прокрутка может остаться на одном столбце. null-столбцы и мусор отбрасываются;
+   * stopped зовётся после остановки последнего, как у обычного spin.
+   */
+  spinColumns(grid: Grid, weightOf: WeightOf, columns: readonly number[], stopped: () => void): void {
+    const list = [...new Set(columns)].filter((col) => Number.isInteger(col) && col >= 0 && col < GRID_COLUMNS);
+    if (list.length === 0) {
+      stopped();
+      return;
+    }
+    list.forEach((col, index) => {
+      if (col === this.rustyColumn) this.shudderColumn(col);
+      else this.spinColumn(col, weightOf, (row) => symbolTexture(grid[row][col]), columnStopTime(index));
+    });
+    this.scene.time.delayedCall(columnStopTime(list.length - 1) + RESULT_PAUSE, () => {
       this.clearRust();
       stopped();
     });

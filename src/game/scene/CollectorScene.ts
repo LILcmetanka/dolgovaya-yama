@@ -1,29 +1,26 @@
-import { interestCoins, TICKETS_PER_DEBT, winFactor } from '../amulets';
+import { interestCoins, TICKETS_PER_DEBT } from '../amulets';
 import { amuletTexture, TICKET_TEXTURE } from '../decor';
-import { pactEffects, shiftPacts } from '../dealerGame';
-import { diceWeight } from '../evil';
+import { shiftPacts } from '../dealerGame';
 import { CHIP_RECORD } from '../gameConfig';
 import {
-  bestMultiplier,
-  chancePrice,
   GOOD_LUCK_TIME,
-  isLastChanceGoalMet,
-  isLastChanceSymbol,
-  LAST_CHANCE_ACTIONS,
-  lastChanceBuyPrice,
-  lastChanceBuyShare,
-  lastChanceBuyVerdict,
-  lastChanceGoal,
+  RESCUE_SPINS,
+  rescueDebtModeOf,
+  rescueDebtMul,
+  rescueFreezeVerdict,
+  rescueOutcome,
+  rescueSpin,
+  rescueSpinningColumns,
+  rescueSpinsAfter,
+  rescueToggleFrozen,
+  rescueWeightOf,
 } from '../lastChance';
 import { t } from '../lang';
 import { CENTER_X, DISPLAY, GRID_Y } from '../layout';
-import { machineWinFactor } from '../machines';
 import { memoryOptions, type MemoryOption } from '../memory';
-import { evaluateGrid } from '../patterns';
 import { setRememberedAmulet } from '../progress';
-import { FAILED_DEBT_ROUND_STEP, GRID_ROWS, JOKER, randomSymbol, weightsForRound, WON_DEBT_ROUND_STEP, type Grid, type SlotSymbol, type WeightOf } from '../rules';
+import { debtForRound, FAILED_DEBT_ROUND_STEP, type Grid } from '../rules';
 import { addText, fitTextWidth, GAME_OVER_DEPTH, GOLD_TEXT, GREEN_TEXT, LAMP_OFF, LAMP_RED } from '../theme';
-import type { LastChanceAction } from '../parts/lastChanceBar';
 import { SaveScene } from './SaveScene';
 
 // Порядок событий, мс.
@@ -32,10 +29,10 @@ const KABOOM_WARN_TIME = 1800; // KABOOM мигает на экране авто
 const KABOOM_AFTER_TIME = 900; // после взрыва — пауза, потом всё темнеет
 const KABOOM_SHAKE_TIME = 700;
 const KABOOM_SHAKE = 0.03;
-const LAST_CHANCE_TENSION = 1; // в последнем шансе сердце в музыке бьётся быстрее всего
+const RESCUE_TENSION = 1; // в раунде спасения сердце в музыке бьётся быстрее всего
+const RESCUE_WIN_PAUSE = 1200; // паттерн собран: столько видно новость, потом магазин
 const SECOND_WIND_PAUSE = 1200; // провал с «вторым дыханием»: столько видно, что случилось, потом магазин
 const SECOND_WIND_WHY_FONT = 20; // пояснение под «ВТОРОЕ ДЫХАНИЕ»: обычный кегль попапа его растянул бы на весь вид
-const INSTANT_WIN_PAUSE = 1200; // входная сетка уже бьёт цель: столько видно полосу и новость, потом долг закрывается
 // Победа (набрано CHIP_GOAL).
 const VICTORY_SETTLE_TIME = 400; // после прибавки фишек столько ждём: текущее действие успевает доиграть
 const VICTORY_PAUSE = 1400; // лампы погасли, новое число на табло видно — пауза, потом затемнение
@@ -55,24 +52,21 @@ const MEMORY_BORDER = 0xfbbf24;
 
 /**
  * Слой Коллектора: в конце раунда к автомату приходит Коллектор. Хватает фишек — из темноты выезжает банкомат, отдаёшь долг,
- * получаешь купон (билет), дальше магазин. Не хватает — на экране банкомата GOOD LUCK, автомат делает ОДНУ чистую прокрутку
- * (без черепов и злых символов), и у игрока два действия: перекрутить столбец или поставить джокера в клетку; заморозка
- * столбца бесплатная. Действия кончились, цель не взята — можно докупить ещё одно за долю фишек на руках (шаг 14).
- * Собрал паттерн, который оплачивает долю нехватки фишек (lastChanceGoal), — выезжает чемодан с фишками:
- * долг оплачен, фишки целы, билета нет, счёт на один долг назад. Не собрал (или сдался) — провал: первый за забег даёт
- * «второе дыхание» (счёт −1, магазин), следующий — KABOOM. Счётчик secondWindLeft живёт в записи забега и в кассете:
+ * получаешь купон (билет), дальше магазин. Не хватает — на экране банкомата GOOD LUCK, и начинается раунд спасения
+ * (шаг 27): всё уходит в красный, даётся 5 прокруток, доля черепов — RESCUE_SKULL_SHARE, надо собрать хотя бы один
+ * паттерн. После прокрутки можно заморозить или разморозить один столбец; крутятся только незамороженные.
+ * Амулеты и предметы в спасении заморожены. Собрал паттерн — выжил, долг остаётся тем же (назад пути нет),
+ * магазин и новый раунд. Не собрал — провал: первый за забег даёт «второе дыхание» (счёт −1, магазин),
+ * следующий — KABOOM. Счётчик secondWindLeft живёт в записи забега и в кассете:
  * откат дыхание не пополняет, а сделка №9 кладёт ещё один запас.
  */
 export abstract class CollectorScene extends SaveScene {
-  // Последний шанс: сетка, которую игрок доделывает, и сколько действий у него осталось.
-  private lastChanceGrid: Grid | null = null;
-  private lastChanceGoal = 0; // какой множитель паттерна надо перекрыть; 0 — нехватки нет, годится любой паттерн
-  private lastChanceActions = 0;
-  private lastChanceBought = 0; // сколько докупок прокрутки сделано за этот последний шанс (шаг 14)
-  private isLastChanceAwaitingBuy = false; // действия кончились, цель не взята, но докупка ещё возможна — ждём решения
-  private readonly frozenColumns = new Set<number>(); // замороженные столбцы: перекрут их не трогает
-  private isFreezeMode = false; // кнопка «лёд» включена: клик по столбцу морозит, а не перекручивает
-  private isLastChanceWinPending = false; // входная сетка уже бьёт цель: полоса показана, через мгновение долг закроется
+  // Раунд спасения: сетка, которую докручивает игрок, остаток прокруток и заморозки.
+  private rescueGrid: Grid | null = null;
+  private rescueSpinsLeft = 0;
+  private rescueFreezeUsed = false; // заморозка/разморозка в этом ходу уже была: разрешена одна
+  private readonly frozenColumns = new Set<number>(); // замороженные столбцы: прокрутка их не трогает
+  private isRescueWinPending = false; // паттерн собран: новость показана, через мгновение магазин
   private wasShoppingAtVictory = false; // победа застала магазин на экране: «ДАЛЬШЕ» доиграет его выход
   private victoryReached = false; // цель уже взята (порог сверен и пройден): падение баланса ниже chipGoal её не отменяет
   private endScreenCleanup: (() => void) | null = null; // уборка экрана победы: её зовёт «ДАЛЬШЕ»
@@ -83,17 +77,14 @@ export abstract class CollectorScene extends SaveScene {
   protected memoryBox: Phaser.GameObjects.Rectangle | null = null;
   protected memoryTitleText: Phaser.GameObjects.Text | null = null;
 
-  /** Новый забег: последний шанс не идёт, заморозки нет. */
+  /** Новый забег: спасения нет, заморозок нет. */
   protected resetState(): void {
     super.resetState();
-    this.lastChanceGrid = null;
-    this.lastChanceGoal = 0;
-    this.lastChanceActions = 0;
-    this.lastChanceBought = 0;
-    this.isLastChanceAwaitingBuy = false;
+    this.rescueGrid = null;
+    this.rescueSpinsLeft = 0;
+    this.rescueFreezeUsed = false;
+    this.isRescueWinPending = false;
     this.frozenColumns.clear();
-    this.isFreezeMode = false;
-    this.isLastChanceWinPending = false;
     this.wasShoppingAtVictory = false;
     this.victoryReached = false; // новый забег — цель снова не взята
     this.endScreenCleanup = null;
@@ -104,14 +95,14 @@ export abstract class CollectorScene extends SaveScene {
     this.memoryTitleText = null;
   }
 
-  /** В последнем шансе сердце в музыке бьётся быстрее всего. */
+  /** В раунде спасения сердце в музыке бьётся быстрее всего. */
   protected tension(): number {
-    return this.isLastChance ? LAST_CHANCE_TENSION : super.tension();
+    return this.isRescue ? RESCUE_TENSION : super.tension();
   }
 
   /**
    * Прокрутки кончились (или долг отдают раньше — isPaidEarly): Коллектор идёт за долгом.
-   * Фишек не хватает — сначала тревога и красные огни на GOOD_LUCK_TIME, потом последний шанс.
+   * Фишек не хватает — сначала тревога и красные огни на GOOD_LUCK_TIME, потом раунд спасения.
    */
   protected callCollector(isPaidEarly: boolean): void {
     // Забег уже кончен (победа по цели или KABOOM): Коллектору за долгом идти незачем.
@@ -127,7 +118,7 @@ export abstract class CollectorScene extends SaveScene {
 
   /**
    * Выезжает банкомат. Хватает фишек — ждём «отдать» (а если долг отдают раньше — isPaidEarly — банкомат сразу забирает:
-   * игрок уже решил); не хватает — на его экране GOOD LUCK, банкомат уезжает, начинается последний шанс.
+   * игрок уже решил); не хватает — на его экране GOOD LUCK, банкомат уезжает, начинается раунд спасения.
    */
   private reachOut(isPaidEarly: boolean): void {
     const enough = this.hasEnoughForDebt();
@@ -135,8 +126,8 @@ export abstract class CollectorScene extends SaveScene {
     this.sfx.play('hand'); // банкомат выезжает
     this.collector.reachOut(this.debt, enough, () => {
       if (!enough) {
-        // Банкомат уехал после GOOD LUCK — начинается последний шанс.
-        this.startLastChance();
+        // Банкомат уехал после GOOD LUCK — начинается раунд спасения.
+        this.startRescue();
         return;
       }
       this.isAwaitingPayment = true; // теперь можно кликнуть по банкомату или нажать Enter
@@ -174,302 +165,161 @@ export abstract class CollectorScene extends SaveScene {
     );
   }
 
-  // ---------- Последний шанс ----------
+  // ---------- Раунд спасения ----------
 
   /**
-   * Фишек не хватило: одна чистая прокрутка (её делает автомат), потом два действия игрока.
-   * Цель — не побить свою же сетку, а закрыть долю нехватки фишек (lastChanceGoal): она считается от
-   * debt − balance, цены символа раунда, множителя серии и множителей выигрыша — тех же чисел, что в addToPot,
-   * и падает на полосу уже множителем паттерна: суммы фишек там нет, победа проверяет только множитель.
-   * Входная сетка уже бьёт цель — полоса и новость на 1,2 с, потом долг закрывается сам (DONTLIKE б.13).
+   * Фишек не хватило: банкомат уехал с GOOD LUCK — всё уходит в красный, игра даёт 5 прокруток.
+   * Первую прокрутку делает игрок рычагом: так он сам решает, когда начать. Дальше после каждой прокрутки —
+   * один клик по столбцу (заморозить или разморозить), крутятся только незамороженные.
    */
-  private startLastChance(): void {
-    this.isLastChance = true;
+  private startRescue(): void {
+    this.isRescue = true;
     this.pot = 0;
-    this.lastChanceBought = 0; // докупки считаются заново: это новый последний шанс
-    this.isLastChanceAwaitingBuy = false;
+    this.rescueGrid = null;
+    this.rescueSpinsLeft = RESCUE_SPINS;
+    this.rescueFreezeUsed = false;
+    this.isRescueWinPending = false;
     this.frozenColumns.clear();
-    this.isFreezeMode = false;
+    this.screen.endPick();
     this.screen.showFrozen([]);
-    this.lastChanceBar.close();
+    this.screen.clearHighlights(); // рамки прошлой прокрутки в спасении не нужны
+    this.clearRust(); // ржавый столбец не должен молча не крутиться в спасении
+    this.screen.clearNews();
+    this.rescueBar.open(RESCUE_SPINS);
+    this.enterRescueMood();
     this.refreshHud();
-    this.rollLastChance((grid) => {
-      this.lastChanceGrid = grid;
-      const need = this.debt - this.balance;
-      const goal = lastChanceGoal(need, chancePrice(this.round), this.multiplier(), this.chanceWinFactor());
-      this.lastChanceGoal = goal;
-      this.lastChanceActions = LAST_CHANCE_ACTIONS;
-      this.refreshHud();
-      if (isLastChanceGoalMet(bestMultiplier(evaluateGrid(grid)), goal)) {
-        // Чистая сетка уже перекрыла цель — действий не нужно. Но и молча закрывать долг нельзя: игрок не видел
-        // ни цели, ни причины, почему выжил (DONTLIKE б.13). Показываем полосу с целью и новость, ждём и закрываем.
-        this.isLastChanceWinPending = true;
-        this.screen.announceNews(t('lcAlreadyWin'));
-        this.lastChanceBar.open(goal, this.lastChanceActions);
-        this.refreshLastChanceBuyLine(); // цель уже взята: плашка докупки гаснет, но строка цены на месте
-        // Страховка от «победы без причины»: за эти 1,2 с шанс могли закрыть (перезапуск сцены, откат),
-        // и тогда таймер не должен ни платить долг, ни открывать магазин со счётом −2.
-        this.time.delayedCall(INSTANT_WIN_PAUSE, () => {
-          if (this.isLastChanceWinPending) this.winLastChance();
-        });
-        return;
-      }
-      this.sfx.play('news', 0.3);
-      this.lastChanceBar.open(goal, this.lastChanceActions);
-      this.refreshLastChanceBuyLine();
-    });
+    this.sfx.play('warning', 0.5);
+  }
+
+  /** Красный режим: огни автомата красные, по краям вида красное свечение, амулеты и предметы притушены. */
+  private enterRescueMood(): void {
+    this.screen.setCalmColor(LAMP_RED);
+    this.screen.flashLamps(LAMP_RED, GOOD_LUCK_TIME);
+    this.atmosphere.setRescueAlert(true);
+    this.itemShelf.setDimmed(true);
+    this.amuletRack.setDimmed(true);
+  }
+
+  /** Красный режим снят: огни снова обычные, свечение гаснет, амулеты и предметы снова видны. */
+  private exitRescueMood(): void {
+    this.atmosphere.setRescueAlert(false);
+    this.screen.setCalmColor(this.calmLampColor());
+    this.itemShelf.setDimmed(false);
+    this.amuletRack.setDimmed(false);
+  }
+
+  /** Рычаг и Пробел в спасении крутят спасение, а не обычный раунд (там прокруток уже нет). */
+  protected override spin(): void {
+    if (this.isRescue) {
+      this.rescueSpinNow();
+      return;
+    }
+    super.spin();
   }
 
   /**
-   * Множители выигрыша амулетов, автомата и сделки «выигрыш паттернов +N%» — как в addToPot (RoundScene):
-   * во сколько раз паттерн на кону больше своей цены. Кровавая прокрутка и предмет риска сюда не входят:
-   * их флаги к приходу Коллектора сняты. Симулятор считает так же (full-run.mjs, collector).
+   * Одна прокрутка спасения: незамороженные столбцы выпадают заново, замороженные стоят.
+   * Остаток уменьшается здесь же; итог — после остановки последнего столбца (afterRescueSpin).
    */
-  private chanceWinFactor(): number {
-    return winFactor(this.amuletIds(), this.bones) * machineWinFactor(this.machineId) * pactEffects(this.pacts, this.round).winMul;
-  }
-
-  /** Одна прокрутка последнего шанса: обычные веса раунда, но без черепов и злых символов. */
-  private rollLastChance(done: (grid: Grid) => void): void {
+  private rescueSpinNow(): void {
+    if (!this.isRescue || this.isSpinning || this.isRescueWinPending) return;
+    if (this.rescueSpinsLeft <= 0) return;
+    const columns = rescueSpinningColumns([...this.frozenColumns]);
+    if (columns.length === 0) {
+      this.sfx.play('deny'); // всё заморожено — крутить нечего (правило не даёт заморозить последний столбец)
+      return;
+    }
+    const weightOf = rescueWeightOf(this.round);
+    this.rescueGrid = rescueSpin(this.rescueGrid, [...this.frozenColumns], weightOf);
+    this.rescueSpinsLeft = rescueSpinsAfter(this.rescueSpinsLeft);
+    this.rescueFreezeUsed = false; // новый ход: снова можно заморозить или разморозить один столбец
+    this.rescueBar.setSpins(this.rescueSpinsLeft);
+    this.rescueBar.setFreezeUsed(false);
+    this.screen.endPick();
+    this.screen.clearHighlights();
+    this.isSpinning = true;
     this.panel.pullLever();
     this.sfx.play('lever');
     this.sfx.play('roll', 0.1);
-    this.isSpinning = true;
-    this.screen.clearHighlights();
-    const weightOf = this.cleanWeight();
-    const grid = this.rollGrid(weightOf);
-    this.screen.spin(grid, weightOf, () => {
+    this.refreshHud();
+    this.screen.spinColumns(this.rescueGrid, weightOf, columns, () => {
       this.isSpinning = false;
-      done(grid);
+      this.afterRescueSpin();
     });
   }
 
-  /** Веса чистой сетки: обычные веса раунда, но у черепов, кубика, паука, замка и крови вес 0. */
-  private cleanWeight(): WeightOf {
-    const base = weightsForRound(this.round, diceWeight(this.diceDrought));
-    return (symbol: SlotSymbol): number => (isLastChanceSymbol(symbol) ? base(symbol) : 0);
+  /**
+   * Столбцы встали: собрали платящий паттерн — выжили; прокрутки кончились — умерли; иначе — ход заморозки:
+   * один клик по столбцу морозит или размораживает его.
+   */
+  private afterRescueSpin(): void {
+    if (!this.isRescue || this.isRescueWinPending) return;
+    const grid = this.rescueGrid;
+    const outcome = grid ? rescueOutcome(grid, this.rescueSpinsLeft) : 'dead';
+    if (outcome === 'won') {
+      this.winRescue();
+      return;
+    }
+    if (outcome === 'dead') {
+      this.failRescue();
+      return;
+    }
+    this.refreshHud();
+    this.screen.beginPick('column', (_row, col) => this.onRescuePick(col));
   }
 
   /**
-   * Нажали кнопку в полосе: «сдаться» — сразу провал, «лёд» — режим заморозки (бесплатно и без действий),
-   * «перекрут» и «джокер» ждут клика по сетке. Действия кончились — остаются только «докупить» и «сдаться»:
-   * бесплатно перекручивать и ставить джокера нельзя (иначе цель не растёт, а шанс не кончается).
+   * Клик по столбцу в спасении: заморозить или разморозить. Разрешено одно действие за прокрутку,
+   * последний незамороженный столбец морозить нельзя — иначе крутить нечего. Решает rescueToggleFrozen.
    */
-  protected onLastChanceButton(action: LastChanceAction): void {
-    if (!this.isLastChance || !this.lastChanceGrid || this.isSpinning) return; // пока столбец крутится, кнопки ждут
-    if (this.isLastChanceWinPending) return; // сетка уже бьёт цель: долг закроется сам, кнопки не нужны
-    if (action === 'surrender') {
-      this.failLastChance();
+  private onRescuePick(col: number): void {
+    if (!this.isRescue || this.isSpinning || this.isRescueWinPending) return;
+    const next = rescueToggleFrozen([...this.frozenColumns], col, this.rescueFreezeUsed);
+    if (!next) {
+      const verdict = rescueFreezeVerdict([...this.frozenColumns], col, this.rescueFreezeUsed);
+      if (verdict === 'used' || verdict === 'last') this.sfx.play('deny');
       return;
     }
-    if (action === 'buy') {
-      this.buyLastChanceSpin(); // докупка действия за долю фишек на руках (шаг 14)
-      return;
-    }
-    // Вход в выбор (заморозка, перекрут, джокер) без действия запрещён: в ожидании докупки — только «докупить» и «сдаться».
-    if (this.lastChanceActions <= 0) {
-      this.sfx.play('deny');
-      this.refreshLastChanceBuyLine();
-      return;
-    }
-    if (action === 'freeze') {
-      this.isFreezeMode = !this.isFreezeMode; // повторное нажатие выключает режим
-      this.lastChanceBar.setFreezeMode(this.isFreezeMode);
-      if (this.isFreezeMode) this.screen.beginPick('column', (row, col) => this.onLastChancePick('freeze', row, col));
-      else this.screen.endPick();
-      return;
-    }
-    this.isFreezeMode = false;
-    this.lastChanceBar.setFreezeMode(false);
-    this.screen.beginPick(action === 'reroll' ? 'column' : 'cell', (row, col) => this.onLastChancePick(action, row, col));
-  }
-
-  /** Клик по сетке в последнем шансе: морозим столбец, перекручиваем столбец или ставим джокера. */
-  private onLastChancePick(action: 'freeze' | 'reroll' | 'joker', row: number, col: number): void {
-    if (!this.isLastChance || !this.lastChanceGrid || this.isLastChanceWinPending) return;
-    // Действий нет — выбор снят и ничего не делаем: бесплатных перекрутов и джокеров не бывает.
-    if (this.lastChanceActions <= 0) {
-      this.screen.endPick();
-      this.isFreezeMode = false;
-      this.lastChanceBar.setFreezeMode(false);
-      this.sfx.play('deny');
-      return;
-    }
-    if (action === 'freeze') {
-      this.toggleFreeze(col);
-      return;
-    }
-    if (action === 'reroll') this.rerollColumn(col);
-    else this.placeJoker(row, col);
-  }
-
-  /** Заморозка столбца: бесплатно, действий не тратит. Замороженный столбец перекрут не трогает. */
-  private toggleFreeze(col: number): void {
-    if (this.frozenColumns.has(col)) this.frozenColumns.delete(col);
-    else this.frozenColumns.add(col);
+    this.frozenColumns.clear();
+    for (const value of next.frozen) this.frozenColumns.add(value);
+    this.rescueFreezeUsed = next.used;
     this.screen.showFrozen([...this.frozenColumns]);
-    this.sfx.play('rust'); // лёд хрустит, как ржавый столбец
+    this.screen.endPick(); // одно действие за ход: дальше — рычаг
+    this.rescueBar.setFreezeUsed(true);
+    this.sfx.play('rust');
+    this.refreshHud();
   }
 
-  /** Перекрут столбца: он выпадает заново чистыми символами. Одно действие. */
-  private rerollColumn(col: number): void {
-    const grid = this.lastChanceGrid;
-    if (!grid) return;
-    if (this.frozenColumns.has(col)) {
-      this.sfx.play('deny'); // столбец заморожен: сначала разморозь, действий не тратим
-      return;
-    }
-    const weightOf = this.cleanWeight();
-    for (let row = 0; row < GRID_ROWS; row++) grid[row][col] = randomSymbol(weightOf);
-    this.spendAction();
-    this.sfx.play('item');
-    this.isSpinning = true;
-    this.screen.endPick(); // пока столбец крутится, выбирать нечего
-    this.screen.rerollColumn(col, weightOf, (row) => grid[row][col], () => {
-      this.isSpinning = false;
-      this.afterLastChanceAction();
-    });
-  }
-
-  /** Джокер в клетку: там встаёт 🃏, клетка подпрыгивает. Одно действие. В занятую джокером клетку не ставим. */
-  private placeJoker(row: number, col: number): void {
-    const grid = this.lastChanceGrid;
-    if (!grid) return;
-    if (grid[row][col].id === 'joker') {
-      this.sfx.play('deny'); // тут уже джокер: действие не тратим
-      return;
-    }
-    grid[row][col] = JOKER;
-    this.spendAction();
-    this.sfx.play('item');
-    this.isSpinning = true;
+  /**
+   * Паттерн собран: выжил. Долг не откатывается и не прощается; как он растёт дальше — решает RESCUE_DEBT_MODE:
+   *  • 'frozen' — следующий долг равен текущему (debtNextMul = rescueDebtMul);
+   *  • 'curve'  — следующий долг считается от номера раунда, как в обычном раунде (openShop сам возьмёт
+   *               debtForRound(round + 1)), а debtNextMul остаётся 1.
+   * Назад пути нет.
+   */
+  private winRescue(): void {
+    this.isRescueWinPending = true;
     this.screen.endPick();
-    this.screen.revealCell(row, col, JOKER, () => {
-      this.isSpinning = false;
-      this.afterLastChanceAction();
-    });
-  }
-
-  /** Трата одного действия. Пол нуля — только страховка: без остатка кнопки и выбор не работают (см. выше). */
-  private spendAction(): void {
-    this.lastChanceActions = Math.max(0, this.lastChanceActions - 1);
-    this.lastChanceBar.setActions(this.lastChanceActions);
-    this.refreshLastChanceBuyLine(); // остаток изменился: плашка докупки гаснет/загорается по правилу
-  }
-
-  /**
-   * Докупка прокрутки (шаг 14): докупать можно только когда бесплатные действия кончились и цель не взята —
-   * решает lastChanceBuyVerdict, одна дверь для сцены и симулятора. Цена — lastChanceBuyPrice, цель после покупки
-   * пересчитывается тем же lastChanceGoal: нехватка выросла ровно на заплаченное.
-   * Нельзя (действия ещё есть, лимит, не хватает фишек, цель у потолка) — только звук отказа и обновлённая подпись,
-   * фишки целы. Покупка снимает открытый выбор, как обычные ветки кнопок.
-   */
-  private buyLastChanceSpin(): void {
-    const verdict = lastChanceBuyVerdict(this.lastChanceActions, this.lastChanceBought, this.balance, this.lastChanceGoal);
-    if (verdict !== 'ok') {
-      this.sfx.play('deny');
-      this.refreshLastChanceBuyLine();
-      return;
-    }
-    this.screen.endPick(); // выбор сетки снят: действие уже куплено, ждать клика нечего
-    this.isFreezeMode = false;
-    this.lastChanceBar.setFreezeMode(false);
-    const price = lastChanceBuyPrice(this.balance, this.lastChanceBought);
-    this.balance -= price;
-    this.lastChanceBought += 1;
-    this.lastChanceActions += 1;
-    const need = this.debt - this.balance;
-    this.lastChanceGoal = lastChanceGoal(need, chancePrice(this.round), this.multiplier(), this.chanceWinFactor());
-    this.lastChanceBar.setGoal(this.lastChanceGoal);
-    this.lastChanceBar.setActions(this.lastChanceActions);
-    this.isLastChanceAwaitingBuy = false;
-    this.refreshLastChanceBuyLine();
-    this.refreshHud();
-    this.sfx.play('payment');
-    this.effects.popup(`+1 · −${price}`, GOLD_TEXT);
-  }
-
-  /**
-   * Строка цены докупки — одним хелпером по lastChanceBuyVerdict: цена с процентом, лимит, нехватка фишек
-   * или цель у потолка. Пока действия ещё есть (early) — обычная цена и погашенная плашка: игрок видит, сколько
-   * докупка будет стоить, когда действия кончатся. Ждём решения после последнего действия — «цель не взята ·
-   * докупить ещё?».
-   */
-  private refreshLastChanceBuyLine(): void {
-    if (this.isLastChanceAwaitingBuy) {
-      this.lastChanceBar.setBuy(t('lcBuyMissed'), true);
-      return;
-    }
-    const verdict = lastChanceBuyVerdict(this.lastChanceActions, this.lastChanceBought, this.balance, this.lastChanceGoal);
-    if (verdict === 'limit') {
-      this.lastChanceBar.setBuy(t('lcBuyLimit'), false);
-      return;
-    }
-    if (verdict === 'poor') {
-      this.lastChanceBar.setBuy(t('lcBuyPoor', lastChanceBuyPrice(this.balance, this.lastChanceBought)), false);
-      return;
-    }
-    if (verdict === 'hopeless') {
-      this.lastChanceBar.setBuy(t('lcBuyHopeless'), false);
-      return;
-    }
-    // Процент — целое: доля 0,25 читается как «25», а не как «0.25».
-    const share = Math.round(lastChanceBuyShare(this.lastChanceBought) * 100);
-    const price = lastChanceBuyPrice(this.balance, this.lastChanceBought);
-    // early — действия ещё есть: подпись обычная, но купить нельзя; ok — покупка доступна (кроме мгновенной победы).
-    this.lastChanceBar.setBuy(t('lcBuyPrice', share, price), verdict === 'ok' && !this.isLastChanceWinPending);
-  }
-
-  /**
-   * Действие отработало: есть ещё — ждём следующей кнопки, кончились — проверяем цель.
-   * Цель не взята, но докупка ещё возможна — не проваливаем сразу: игрок может купить ещё действие (шаг 14).
-   */
-  private afterLastChanceAction(): void {
-    if (!this.isLastChance) return;
-    this.refreshHud();
-    if (this.lastChanceActions > 0) {
-      this.refreshLastChanceBuyLine(); // действия ещё есть: плашка докупки снова погашена (early)
-      return;
-    }
-    const grid = this.lastChanceGrid;
-    const best = grid ? bestMultiplier(evaluateGrid(grid)) : 0;
-    const canBuy = lastChanceBuyVerdict(this.lastChanceActions, this.lastChanceBought, this.balance, this.lastChanceGoal) === 'ok';
-    if (!isLastChanceGoalMet(best, this.lastChanceGoal) && canBuy) {
-      this.isLastChanceAwaitingBuy = true;
-      this.refreshLastChanceBuyLine();
-      return;
-    }
-    this.finishLastChance();
-  }
-
-  /** Действия кончились: паттерн оплатил долю нехватки — долг оплачен, нет — провал. */
-  private finishLastChance(): void {
-    const grid = this.lastChanceGrid;
-    const best = grid ? bestMultiplier(evaluateGrid(grid)) : 0;
-    if (isLastChanceGoalMet(best, this.lastChanceGoal)) this.winLastChance();
-    else this.failLastChance();
-  }
-
-  /** Победил: чемодан закрывает долг, фишки целы, билета нет, счёт на один долг назад — и магазин. */
-  private winLastChance(): void {
-    this.isLastChanceWinPending = false;
-    this.closeLastChance();
-    this.sfx.play('payment');
-    this.collector.clearGoodLuck();
-    this.chipCase.open(() => {
-      const before = this.round;
-      this.round = Math.max(0, this.round - WON_DEBT_ROUND_STEP); // магазин прибавит единицу: раунд N − 1, а не N + 1
-      this.pacts = shiftPacts(this.pacts, this.round - before); // сделка живёт сыгранные раунды, а не номер раунда
+    this.rescueBar.showResult();
+    this.screen.announceNews(t('rescueSurvived'));
+    this.sfx.play('bigWin');
+    this.time.delayedCall(RESCUE_WIN_PAUSE, () => {
+      if (!this.isRescue || !this.isRescueWinPending) return;
+      this.isRescueWinPending = false;
+      this.closeRescue();
+      this.sfx.play('payment');
+      // Умножаем на действующий множитель: сделка №12 (+20% к следующему долгу) не должна потеряться от спасения.
+      if (rescueDebtModeOf() === 'frozen') this.debtNextMul = rescueDebtMul(this.debt, debtForRound(this.round + 1)) * this.debtNextMul;
       this.openShop();
     });
   }
 
   /**
-   * Провал: пока счётчик «второго дыхания» не пуст — запас тратится, счёт −1 и магазин, забег живёт дальше.
+   * Провал: паттерна нет. Пока счётчик «второго дыхания» не пуст — запас тратится, счёт −1 и магазин, забег живёт дальше.
    * Пуст (обычный забег — после первого провала, со сделкой №9 — после второго) — KABOOM.
    */
-  private failLastChance(): void {
-    this.closeLastChance();
+  private failRescue(): void {
+    this.closeRescue();
     if (this.secondWindLeft <= 0) {
       this.kaboom();
       return;
@@ -477,8 +327,8 @@ export abstract class CollectorScene extends SaveScene {
     this.secondWindLeft -= 1;
     this.sfx.play('warning');
     // Попап — не только название: игрок должен понять, почему выжил и что будет дальше (DONTLIKE б.12).
-    this.effects.popup(t('lcSecondWind'), GOLD_TEXT);
-    this.effects.popupAt(CENTER_X, GRID_Y + 24, t('lcSecondWindWhat'), GOLD_TEXT, SECOND_WIND_WHY_FONT);
+    this.effects.popup(t('rescueSecondWind'), GOLD_TEXT);
+    this.effects.popupAt(CENTER_X, GRID_Y + 24, t('rescueSecondWindWhat'), GOLD_TEXT, SECOND_WIND_WHY_FONT);
     this.time.delayedCall(SECOND_WIND_PAUSE, () => {
       // За 1,2 с забег мог кончиться или магазин уже встать (ввод в это время закрыт isRoundOver):
       // второй раз счёт не двигаем и второй магазин не открываем.
@@ -492,21 +342,22 @@ export abstract class CollectorScene extends SaveScene {
     });
   }
 
-  /** Последний шанс кончился любой дорогой: убрать полосу, сетку выбора и мороз, снять isLastChance. */
-  private closeLastChance(): void {
+  /** Спасение кончилось любой дорогой: убрать полосу, сетку выбора, мороз и красный режим, снять isRescue. */
+  private closeRescue(): void {
     this.screen.endPick();
     this.screen.showFrozen([]);
-    this.lastChanceBar.close();
+    this.rescueBar.close();
     this.collector.clearGoodLuck(); // GOOD LUCK с экрана уходит и после провала
     this.frozenColumns.clear();
-    this.isFreezeMode = false;
-    this.isLastChanceWinPending = false;
-    this.lastChanceGrid = null;
-    this.lastChanceBought = 0;
-    this.isLastChanceAwaitingBuy = false;
-    this.isLastChance = false;
+    this.rescueGrid = null;
+    this.rescueSpinsLeft = 0;
+    this.rescueFreezeUsed = false;
+    this.isRescueWinPending = false;
+    this.isRescue = false;
     this.isSpinning = false;
     this.pot = 0;
+    this.exitRescueMood();
+    this.screen.clearNews();
     this.refreshHud();
   }
 
@@ -542,14 +393,14 @@ export abstract class CollectorScene extends SaveScene {
     });
   }
 
-  /** Сцена занята действием — победа подождёт его конца: спин, решение по перемешке, Дилер, банкомат, последний шанс. */
+  /** Сцена занята действием — победа подождёт его конца: спин, решение по перемешке, Дилер, банкомат, спасение. */
   private isBusyForVictory(): boolean {
     return (
       this.isSpinning ||
       this.isRerolling ||
       this.isDealing ||
       this.isAwaitingPayment ||
-      this.isLastChance ||
+      this.isRescue ||
       this.isRewinding ||
       this.isPaused ||
       this.isAtMonitor ||
