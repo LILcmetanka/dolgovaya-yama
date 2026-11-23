@@ -314,6 +314,8 @@ try {
   await key('5');
   const e1 = await state();
   check(e1.rows === 3, 'на продажу — три символа сетки: ' + e1.rows);
+  const saleNotes = JSON.parse((await val('JSON.stringify(window.__g.actionPanel.data.map((row) => row.title))')) ?? '[]');
+  check(saleNotes.every((note) => !note.includes('× ×')), 'подсказка продажи без двойного «×»: ' + (saleNotes[0] ?? ''));
   await key('1'); // вишня
   const e2 = await state();
   const salePrice = ACT.salePrice(symbolById('cherry'), 4, saleMultiplier);
@@ -349,6 +351,19 @@ try {
   check(g1.balance === g0.balance + theftReward, `успешная кража дала ${theftReward}: ${g0.balance} → ${g1.balance}`);
   check(g1.actionState.used.includes('theft'), 'кража в раунде потрачена');
   check(g1.gameOver === false, 'после успеха забег идёт дальше');
+  // Гонка новостей: отложенная новость о смене автомата не должна затирать «УКРАЛ!» через 1,5 с.
+  const race = JSON.parse((await val(`(() => { const g = window.__g;
+    g.actionState = { ...g.actionState, used: [] };
+    g.machineNewsTimer?.remove(false);
+    g.machineNewsTimer = g.time.delayedCall(1500, () => { g.machineNewsTimer = null; g.announceMachine(); });
+    const timer = Boolean(g.machineNewsTimer);
+    g.theftRandom = () => 0; g.isActionsOpen = true; g.applyTheft();
+    const cleared = g.machineNewsTimer === null;
+    const news = (g.screen.news?.parts ?? []).filter((part) => typeof part.text === 'string').map((part) => part.text).join(' ');
+    return JSON.stringify({ timer, cleared, news });
+  })()`)) ?? '{}');
+  check(race.timer === true && race.cleared === true, 'новость действия гасит отложенную новость о смене автомата');
+  check(/УКРАЛ/.test(race.news ?? ''), `после кражи на стекле «УКРАЛ!», а не название автомата (${race.news})`);
   // Провал: сразу смерть, без очков и без магазина.
   await val('window.__g.actionState = { ...window.__g.actionState, used: [] }; window.__g.theftRandom = () => 0.99; 1');
   const h0 = await state();

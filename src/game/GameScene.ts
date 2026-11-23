@@ -915,6 +915,7 @@ export class GameScene extends CollectorScene {
     this.actionState = useAction({ ...this.actionState, exchange: { from: from.id, to: to.id } }, 'exchange');
     this.repaintGrid(from, to);
     this.closeActions();
+    this.dropPendingMachineNews();
     this.screen.announceNews(t('actionExchangeDone'));
     this.sfx.play('news', 0.3);
     this.refreshHud();
@@ -944,6 +945,7 @@ export class GameScene extends CollectorScene {
     this.actionState = useAction({ ...this.actionState, lottery: prize }, 'lottery');
     this.actionSpins(prize.spins ?? 0);
     this.closeActions();
+    this.dropPendingMachineNews();
     this.screen.announceNews(t(LOTTERY_TEXT[prize.id] ?? 'actionLottery'));
     this.sfx.play(prize.buff ? 'ticket' : 'warning', 0.3);
     this.refreshHud();
@@ -959,6 +961,7 @@ export class GameScene extends CollectorScene {
     this.balance -= price;
     this.actionState = useAction({ ...this.actionState, serviceRounds: ACTION_SERVICE_ROUNDS }, 'service');
     this.closeActions();
+    this.dropPendingMachineNews();
     this.screen.announceNews(t('actionServiceDone'));
     this.sfx.play('payment');
     this.refreshHud();
@@ -978,6 +981,7 @@ export class GameScene extends CollectorScene {
       this.earn(reward);
       this.effects.popup(`+${reward}`, GOLD_TEXT);
       this.panel.pulseBoard();
+      this.dropPendingMachineNews();
       this.screen.announceNews(t('actionTheftDone'));
       this.sfx.play('chips');
       this.refreshHud();
@@ -1012,6 +1016,7 @@ export class GameScene extends CollectorScene {
     this.earn(price);
     this.closeActions();
     this.effects.popup(`+${price}`, GOLD_TEXT);
+    this.dropPendingMachineNews();
     this.screen.announceNews(t('actionSaleDone'));
     this.sfx.play('chips');
     this.refreshHud();
@@ -1029,6 +1034,7 @@ export class GameScene extends CollectorScene {
     this.balance -= price;
     this.actionState = useAction({ ...this.actionState, debtCut: cut }, 'debt');
     this.closeActions();
+    this.dropPendingMachineNews();
     this.screen.announceNews(t('actionDebtDone'));
     this.sfx.play('payment');
     this.refreshHud();

@@ -238,7 +238,7 @@ const TEXTS = {
   },
   actionSalePick: { ru: 'Что продать: символ с сетки', en: 'What to sell: a symbol on the grid' },
   // №8 (шаг 38): формула словами — цена символа × клетки × множитель серии (не выше потолка ACTION_SALE_MULT_CAP).
-  actionSaleNote: { ru: 'цена {0} × {1} кл. × ×{2} = {3}', en: 'pays {0} × {1} cells × ×{2} = {3}' },
+  actionSaleNote: { ru: 'цена {0} × {1} кл. × {2} = {3}', en: 'pays {0} × {1} cells × {2} = {3}' },
   actionSaleDone: { ru: 'СИМВОЛ ПРОДАН', en: 'SYMBOL SOLD' },
   actionDebt: { ru: 'ДОЛГОВАЯ БИРЖА', en: 'DEBT EXCHANGE' },
   actionDebtWhat: { ru: 'Заплати {0} сейчас — следующий долг меньше на {1}', en: 'Pay {0} now — the next debt drops by {1}' },

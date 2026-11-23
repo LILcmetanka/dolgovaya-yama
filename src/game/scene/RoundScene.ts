@@ -153,6 +153,9 @@ export abstract class RoundScene extends MachineScene {
   private skullCancelTimer: Phaser.Time.TimerEvent | null = null;
   private skullCancelList: ScreenList | null = null;
   protected skullCancelBox: Phaser.GameObjects.GameObject[] | null = null; // что нарисовано: сценарий проверки читает этот набор
+  // Отложенная новость о смене автомата: её гасит новость действия (иначе «УКРАЛ!» через 1,5 с менялась бы
+  // на название автомата — гонка шага 43). null — новость не ждёт.
+  private machineNewsTimer: Phaser.Time.TimerEvent | null = null;
   // Действия вне прокрутки (шаг 29): что уже сделано в этом раунде, обмен, лотерея, чистка, проданные
   // символы и выкуп долга. Живёт до конца раунда, в кассету не пишется.
   protected actionState: ActionState = freshActions();
@@ -171,6 +174,7 @@ export abstract class RoundScene extends MachineScene {
     this.potSparedThisRound = false;
     this.skullFreeSpinGiven = false; // №4: в новом забеге бесплатная прокрутка за черепа ещё не выдана
     this.clearSkullCancel(); // №50: плашка отмены не должна пережить сброс забега
+    this.dropPendingMachineNews(); // отложенная новость о смене автомата — тоже
     this.bellSkull = 0; // колокольчик: в новом забеге 🔔 ещё не срабатывал
     this.revealId += 1; // новый забег: недосмотренный каскад не должен вернуться в него своим колбэком
     this.revealShown = null;
@@ -184,6 +188,7 @@ export abstract class RoundScene extends MachineScene {
   protected spin(): void {
     if (this.remindReroll()) return; // висит решение — сначала столбец или клетка, крутить раньше нельзя
     if (!this.canAct()) return;
+    this.dropPendingMachineNews(); // прокрутка началась: её результат важнее отложенной новости о смене автомата
     this.spinsThisRun += 1;
     this.forgetTakeThisSpin();
     if (this.spinsThisRun === REVEAL_NOTE_SPIN) this.openRevealNote(); // записка впервые видна не с начала
@@ -1264,6 +1269,15 @@ export abstract class RoundScene extends MachineScene {
     this.refreshHud();
   }
 
+  /**
+   * Новость действия важнее отложенной новости о смене автомата: гасим её, иначе через MACHINE_NEWS_DELAY
+   * название автомата затрёт «УКРАЛ!», «СИМВОЛ ПРОДАН» и другие результаты действий (гонка шага 43).
+   */
+  protected dropPendingMachineNews(): void {
+    this.machineNewsTimer?.remove(false);
+    this.machineNewsTimer = null;
+  }
+
   // ---------- Начало и конец раунда ----------
 
   /**
@@ -1283,7 +1297,9 @@ export abstract class RoundScene extends MachineScene {
       this.showNewMachine(); // корпус, значок и UPDATE на мониторе — сразу
       // Новость о смене — с задержкой: ниже в этом же startRound checkPhase может объявить «ФАЗУ 2»,
       // а на стекле живёт одна новость за раз. Через 1,5 с фаза уже прочитана, и название автомата встаёт на её место.
-      this.time.delayedCall(MACHINE_NEWS_DELAY, () => {
+      this.machineNewsTimer?.remove(false);
+      this.machineNewsTimer = this.time.delayedCall(MACHINE_NEWS_DELAY, () => {
+        this.machineNewsTimer = null;
         if (!this.scene.isActive()) return; // сцену выключили — новость не нужна (таймеры сцены умирают вместе с ней)
         this.announceMachine();
       });
@@ -1301,6 +1317,9 @@ export abstract class RoundScene extends MachineScene {
     this.bankKeptThisRound = false; // сделка №10: «первый череп не жжёт кон» — снова первый
     this.tookThisRound = false; // сделка №23: «забрать» раз за раунд — счётчик нового раунда
     this.potSparedThisRound = false; // сделка №24: первый череп раунда снова пощадит кон
+    // Кровь из прошлого раунда не переходит в новый. Сброс — ДО сделок: иначе сделка №40 «первая прокрутка
+    // раунда кровавая» ставила флаг и тут же его гасила (баг шага 43).
+    this.isBloodNext = false;
     // Сделки шага 30: №40 — первая прокрутка раунда кровавая, №21 — на кону с самого начала лежит N фишек.
     const roundPacts = pactEffects(this.pacts, this.round);
     if (roundPacts.bloodFirstSpin) this.isBloodNext = true;
@@ -1309,8 +1328,7 @@ export abstract class RoundScene extends MachineScene {
     this.tookThisSpin = false; // сделка №15: в новом раунде «забрать» ещё не было
     this.tookExtraThisSpin = false;
     this.lastTakeAmount = 0;
-    this.isBloodNext = false; // кровь из прошлого раунда не переходит в новый
-    this.showItemEffects(); // спокойные огни — по новому раунду (кровь погасла)
+    this.showItemEffects(); // спокойные огни — по новому раунду (кровь могла зажечь сделка №40)
     this.spinsLeft = spinsPerRound(SPINS_PER_ROUND, ids);
     // Фаза 2: +1 прокрутка в раунде (замечание 19). Фазу берём по закрытым долгам сразу, а не this.phase:
     // checkPhase идёт в конце startRound (после зелёных огней), а прокрутки нужны уже сейчас.

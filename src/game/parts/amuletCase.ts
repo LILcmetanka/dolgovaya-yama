@@ -74,8 +74,8 @@ export const MAIN_CASE_LOOK: CaseLook = {
   plate: { width: 68, height: 24 },
   priceTexture: TICKET_TEXTURE,
   priceIconScale: 0.6,
-  priceIconDx: -18,
-  priceTextDx: -6,
+  priceIconDx: -20,
+  priceTextDx: -5,
   pricePrefix: true,
   priceFontSize: 16,
   priceMaxWidth: 60,
@@ -90,14 +90,14 @@ export const MINI_CASE_LOOK: CaseLook = {
   priceY: MINI_CASE_PRICE_Y,
   amuletScale: 1,
   lidRaised: 30,
-  plate: { width: 56, height: 20 },
+  plate: { width: 62, height: 22 },
   priceTexture: CHIP_TEXTURE,
-  priceIconScale: 0.5,
-  priceIconDx: -24,
-  priceTextDx: -14,
+  priceIconScale: 0.42,
+  priceIconDx: -22,
+  priceTextDx: -12,
   pricePrefix: false, // у фишек цены шестизначные: «×» съел бы место, значок фишки и так говорит валюту
   priceFontSize: 13,
-  priceMaxWidth: 40,
+  priceMaxWidth: 42,
   placeX: (place) => miniCaseX(place, MINI_CASE_PLACES),
 };
 
@@ -214,6 +214,11 @@ export class AmuletCase {
     body.fillRoundedRect(left, top, width, height, 10); // корпус
     body.fillStyle(0x3f0a0a);
     body.fillRoundedRect(left + 10, top + 8, width - 20, height - 16, 6); // красная подкладка
+    // Окантовка и гравировка — одни на оба чемодана (п.7): золотая кромка по коже и строчка вокруг подкладки.
+    body.lineStyle(2, GOLD, 0.55);
+    body.strokeRoundedRect(left + 1.5, top + 1.5, width - 3, height - 3, 9);
+    body.lineStyle(1, 0x2a1a0e, 0.9);
+    body.strokeRoundedRect(left + 6, top + 5, width - 12, height - 10, 7);
     const marks: Phaser.GameObjects.Graphics[] = [];
     for (let place = 0; place < look.places; place++) {
       const placeX = look.placeX(place);
@@ -222,6 +227,8 @@ export class AmuletCase {
       mark.fillEllipse(placeX, look.iconY + 27 * look.amuletScale, 48 * look.amuletScale, 10); // тень под вещью
       mark.fillStyle(0x1c0505);
       mark.fillRoundedRect(placeX - look.plate.width / 2, look.priceY - look.plate.height / 2, look.plate.width, look.plate.height, 5); // табличка для ценника
+      mark.lineStyle(1, 0x8a5a2b, 0.9);
+      mark.strokeRoundedRect(placeX - look.plate.width / 2, look.priceY - look.plate.height / 2, look.plate.width, look.plate.height, 5); // латунная окантовка таблички
       marks.push(mark);
     }
     body.fillStyle(GOLD);
@@ -237,6 +244,8 @@ export class AmuletCase {
     front.fillRect(-width / 2, height * 0.55, width, 6); // ремень
     front.fillStyle(GOLD);
     for (const latchX of [-width / 3, width / 3]) front.fillRoundedRect(latchX - 14, height * 0.55 - 5, 28, 16, 3); // замки
+    front.lineStyle(2, GOLD, 0.5);
+    front.strokeRoundedRect(-width / 2 + 2, 2, width - 4, height - 4, 9); // золотая кромка крышки
     front.lineStyle(5, 0x2a1a0e);
     front.strokeRoundedRect(-24, -7, 48, 16, 6); // ручка
     lidFront.add(front);
@@ -247,6 +256,8 @@ export class AmuletCase {
     back.fillRoundedRect(-width / 2 + 6, -look.lidRaised, width - 12, look.lidRaised + 4, { tl: 8, tr: 8, bl: 0, br: 0 });
     back.fillStyle(0x5a1010);
     back.fillRoundedRect(-width / 2 + 14, -look.lidRaised + 7, width - 28, look.lidRaised - 6, 4); // подкладка крышки
+    back.lineStyle(1.5, GOLD, 0.45);
+    back.strokeRoundedRect(-width / 2 + 9, -look.lidRaised + 2, width - 18, look.lidRaised - 1, { tl: 7, tr: 7, bl: 0, br: 0 }); // окантовка откинутой крышки
     lidBack.add(back);
 
     const suitcase = scene.add.container(0, 0, [lidBack, body]);

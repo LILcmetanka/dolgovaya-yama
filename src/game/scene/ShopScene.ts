@@ -444,7 +444,7 @@ export abstract class ShopScene extends DealerScene {
       if (isNew) this.amulets.pop();
       this.amuletOffer[place] = null;
       this.sfx.play('burn', 0.2);
-      this.screen.announceNews(t('pactAmuletBurned'));
+      this.shop.announce(t('pactAmuletBurned'));
       this.afterPurchase();
       return;
     }
@@ -480,8 +480,8 @@ export abstract class ShopScene extends DealerScene {
 
   /**
    * Клик по месту мини-чемодана — сразу покупка за фишки, без окна выбора валюты (DONTLIKE п.7). Раз за забег
-   * (MINI_CASE_PURCHASES): амулет новый — нужно свободное гнездо, копия — в своё. Отказ — строкой на экране автомата
-   * (announceNews), без всплывающих окон; ценник при этом трясётся. Откат кассетой флаг не снимает (липкий).
+   * (MINI_CASE_PURCHASES): амулет новый — нужно свободное гнездо, копия — в своё. Отказ — строкой на панели магазина
+   * (над чемоданами), без всплывающих окон; ценник при этом трясётся. Откат кассетой флаг не снимает (липкий).
    */
   protected buyFromMiniCase(place: number): void {
     if (!this.amuletsUnlocked()) return;
@@ -517,6 +517,17 @@ export abstract class ShopScene extends DealerScene {
       this.amulets.push(amulet); // гнездо занято сразу: второй быстрый клик его уже не получит
     }
     addCopy(this.amuletCounts, amulet.id);
+    // Сделка №34: следующий купленный амулет сгорает сразу — за фишки он тоже сгорает, фишки не возвращаются.
+    // Раньше эта ветка была только в buyAmulet, и мини-чемодан обходил сделку (баг шага 43).
+    if (this.pactAmuletBurns) {
+      this.pactAmuletBurns = false;
+      this.amuletCounts[amulet.id] = Math.max(0, countOf(this.amuletCounts, amulet.id) - 1);
+      if (isNew) this.amulets.pop();
+      this.sfx.play('burn', 0.2);
+      this.shop.announce(t('pactAmuletBurned'));
+      this.afterPurchase();
+      return;
+    }
     const count = countOf(this.amuletCounts, amulet.id); // сколько копий станет после этой покупки
     this.miniCase.sell(place, (x, y) => {
       if (isNew) this.amuletRack.putAmulet(index, amulet, count, x, y);
@@ -526,11 +537,11 @@ export abstract class ShopScene extends DealerScene {
     this.afterPurchase();
   }
 
-  /** Отказ мини-чемодана: ценник трясётся, причина — строкой на экране автомата, окно не открывается. */
+  /** Отказ мини-чемодана: ценник трясётся, причина — строкой на панели магазина над чемоданами, окно не открывается. */
   private refuseMiniCase(place: number, message: string): void {
     this.sfx.play('deny');
     this.miniCase.deny(place);
-    this.screen.announceNews(message);
+    this.shop.announce(message);
   }
 
   /** Купить гнездо за билеты: с гнезда на корпусе слетает заглушка. Первое гнездо забега — по улучшению №28 бесплатно. */

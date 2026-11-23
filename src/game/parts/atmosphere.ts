@@ -13,7 +13,10 @@ const FLICKER_ALPHA = 0.3;
 const FLICKER_TIME = 70;
 // Тёмные края от тревоги.
 const VIGNETTE_MAX_ALPHA = 0.7;
-const ATMOSPHERE_DEPTH = 20; // над игрой, но под подсказкой и экраном DEATH
+const ATMOSPHERE_DEPTH = 20; // вспышка света: над игрой, но под подсказкой и экраном DEATH
+// Тёмные края вида — ПОД панелью магазина (9) и трещинами (8): иначе виньетка съедала правый край панели,
+// и надпись выхода «К СЛОТ-МАШИНЕ ✕» тонула в тени (баг шага 43).
+const VIGNETTE_DEPTH = 7.5;
 // Раунд спасения: красная плёнка на весь вид и пульсирующее свечение по краям.
 // Глубины ниже окна ачивки (13) и деталей планшета (20–23), но выше комнаты и автомата (0–3): красное видно
 // сквозь стекло, а панель планшета и окно ачивки остаются поверх.
@@ -42,7 +45,7 @@ export class Atmosphere {
     createAtmosphereTextures(scene, SCREEN);
     scene.add.image(SCREEN.x, SCREEN.y, SCANLINES_TEXTURE); // полосы развёртки поверх сетки
     for (let index = 0; index < DUST_COUNT; index++) this.floatDust(scene.add.image(0, 0, DUST_TEXTURE), true);
-    this.vignette = scene.add.image(0, 0, VIGNETTE_TEXTURE).setOrigin(0).setScrollFactor(0).setAlpha(0).setDepth(ATMOSPHERE_DEPTH);
+    this.vignette = scene.add.image(0, 0, VIGNETTE_TEXTURE).setOrigin(0).setScrollFactor(0).setAlpha(0).setDepth(VIGNETTE_DEPTH);
     this.flash = scene.add.rectangle(VIEW_CENTER_X, 320, VIEW_WIDTH, 640, 0x000000, 1).setScrollFactor(0).setAlpha(0).setDepth(ATMOSPHERE_DEPTH);
     // Красный режим поверх комнаты и автомата, но под окном ачивки (13), деталями планшета (20–23),
     // подсказкой (25) и экранами конца забега (30).

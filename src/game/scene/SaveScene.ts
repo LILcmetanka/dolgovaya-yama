@@ -124,6 +124,7 @@ export abstract class SaveScene extends ShopScene {
       amuletChipUsed: this.amuletChipUsedThisRun, // и что амулет за фишки в мини-чемодане уже брали: откат не возвращает
       freeGiftGiven: this.freeGiftGiven, // и что подарок первого магазина (№40) уже выдан
       skullCancelUsed: this.skullCancelUsedThisRun, // и что отмена черепа (№50) уже потрачена
+      pactAmuletBurns: this.pactAmuletBurns, // и что следующий амулет сгорит (сделка №34)
       startSymbol: this.startSymbolId ?? undefined, // №33: выбранный символ переживает откат
       startGridGiven: this.startGridGiven, // и первая сетка уже получила джокера/символ
     };
@@ -226,6 +227,9 @@ export abstract class SaveScene extends ShopScene {
     this.freeGiftGiven = freeGiftUsedOf(record, this.freeGiftGiven);
     // №50 (28г): отмена черепа едет с плёнки; insertTape уже сложил текущее с записью.
     this.skullCancelUsedThisRun = skullCancelUsedOf(record, this.skullCancelUsedThisRun);
+    // Сделка №34: «следующий амулет сгорит» едет с плёнкой как есть. Запись до сделки — обязанности нет;
+    // запись после — она снова в силе (сделки с плёнки тоже вернулись). Старой плёнке без поля — не горит.
+    this.pactAmuletBurns = record.pactAmuletBurns === true;
     // №42/№45 (28г): серия и билеты на плёнке уже посчитаны с улучшениями (insertTape), здесь просто читаются.
     // Откат съедает счётчик трат: эти билеты вернулись — второй раз их откат не начислит (кассеты уже нет).
     // №33: выбранный символ и признак «первая сетка уже с бонусом» едут с плёнкой.

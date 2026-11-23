@@ -26,7 +26,7 @@ import {
   vendingRowY,
   vendingShelfY,
 } from '../layout';
-import { addText, fitTextWidth, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT, SHOP_FLY_DEPTH, SHOP_PANEL_DEPTH } from '../theme';
+import { addText, fitTextWidth, GOLD_TEXT, LED_COLOR, LED_STYLE, POPUP_DEPTH, pulse, RED_TEXT, SHOP_FLY_DEPTH, SHOP_PANEL_DEPTH } from '../theme';
 import { fitBoardNumber } from './panel';
 import { attachHint, type Hint } from './tooltip';
 
@@ -44,9 +44,18 @@ const DIM_ALPHA = 0.4; // предмет некуда положить — он 
 // Ценники остаются на середине ряда (vendingRowY).
 const EXIT_BORDER = 0xc9a227; // рамка кнопки выхода в шапке панели — золото, как у кнопок победы
 const EXIT_INK = '#fde047';
-const EXIT_FONT_SIZE = 20; // кегль надписи «К СЛОТ-МАШИНЕ ✕»…
+const EXIT_FONT_SIZE = 18; // кегль надписи «К СЛОТ-МАШИНЕ ✕»…
 const EXIT_FONT_MIN = 13; // …длинная уменьшается, чтобы не вылезти за золотую рамку
-const EXIT_TEXT_PAD = 24; // поле внутри плашки: надпись шире этого — ужимается (fitTextWidth)
+const EXIT_TEXT_PAD = 30; // поле внутри плашки: надпись шире этого — ужимается (fitTextWidth)
+// Строка магазина (отказы чемодана, «амулет сгорел»): свободная полоса над чемоданами, между шапкой и выходом.
+// Раньше это уходило на стекло автомата, и в открытом магазине ложилось чёрной полосой поверх витрины (баг шага 43).
+const MESSAGE_X = 600; // середина свободной полосы: шапка кончается левее, выход начинается на 770
+const MESSAGE_Y = 33;
+const MESSAGE_PLATE = { width: 320, height: 28 };
+const MESSAGE_MAX_WIDTH = 300;
+const MESSAGE_FONT_SIZE = 14;
+const MESSAGE_MIN_FONT_SIZE = 10;
+const MESSAGE_TIME = 2400; // сколько строка видна, мс
 // Анимации, мс.
 const SLIDE_TIME = 480; // панель съезжает сверху и уезжает обратно, как рольставня
 const PAY_CHIPS = 5; // столько фишек летит с табло в щель (для красоты: цена может быть любой)
@@ -80,6 +89,12 @@ export class Shop {
   private readonly hudTicketsText: Phaser.GameObjects.Text; // шапка панели: сколько билетов
   private readonly hudTicketScale: number; // билет в полёте — такого размера, как значок в шапке
   private exitLabel!: Phaser.GameObjects.Text; // надпись кнопки выхода: её переставляют при смене языка (relabel)
+  private readonly hint: Hint; // подсказка: та же, что у товара и выхода
+  private binTaken: Phaser.GameObjects.Image | null = null; // что лежит в лотке выдачи: последняя покупка
+  private binZone!: Phaser.GameObjects.Zone; // клик по лотку забирает покупку
+  private message!: Phaser.GameObjects.Text; // строка магазина: отказы и «амулет сгорел» — над чемоданами, а не поверх них
+  private messageBack!: Phaser.GameObjects.Graphics; // тёмная плашка под строкой: на коже крышки текст иначе тонет
+  private messageTimer: Phaser.Time.TimerEvent | null = null;
 
   /** Слой панели: в него кладут свои вещи AmuletCase, Drum и Cassette. */
   get layer(): Phaser.GameObjects.Container {
@@ -90,6 +105,7 @@ export class Shop {
    *  с предметами (улучшение №37 даёт четвёртый). */
   constructor(scene: Phaser.Scene, buy: (row: number) => void, leave: () => void, hint: Hint, offerRows = DEFAULT_OFFER_ROWS) {
     this.scene = scene;
+    this.hint = hint;
     this.offerRows = Math.max(1, offerRows);
     this.ticketRow = this.offerRows;
     // Панель — первым: AmuletCase, Drum и Cassette создаются после Shop и кладут свои вещи в этот слой.
@@ -133,6 +149,95 @@ export class Shop {
     this.shopLayer.add([hudChip, hudTicket, this.hudChipsText, this.hudTicketsText]);
 
     this.buildExit(leave); // кнопка выхода в шапке, правее чемодана с амулетами — единственный выход из магазина
+    this.buildBin(); // лоток выдачи внизу: туда падает покупка, клик её забирает
+    this.buildMessage(); // строка отказов и новостей — над чемоданами
+  }
+
+  /** Строка магазина над чемоданами: отказ мини-чемодана и «амулет сгорел» читаются на панели, не поверх витрины. */
+  private buildMessage(): void {
+    this.messageBack = this.scene.add.graphics().setVisible(false);
+    this.messageBack.fillStyle(0x020617, 0.86);
+    this.messageBack.fillRoundedRect(MESSAGE_X - MESSAGE_PLATE.width / 2, MESSAGE_Y - MESSAGE_PLATE.height / 2, MESSAGE_PLATE.width, MESSAGE_PLATE.height, 7);
+    this.messageBack.lineStyle(1, 0x8a5a2b, 0.9);
+    this.messageBack.strokeRoundedRect(MESSAGE_X - MESSAGE_PLATE.width / 2, MESSAGE_Y - MESSAGE_PLATE.height / 2, MESSAGE_PLATE.width, MESSAGE_PLATE.height, 7);
+    this.shopLayer.add(this.messageBack);
+    this.message = addText(this.scene, MESSAGE_X, MESSAGE_Y, '', {
+      ...LED_STYLE,
+      fontSize: `${MESSAGE_FONT_SIZE}px`,
+      color: GOLD_TEXT,
+      stroke: '#0f172a',
+      strokeThickness: 4,
+    })
+      .setOrigin(0.5)
+      .setVisible(false);
+    this.shopLayer.add(this.message);
+  }
+
+  /** Показать строку на панели магазина: длинная ужимается, живёт MESSAGE_TIME и гаснет. */
+  announce(text: string): void {
+    this.shopLayer.bringToTop(this.messageBack); // поверх чемоданов: они добавляются в слой после Shop
+    this.shopLayer.bringToTop(this.message);
+    this.messageTimer?.remove(false);
+    this.messageBack.setVisible(true);
+    this.message.setVisible(true).setAlpha(1);
+    fitTextWidth(this.message, text, MESSAGE_MAX_WIDTH, MESSAGE_FONT_SIZE, MESSAGE_MIN_FONT_SIZE);
+    this.messageTimer = this.scene.time.delayedCall(MESSAGE_TIME, () => {
+      this.messageTimer = null;
+      this.scene.tweens.add({ targets: this.message, alpha: 0, duration: 250, onComplete: () => { this.message.setVisible(false); this.messageBack.setVisible(false); } });
+    });
+  }
+
+  /** Панель уехала — строка прошлого захода не висит на новой. */
+  private clearMessage(): void {
+    this.messageTimer?.remove(false);
+    this.messageTimer = null;
+    this.message.setVisible(false).setAlpha(1);
+    this.messageBack.setVisible(false);
+  }
+
+  /**
+   * Лоток выдачи под витриной: тёмный проём уже нарисован в корпусе, сюда — только зона клика и значок покупки.
+   * Плашка выдачи маленького автомата собирается так же (MiniShop.buildBin), поэтому обе читаются одним местом.
+   */
+  private buildBin(): void {
+    this.binZone = this.scene.add.zone(VENDING_BIN.x, VENDING_BIN.y, VENDING_BIN.width + 10, VENDING_BIN.height + 10).setInteractive({ useHandCursor: true });
+    this.binZone.on('pointerdown', () => this.takeFromBin());
+    attachHint(this.binZone, this.hint, () => [t('miniBin'), t('miniBinHow')]);
+    this.shopLayer.add(this.binZone);
+  }
+
+  /** Покупка легла в лоток: её значок виден в проёме, клик по лотку забирает (значок подпрыгивает и тает). */
+  private putTaken(texture: string): void {
+    this.clearBin();
+    const icon = this.scene.add.image(VENDING_BIN.x, VENDING_BIN.y, texture);
+    icon.setScale(Math.min(0.7, (VENDING_BIN.height - 6) / icon.height)); // значок целиком в проёме, как у маленького автомата
+    this.binTaken = icon;
+    this.shopLayer.add(icon);
+  }
+
+  /** Забрали из лотка: значок подпрыгивает и тает. Пусто — клик ничего не делает. */
+  private takeFromBin(): void {
+    const taken = this.binTaken;
+    if (!taken) return;
+    this.binTaken = null;
+    this.scene.tweens.add({
+      targets: taken,
+      y: taken.y - 18,
+      scaleX: taken.scaleX * 1.2,
+      scaleY: taken.scaleY * 1.2,
+      alpha: 0,
+      duration: 200,
+      ease: 'Quad.easeOut',
+      onComplete: () => taken.destroy(),
+    });
+  }
+
+  /** Лоток пустеет сразу: покупка прошлого захода не висит в новой витрине. */
+  private clearBin(): void {
+    if (!this.binTaken) return;
+    this.scene.tweens.killTweensOf(this.binTaken);
+    this.binTaken.destroy();
+    this.binTaken = null;
   }
 
   /**
@@ -184,6 +289,8 @@ export class Shop {
 
   /** Разложить товар (prices — цены предметов) и открыть панель. Панель опустилась — ready(). */
   open(offer: Item[], prices: number[], ready: () => void): void {
+    this.clearBin(); // лоток прошлого захода пуст
+    this.clearMessage(); // и строка отказов прошлого захода
     this.items = [];
     this.prices = [];
     this.ticketsExhausted = false; // новый заход — билеты за фишки снова продаются
@@ -248,7 +355,8 @@ export class Shop {
   /** Купили ряд row: фишки летят с табло в щель, покупка падает в лоток — тогда landed(x, y) с места лотка. */
   sell(row: number, landed: (x: number, y: number) => void): void {
     const good = this.goods[row];
-    const falling = this.scene.add.image(good.x, good.y, good.texture.key).setScale(good.scaleX).setDepth(POPUP_DEPTH);
+    const texture = good.texture.key;
+    const falling = this.scene.add.image(good.x, good.y, texture).setScale(good.scaleX).setDepth(POPUP_DEPTH);
     this.prices[row] = null;
     this.showRow(row); // ряд опустел
     this.payChips();
@@ -260,6 +368,7 @@ export class Shop {
       ease: 'Quad.easeIn',
       onComplete: () => {
         falling.destroy();
+        this.putTaken(texture); // покупка видна в лотке, пока её не заберут (или пока не уедет панель)
         landed(VENDING_BIN.x, VENDING_BIN.y);
       },
     });

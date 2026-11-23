@@ -9,7 +9,7 @@ import {
   createTicketTexture,
   drawGlassPane,
   MINI_SOCKET_TEXTURE,
-  SHELF_CELL_TEXTURE,
+  SHOP_SLOT_TEXTURE,
   TICKET_TEXTURE,
 } from '../decor';
 import { t } from '../lang';
@@ -192,9 +192,9 @@ export class MiniShop {
     return g;
   }
 
-  /** Картинка ряда: клетка полки или гнездо амулета — то, что покупают. */
+  /** Картинка ряда: клетка с плюсом «место на полке» или гнездо амулета — то, что покупают. */
   private textureFor(row: number): string {
-    return row === SLOT_ROW ? SHELF_CELL_TEXTURE : MINI_SOCKET_TEXTURE;
+    return row === SLOT_ROW ? SHOP_SLOT_TEXTURE : MINI_SOCKET_TEXTURE;
   }
 
   /** Чем платят за ряд: место — фишками, гнездо — билетами. */

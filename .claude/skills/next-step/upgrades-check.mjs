@@ -541,8 +541,10 @@ try {
     const second = g.miniCaseOffer.findIndex((a) => a !== null);
     if (second >= 0) g.buyFromMiniCase(second);
     const refused = again - g.balance;
-    const news = (g.screen.news?.parts ?? []).filter((part) => typeof part.text === 'string').map((part) => part.text).join(' ');
+    const news = g.shop.message.text;
+    const message = g.shop.message.getBounds();
     return JSON.stringify({ ok: true, price, paid, copies, afterCopies, used, refused, news,
+      message: { visible: g.shop.message.visible, left: message.left, right: message.right, bottom: message.bottom },
       screensBefore, openAfterBuy, screensAfter: screensOf(), shopping: g.isShopping });
   })()`)) ?? '{}');
   check(miniBuy.ok === true && miniBuy.price === 25000, `п.7/№39: амулет за фишки стоит половину рук, с №39 — 25 000 (${miniBuy.price})`);
@@ -551,13 +553,55 @@ try {
   check(miniBuy.screensBefore === 0 && miniBuy.openAfterBuy === 0 && miniBuy.screensAfter === 0,
     'п.7: покупка не открывает окно выбора «за фишки / за билеты» — всё на панели магазина');
   check(miniBuy.refused === 0 && /ФИШКИ/.test(miniBuy.news ?? ''),
-    `п.7: второй раз за забег — отказ строкой на экране автомата (${miniBuy.news})`);
+    `п.7: второй раз за забег — отказ строкой на панели магазина (${miniBuy.news})`);
+  check(miniBuy.message.visible === true && miniBuy.message.left > 435 && miniBuy.message.right < 770 && miniBuy.message.bottom < 52,
+    `п.10: строка отказа — в свободной полосе над чемоданами, не поверх витрины (${JSON.stringify(miniBuy.message)})`);
+  // п.7: цена в фишках читается как в большом — фишка + число, шестизначное не обрезается и не наезжает на значок.
+  const miniFit = JSON.parse((await val(`(() => { const g = window.__g;
+    g.balance = 1000000; g.refreshShop();
+    const place = g.miniCaseOffer.findIndex((a) => a !== null);
+    if (place < 0) return JSON.stringify({ ok: false });
+    const look = g.miniCase.look;
+    const cx = look.placeX(place);
+    const icon = g.miniCase.priceIcons[place].getBounds();
+    const text = g.miniCase.priceTexts[place];
+    const box = text.getBounds();
+    return JSON.stringify({ ok: true, price: g.miniCase.prices[place], text: text.text, textW: text.displayWidth,
+      iconRight: icon.right, textLeft: box.left, textRight: box.right,
+      plateLeft: cx - look.plate.width / 2, plateRight: cx + look.plate.width / 2, max: look.priceMaxWidth,
+      bodyLeft: look.box.x - look.box.width / 2 + 4, bodyRight: look.box.x + look.box.width / 2 - 4 });
+  })()`)) ?? '{}');
+  check(miniFit.ok === true && miniFit.price === 250000 && miniFit.text === '250000',
+    `п.7: шестизначная цена в мини-чемодане — 250000 (${miniFit.price})`);
+  check(miniFit.textW <= miniFit.max + 0.5 && miniFit.textRight <= miniFit.plateRight + 0.5 && miniFit.textLeft >= miniFit.iconRight + 1,
+    `п.7: число влезает в табличку и не наезжает на фишку (текст ${miniFit.textW.toFixed(1)} ≤ ${miniFit.max}, зазор ${(miniFit.textLeft - miniFit.iconRight).toFixed(1)})`);
+  check(miniFit.plateLeft >= miniFit.bodyLeft && miniFit.plateRight <= miniFit.bodyRight,
+    `п.7: табличка цены целиком на бархате (${miniFit.plateLeft.toFixed(1)}…${miniFit.plateRight.toFixed(1)})`);
+  // Сделка №34: следующий купленный амулет сгорает — мини-чемодан её не обходит (баг шага 43).
+  const burn = JSON.parse((await val(`(() => { const g = window.__g;
+    g.balance = 100000; g.amuletChipUsedThisRun = false; g.pactAmuletBurns = true; g.refreshShop();
+    const place = g.miniCaseOffer.findIndex((a) => a !== null);
+    if (place < 0) return JSON.stringify({ ok: false });
+    const amulet = g.miniCaseOffer[place];
+    const copies = g.amuletCounts[amulet.id] ?? 0;
+    const owned = g.amulets.some((a) => a.id === amulet.id);
+    const before = g.balance;
+    g.buyFromMiniCase(place);
+    const news = g.shop.message.text;
+    return JSON.stringify({ ok: true, id: amulet.id, paid: before - g.balance, copies, nowCopies: g.amuletCounts[amulet.id] ?? 0,
+      ownedBefore: owned, ownedAfter: g.amulets.some((a) => a.id === amulet.id), burns: g.pactAmuletBurns, news, offer: g.miniCaseOffer[place] });
+  })()`)) ?? '{}');
+  check(burn.ok === true && burn.paid > 0 && burn.ownedAfter === false && burn.ownedBefore === false && burn.burns === false && burn.offer === null,
+    `сделка №34: амулет из мини-чемодана тоже сгорает (${burn.id}, оплачено ${burn.paid}, в гнезде ${burn.ownedAfter}, флаг ${burn.burns})`);
+  check(burn.nowCopies === burn.copies && /СГОРЕЛ/.test(burn.news ?? ''),
+    `сделка №34: копий не прибавилось, новость «СГОРЕЛ» (${burn.news})`);
   await shot('upgrades-mini-case.png');
 
   // п.8: дверцы витрины маленького автомата нет — товар и цены видны сразу; внизу плашка выдачи.
   const machine = JSON.parse((await val(`(() => { const g = window.__g; return JSON.stringify({
     door: g.miniShop.door, doorOpen: g.miniShop.isDoorOpen,
     goods: g.miniShop.goods.map((o) => o.visible),
+    goodsTexture: g.miniShop.goods[0].texture.key,
     prices: g.miniShop.priceTexts.map((o) => ({ visible: o.visible, text: o.text })),
     bin: Boolean(g.miniShop.bin), binZone: Boolean(g.miniShop.binZone),
     goodsLeft: g.miniShop.goods[0].x, goodsRight: g.miniShop.goods[0].x,
@@ -565,6 +609,7 @@ try {
   check(machine.door === undefined && machine.doorOpen === undefined, 'п.8: дверцы витрины больше нет — ни полотна, ни ручки, ни флага');
   check(machine.goods.every(Boolean) && machine.prices.every((p) => p.visible && p.text.length > 0),
     `п.8: товар и цены видны сразу, без клика (${machine.prices.map((p) => p.text).join(', ')})`);
+  check(machine.goodsTexture === 'shop-slot', `п.6: место на полке — значок с плюсом, а не пустая клетка (${machine.goodsTexture})`);
   check(machine.bin === true && machine.binZone === true, 'п.8: внизу автомата есть плашка выдачи — и по ней можно кликнуть');
   // Покупка уходит в плашку, клик по плашке её забирает.
   await val('window.__g.balance = 100000; window.__g.refreshShop(); window.__g.buySlot(); 1');
@@ -575,6 +620,28 @@ try {
   const binEmpty = await val('window.__g.miniShop.taken === null');
   check(inBin === true, 'п.8: купленное падает в плашку выдачи');
   check(binEmpty === true, 'п.8: клик по плашке забирает покупку');
+  // п.8: та же плашка у большого автомата — покупка видна в лотке и забирается кликом.
+  await val('window.__g.balance = 100000; window.__g.refreshShop(); window.__g.buyItem(0); 1');
+  await sleep(1500); // фишки 5×60 + 450 мс, потом падение 350 мс
+  const bigBin = JSON.parse((await val(`(() => { const g = window.__g;
+    return JSON.stringify({ taken: Boolean(g.shop.binTaken), visible: g.shop.binTaken ? g.shop.binTaken.visible : false,
+      texture: g.shop.binTaken ? g.shop.binTaken.texture.key : null, zone: Boolean(g.shop.binZone),
+      miniZone: Boolean(g.miniShop.binZone) });
+  })()`)) ?? '{}');
+  check(bigBin.taken === true && bigBin.visible === true && bigBin.zone === true && bigBin.miniZone === true,
+    `п.8: большой лоток устроен так же — покупка в нём видна (${bigBin.texture})`);
+  await clickAt(await pagePoint('g.shop.binZone.getBounds()'));
+  await sleep(400);
+  check((await val('window.__g.shop.binTaken === null')) === true, 'п.8: клик по лотку большого автомата забирает покупку');
+  // п.9 и п.10: выход не тонет в виньетке и не обрезается; панель магазина лежит выше тёмных краёв вида.
+  const shopLook = JSON.parse((await val(`(() => { const g = window.__g;
+    return JSON.stringify({ labelW: g.shop.exitLabel.displayWidth, labelText: g.shop.exitLabel.text,
+      inner: 300 - 30, shopDepth: g.shop.shopLayer.depth, vignetteDepth: g.atmosphere.vignette.depth });
+  })()`)) ?? '{}');
+  check(shopLook.shopDepth > shopLook.vignetteDepth,
+    `п.9: панель магазина выше виньетки — края её больше не затемняют (${shopLook.shopDepth} > ${shopLook.vignetteDepth})`);
+  check(shopLook.labelW <= shopLook.inner + 0.5,
+    `п.9: надпись выхода целиком в плашке (${shopLook.labelW.toFixed(1)} ≤ ${shopLook.inner}: «${shopLook.labelText}»)`);
   await shot('upgrades-batch-c-shop.png');
 
   // ---------- 15: №42/№45 — откат не сбрасывает серию и возвращает билеты ----------
@@ -583,9 +650,11 @@ try {
   await passPicks();
   const tape = JSON.parse((await val(`(() => { const g = window.__g;
     g.tapeState = 'blank'; g.tapesBought = 1; g.tickets = 10; g.debt = 150; g.balance = 400; g.spinsLeft = 5;
+    g.pactAmuletBurns = true; // сделка №34: обязанность «следующий амулет сгорит» должна ехать с плёнкой
     g.recordTape();
     const recorded = g.tickets;
     const runs = g.runsPlayed; // номер забега до отката: перемотка — тот же забег, номер не должен вырасти
+    g.pactAmuletBurns = false; // сгорел на покупке после записи
     g.spendRunTickets(4); // так тратят амулет, гнездо и кассета: трата после записи
     g.streak = 9;
     const spent = g.ticketsSpentOnTape;
@@ -593,10 +662,11 @@ try {
     return JSON.stringify({ recorded, spent, runs });
   })()`)) ?? '{}');
   await sleep(7500); // плёнка перематывается 1,7 с, потом сцена перезапускается
-  const rewind = JSON.parse((await val('(() => { const g = window.__g; return JSON.stringify({ streak: g.streak, tickets: g.tickets, runs: g.runsPlayed }); })()')) ?? '{}');
+  const rewind = JSON.parse((await val('(() => { const g = window.__g; return JSON.stringify({ streak: g.streak, tickets: g.tickets, runs: g.runsPlayed, pactBurns: g.pactAmuletBurns }); })()')) ?? '{}');
   check(tape.recorded === 10 && tape.spent === 4, `№45: на записи 10 билетов, после записи потрачено 4 (${JSON.stringify(tape)})`);
   check(rewind.streak === 9, `№42: серия 9 пережила откат (${rewind.streak})`);
   check(rewind.tickets === 14, `№45: откат вернул ровно 4 потраченных: 10 + 4 = ${rewind.tickets}`);
+  check(rewind.pactBurns === true, 'сделка №34: обязанность «следующий амулет сгорит» пережила откат');
   check(rewind.runs === tape.runs, `№8: откат кассетой не сдвигает номер забега (${tape.runs} → ${rewind.runs})`);
 
   // ---------- 16: №44 — кассета в магазине бесплатна ----------
@@ -967,6 +1037,18 @@ try {
   check(blood.greedySpins <= 2 && blood.greedySpins >= 1, `п.12: с жадностью ×4 на старте раунда ${blood.greedySpins} прокрутка`);
   check(blood.greedyAch.includes('bloodSpill'), `п.12: ачивка «Я пролью много крови» выдана на старте раунда (${JSON.stringify(blood.greedyAch)})`);
   check(blood.plainSpins >= 12, `п.12: без жадности в раунде снова обычные прокрутки (${blood.plainSpins})`);
+
+  // ---------- 29: сделка №40 — первая прокрутка раунда кровавая (сброс крови не должен её гасить) ----------
+  const bloodPact = JSON.parse((await val(`(() => { const g = window.__g;
+    g.amulets = []; g.amuletCounts = {};
+    g.round = 7; g.pacts = [{ id: 'blood-round', untilRound: 8 }]; g.startRound();
+    const withPact = g.isBloodNext;
+    g.round = 8; g.pacts = []; g.startRound();
+    const withoutPact = g.isBloodNext;
+    return JSON.stringify({ withPact, withoutPact });
+  })()`)) ?? '{}');
+  check(bloodPact.withPact === true, 'сделка №40: первая прокрутка раунда снова кровавая (баг шага 43)');
+  check(bloodPact.withoutPact === false, 'сделка №40: без сделки кровь из прошлого раунда не переходит');
 
   console.log(`итог ${ok} из ${all}`);
   ws.close();

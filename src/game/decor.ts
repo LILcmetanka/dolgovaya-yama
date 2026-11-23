@@ -77,6 +77,7 @@ export const GOAL_NOTE_TEXTURE = 'note-goal'; // вторая записка: ц
 export const NOTE_GLOW_TEXTURE = 'note-glow'; // зелёное свечение вокруг записки: долг можно отдать раньше
 export const SHELF_CELL_TEXTURE = 'shelf-cell'; // клетка полки с предметами
 export const SHELF_DOOR_TEXTURE = 'shelf-door'; // стальная дверца с кодовым замком поверх закрытого отсека
+export const SHOP_SLOT_TEXTURE = 'shop-slot'; // товар мини-автомата «место на полке»: клетка с золотым плюсом
 export const EFFECT_SLOT_TEXTURE = 'effect-slot'; // пустое гнездо под включённый предмет у экрана
 export const DOOR_CODE_WIDTH = 50; // окошко колёсиков кода на дверце
 export const DOOR_CODE_HEIGHT = 24;
@@ -851,6 +852,28 @@ export function createShelfTextures(scene: Phaser.Scene, size: number): void {
     drawShelfDoor(texture.context, size);
     texture.refresh(); // передать нарисованное в видеокарту
   }
+  // «Место на полке» в витрине маленького автомата: та же стальная клетка, но в нише — золотой плюс.
+  // Раньше здесь стояла пустая SHELF_CELL_TEXTURE, и товар читался серым квадратом (баг шага 43).
+  if (!scene.textures.exists(SHOP_SLOT_TEXTURE)) {
+    const g = scene.add.graphics();
+    g.fillStyle(0x000000, 0.5);
+    g.fillRoundedRect(4, 5, size, size, 5); // тень на полке
+    g.fillStyle(0x2f353d);
+    g.fillRoundedRect(0, 0, size, size, 5); // стальная рамка отсека
+    g.fillStyle(0x6b7280);
+    g.fillRect(4, 1, size - 8, 3); // светлый край рамки сверху
+    const niche = size - 2 * SHELF_FRAME;
+    g.fillStyle(0x0d0f12);
+    g.fillRect(SHELF_FRAME, SHELF_FRAME, niche, niche); // ниша
+    g.fillStyle(0xfbbf24);
+    g.fillRoundedRect(size / 2 - 3, size / 2 - 13, 6, 26, 2); // золотой плюс: ещё одно место
+    g.fillRoundedRect(size / 2 - 13, size / 2 - 3, 26, 6, 2);
+    g.fillStyle(0x4b5563);
+    g.fillRect(4, size - 4, size - 8, 3); // стальная губа по низу рамки
+    g.fillStyle(0x9ca3af);
+    for (const [x, y] of [[4, 4], [size - 4, 4], [4, size - 4], [size - 4, size - 4]]) g.fillCircle(x, y, 1.6); // болты
+    bake(g, SHOP_SLOT_TEXTURE, size + 4, size + 5);
+  }
 }
 
 /** Стальная дверца отсека: полосы шлифовки, заклёпки по углам, окошко для трёх цифр кодового замка (цифры рисует сцена). */
@@ -1247,15 +1270,19 @@ function drawVendingMachine(
   g.fillStyle(0xef4444);
   g.fillCircle(slotX, slotY + 150, 4); // лампочка
 
-  // Лоток внизу: тёмный проём и откидная крышка.
+  // Лоток внизу: тень, тёмный проём и откидная крышка — та же конструкция, что у плашки маленького автомата.
   const binLeft = bin.x - bin.width / 2;
   const binTop = bin.y - bin.height / 2;
+  g.fillStyle(0x000000, 0.45);
+  g.fillRoundedRect(binLeft - 3, binTop - 2, bin.width + 10, bin.height + 10, 8); // тень на корпусе
   g.fillStyle(0x94a3b8);
   g.fillRoundedRect(binLeft - 5, binTop - 5, bin.width + 10, bin.height + 10, 8);
   g.fillStyle(0x020617);
   g.fillRoundedRect(binLeft, binTop, bin.width, bin.height, 6);
   g.fillStyle(0x334155);
-  g.fillRect(binLeft + 4, binTop + 3, bin.width - 8, bin.height / 2 - 3); // крышка
+  g.fillRect(binLeft + 4, binTop + 3, bin.width - 8, bin.height * 0.55 - 3); // крышка — как у плашки маленького автомата
+  g.fillStyle(CHROME_LIGHT);
+  g.fillRect(binLeft + 4, binTop + bin.height - 3, bin.width - 8, 1); // блик по нижней кромке проёма
 }
 
 /** «Барабан» в магазине: круглая доска на стене, колесо с секторами, стрелка сверху и подсветка выпавшего сектора. */
@@ -1583,6 +1610,10 @@ export function createMiniSocketTexture(scene: Phaser.Scene, radius: number): vo
   g.fillCircle(radius, radius, radius - 5); // лунка
   g.lineStyle(2, 0x475569);
   g.strokeCircle(radius, radius, radius - 5);
+  // Товар «ещё одно гнездо»: в лунке золотой плюс — иначе пустое гнездо читалось круглой дыркой (баг шага 43).
+  g.fillStyle(0xfbbf24);
+  g.fillRoundedRect(radius - 1.5, radius - 9, 3, 18, 1);
+  g.fillRoundedRect(radius - 9, radius - 1.5, 18, 3, 1);
   bake(g, MINI_SOCKET_TEXTURE, size, size);
 }
 
