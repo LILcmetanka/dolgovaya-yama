@@ -24,7 +24,9 @@
  * 11) №30: на старте забега из прошлого берут два амулета вместо одного (шаг 38);
  * 12) третья партия (28в): №31 доля черепов −1 п.п., №33 панель выбора первого символа и блокировка игры;
  * 13) №37 четыре ряда витрины, №38 билет 30% (и скидка №36), №40 подарок на полке без списания фишек;
- * 14) №39 покупка амулета за фишки и отказ второй раз за забег;
+ * 14) №39 амулет за фишки: мини-чемодан на два места слева, цена — доля рук, отказ второй раз за забег;
+ * 14б) DONTLIKE п.7/п.8: у основного чемодана нет переключателя валюты, у мини-автомата нет дверцы —
+ *      товар и цены видны сразу, покупка падает в плашку выдачи, клик по плашке её забирает;
  * 15) №42/№45 откат: серия 9 пережила перемотку, 10 билетов на записи + 4 потраченных вернулись как 14;
  * 16) №44 кассета в магазине за 0 билетов;
  * 17) №46 «5% рекорда» удалён шагом 38: старое сохранение с ним читается как «не куплено», стартовый баланс 0;
@@ -82,7 +84,7 @@ const EFFECTS = {
   'shop-discount': { shopPriceMul: 0.9 },
   'shop-extra-row': { offerRows: 1 },
   'shop-ticket-share': { ticketShareStart: 0.3 },
-  'shop-amulet-chips': { amuletForChips: true },
+  'shop-amulet-chips': { miniCasePriceMul: 0.5 },
   'shop-gift-item': { freeItemFirstShop: true },
   // Четвёртая партия (28г): кассета и прочее.
   'tape-keeps-streak': { rewindKeepsStreak: true },
@@ -407,8 +409,7 @@ try {
     open: g.isShopOpen, shopping: g.isShopping, balance: g.balance, debt: g.debt,
     items: g.offer.map((item) => (item ? { id: item.id, share: item.priceShare } : null)),
     prices: g.shop.prices, rows: g.shop.offerRows, shelf: g.shelf.filter(Boolean).length,
-    gift: g.freeGiftGiven, chipPrices: g.amuletChipPrices, chipRate: g.chipRate,
-    chipUsed: g.amuletChipUsedThisRun, chipMode: g.amuletCase.isChipMode,
+    gift: g.freeGiftGiven,
   }); })()`)) ?? '{}');
   check(shopC.open === true && shopC.shopping === true, '№37/#40: магазин 1 открыт');
   check(shopC.rows === 4 && shopC.items.filter(Boolean).length === 4 && shopC.prices.length === 5, `№37: в витрине 4 ряда предметов + билет (${shopC.rows})`);
@@ -450,26 +451,76 @@ try {
   check(afterB.tickets === ticketsBeforeB + 1, `шаг 35: «B» купил билет (билетов ${ticketsBeforeB} → ${afterB.tickets})`);
   check(afterB.balance === balanceBeforeB - priceBeforeB && afterB.price4 === null,
     `шаг 35: за билет списана его цена, ряд погас (фишек ${balanceBeforeB} → ${afterB.balance}, цена была ${priceBeforeB})`);
-  // №39: переключаем витрину на фишки и покупаем самый первый амулет.
-  const chipBuy = JSON.parse((await val(`(() => { const g = window.__g;
-    if (g.amuletOffer[0] === null) return JSON.stringify({ ok: false });
-    g.amuletCase.toggleChipMode();
-    const mode = g.amuletCase.isChipMode;
-    g.balance = 1000000; g.refreshShop();
-    const before = g.balance; const price = g.amuletChipPrices[0];
-    const amulet = g.amuletOffer[0]; const copies = g.amuletCounts[amulet.id] ?? 0;
-    g.buyFromCase(0);
+  // ---------- 14б: мини-чемодан за фишки (DONTLIKE п.7) и мини-автомат без дверцы (п.8) ----------
+  const mini = JSON.parse((await val(`(() => { const g = window.__g; return JSON.stringify({
+    places: g.miniCase.goods.length, mainPlaces: g.amuletCase.goods.length,
+    miniX: g.miniCase.goods[0].x, mainX: g.amuletCase.goods[0].x,
+    miniOpen: g.miniCase.isOpen,
+    offer: g.miniCaseOffer.map((a) => (a ? a.id : null)),
+    mainOffer: g.amuletOffer.map((a) => (a ? a.id : null)),
+    chipZone: g.amuletCase.chipZone === undefined && g.amuletCase.chipButton === undefined,
+  }); })()`)) ?? '{}');
+  check(mini.places === 2 && mini.mainPlaces === 3, `п.7: мини-чемодан на два места, основной — на три (${mini.places}/${mini.mainPlaces})`);
+  check(mini.miniOpen === true && mini.miniX < mini.mainX, `п.7: мини-чемодан открыт и стоит слева от основного (${Math.round(mini.miniX)} < ${Math.round(mini.mainX)})`);
+  check(mini.chipZone === true, 'п.7: у основного чемодана больше нет переключателя «ЗА ФИШКИ / ЗА БИЛЕТЫ»');
+  const overlap = (mini.offer ?? []).filter((id) => id && (mini.mainOffer ?? []).includes(id));
+  check(overlap.length === 0, `п.7: мини-чемодан не повторяет амулеты основного (${(mini.offer ?? []).join(',')} / ${(mini.mainOffer ?? []).join(',')})`);
+  // Цена — половина фишек на руках, ниже 300 не опускается; №39 (куплен в этом наборе) делает её вдвое меньше:
+  // 100 000 × 0,5 × 0,5 = 25 000. Оплата идёт сразу, окна выбора валюты нет; второй раз за забег — отказ строкой.
+  const miniBuy = JSON.parse((await val(`(() => { const g = window.__g;
+    g.balance = 100000; g.tickets = 99; g.refreshShop();
+    const price = g.miniCase.prices.find((p) => p !== null);
+    const place = g.miniCaseOffer.findIndex((a) => a !== null);
+    if (place < 0) return JSON.stringify({ ok: false });
+    const amulet = g.miniCaseOffer[place];
+    const copies = g.amuletCounts[amulet.id] ?? 0;
+    const screensOf = () => [g.upgradeScreen, g.actionPanel, g.symbolPick, g.machinePick, g.amuletPick].filter((s) => s && s.isOpen).length;
+    const before = g.balance;
+    const screensBefore = screensOf();
+    g.buyFromMiniCase(place);
+    const openAfterBuy = screensOf();
     const paid = before - g.balance;
-    const used = g.amuletChipUsedThisRun;
     const afterCopies = g.amuletCounts[amulet.id] ?? 0;
-    g.amuletOffer[0] = amulet; g.tickets = 0; const again = g.balance;
-    g.buyFromCase(0);
-    return JSON.stringify({ ok: true, mode, price, paid, used, copies, afterCopies, secondPaid: again - g.balance });
+    const used = g.amuletChipUsedThisRun;
+    g.balance = 100000; g.refreshShop();
+    const again = g.balance;
+    const second = g.miniCaseOffer.findIndex((a) => a !== null);
+    if (second >= 0) g.buyFromMiniCase(second);
+    const refused = again - g.balance;
+    const news = (g.screen.news?.parts ?? []).filter((part) => typeof part.text === 'string').map((part) => part.text).join(' ');
+    return JSON.stringify({ ok: true, price, paid, copies, afterCopies, used, refused, news,
+      screensBefore, openAfterBuy, screensAfter: screensOf(), shopping: g.isShopping });
   })()`)) ?? '{}');
-  check(chipBuy.ok === true && chipBuy.mode === true, '№39: витрина переключилась на фишки');
-  check(chipBuy.paid === chipBuy.price && chipBuy.price >= 5, `№39: амулет оплачен фишками по честной цене (${chipBuy.paid})`);
-  check(chipBuy.afterCopies === chipBuy.copies + 1 && chipBuy.used === true, '№39: амулет куплен, флаг «раз за забег» стоит');
-  check(chipBuy.secondPaid === 0, '№39: второй раз за забег фишками не берут');
+  check(miniBuy.ok === true && miniBuy.price === 25000, `п.7/№39: амулет за фишки стоит половину рук, с №39 — 25 000 (${miniBuy.price})`);
+  check(miniBuy.paid === miniBuy.price && miniBuy.afterCopies === miniBuy.copies + 1 && miniBuy.used === true,
+    `п.7: амулет куплен за фишки (${miniBuy.paid}, копий ${miniBuy.copies} → ${miniBuy.afterCopies}), флаг «раз за забег» стоит`);
+  check(miniBuy.screensBefore === 0 && miniBuy.openAfterBuy === 0 && miniBuy.screensAfter === 0,
+    'п.7: покупка не открывает окно выбора «за фишки / за билеты» — всё на панели магазина');
+  check(miniBuy.refused === 0 && /ФИШКИ/.test(miniBuy.news ?? ''),
+    `п.7: второй раз за забег — отказ строкой на экране автомата (${miniBuy.news})`);
+  await shot('upgrades-mini-case.png');
+
+  // п.8: дверцы витрины маленького автомата нет — товар и цены видны сразу; внизу плашка выдачи.
+  const machine = JSON.parse((await val(`(() => { const g = window.__g; return JSON.stringify({
+    door: g.miniShop.door, doorOpen: g.miniShop.isDoorOpen,
+    goods: g.miniShop.goods.map((o) => o.visible),
+    prices: g.miniShop.priceTexts.map((o) => ({ visible: o.visible, text: o.text })),
+    bin: Boolean(g.miniShop.bin), binZone: Boolean(g.miniShop.binZone),
+    goodsLeft: g.miniShop.goods[0].x, goodsRight: g.miniShop.goods[0].x,
+  }); })()`)) ?? '{}');
+  check(machine.door === undefined && machine.doorOpen === undefined, 'п.8: дверцы витрины больше нет — ни полотна, ни ручки, ни флага');
+  check(machine.goods.every(Boolean) && machine.prices.every((p) => p.visible && p.text.length > 0),
+    `п.8: товар и цены видны сразу, без клика (${machine.prices.map((p) => p.text).join(', ')})`);
+  check(machine.bin === true && machine.binZone === true, 'п.8: внизу автомата есть плашка выдачи — и по ней можно кликнуть');
+  // Покупка уходит в плашку, клик по плашке её забирает.
+  await val('window.__g.balance = 100000; window.__g.refreshShop(); window.__g.buySlot(); 1');
+  await sleep(1700); // оплата 4×60 + 400 мс и падение 320 мс
+  const inBin = await val('Boolean(window.__g.miniShop.taken)');
+  await clickAt(await pagePoint('g.miniShop.binZone.getBounds()'));
+  await sleep(400);
+  const binEmpty = await val('window.__g.miniShop.taken === null');
+  check(inBin === true, 'п.8: купленное падает в плашку выдачи');
+  check(binEmpty === true, 'п.8: клик по плашке забирает покупку');
   await shot('upgrades-batch-c-shop.png');
 
   // ---------- 15: №42/№45 — откат не сбрасывает серию и возвращает билеты ----------

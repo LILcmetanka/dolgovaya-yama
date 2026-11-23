@@ -27,7 +27,7 @@ import { lang, t, toggleLang, type Lang, type TextKey } from './lang';
 import { BODY, LEVER_GLOW, NOTE, WALL_PANEL, ZOOM } from './layout';
 import { memoryOptions } from './memory';
 import { ActionBoard } from './parts/actionBoard';
-import { AmuletCase } from './parts/amuletCase';
+import { AmuletCase, MAIN_CASE_LOOK, MINI_CASE_LOOK } from './parts/amuletCase';
 import { AmuletRack } from './parts/amuletRack';
 import { Atmosphere } from './parts/atmosphere';
 import { BrokenScreen } from './parts/brokenScreen';
@@ -166,7 +166,9 @@ export class GameScene extends CollectorScene {
     this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip, offerRowCount(this.upgradeEffects.offerRows));
     // Что из магазина открыто — по закрытым долгам: после отката кассетой раунд уже загружен (loadTape), и части строятся сразу видимыми.
     this.miniShop = new MiniShop(this, (row) => this.buyMini(row), this.tooltip, this.shop.layer);
-    this.amuletCase = new AmuletCase(this, (place) => this.buyFromCase(place), this.tooltip, this.amuletsUnlocked(), this.shop.layer);
+    this.amuletCase = new AmuletCase(this, MAIN_CASE_LOOK, (place) => this.buyFromCase(place), this.tooltip, this.amuletsUnlocked(), this.shop.layer);
+    // Мини-чемодан за фишки (DONTLIKE п.7) — слева от основного: тот же чемодан, но на два амулета и мельче.
+    this.miniCase = new AmuletCase(this, MINI_CASE_LOOK, (place) => this.buyFromMiniCase(place), this.tooltip, this.amuletsUnlocked(), this.shop.layer);
     // Кассета «продаётся» — это состояние забега (после отката её съел автомат, и она снова продаётся);
     // видно её на панели только вместе с открытой механикой (первый аргумент).
     this.cassette = new Cassette(this, this.cassetteUnlocked(), this.tapeState === 'forSale', () => this.buyTape(), () => this.useTape(), this.tooltip, this.shop.layer);

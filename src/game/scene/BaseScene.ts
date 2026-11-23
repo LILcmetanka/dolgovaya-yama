@@ -129,6 +129,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected amulets: Amulet[] = []; // амулеты в гнёздах, по порядку гнёзд (каждый — уникальный, дубли — счётчиком ниже)
   protected amuletCounts: AmuletCounts = {}; // сколько копий каждого амулета (шаг 62б: копии не занимают гнёзда)
   protected amuletOffer: (Amulet | null)[] = []; // что лежит в витрине амулетов; купленное — null
+  protected miniCaseOffer: (Amulet | null)[] = []; // что лежит в мини-чемодане за фишки (DONTLIKE п.7); купленное — null
   protected drumSpins = 0; // сколько раз крутил барабан в этом магазине — каждая следующая прокрутка дороже
   protected ticketsBought = 0; // сколько билетов куплено за фишки за забег — с каждым следующий билет дороже (шаг 13)
   protected bones = 0; // сколько паттернов из черепов выпало за забег — для коллекционера костей
@@ -155,7 +156,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isTapeRestart = false;
   protected deferredThisRun = false; // улучшение №10: отсрочка в этом забеге уже была (липкая, как rescueUsed)
   protected pactAmuletBurns = false; // сделка №34: следующий купленный амулет сгорит сразу
-  protected amuletChipUsedThisRun = false; // улучшение №39 (28в): амулет за фишки уже брали — откат кассетой это не возвращает
+  protected amuletChipUsedThisRun = false; // мини-чемодан за фишки (DONTLIKE п.7): амулет за фишки уже брали — откат не возвращает
   protected freeGiftGiven = false; // улучшение №40 (28в): подарок первого магазина уже выдан
   protected startSymbolId: string | null = null; // улучшение №33 (28в): выбранный первый символ забега
   protected startGridGiven = false; // первая сетка забега уже получила джокера (№32) и выбранный символ (№33)
@@ -213,6 +214,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected miniShop!: MiniShop; // маленький автомат на панели: место на полке за фишки и гнездо за билеты
   protected cassette!: Cassette; // кассета в магазине и видеомагнитофон у монитора
   protected amuletCase!: AmuletCase; // чемодан с амулетами над торговым автоматом
+  protected miniCase!: AmuletCase; // мини-чемодан за фишки слева от него (DONTLIKE п.7): два амулета
   protected drum!: Drum; // «барабан» в магазине: колесо с призами за фишки
   protected brokenScreen!: BrokenScreen; // дыра и трещины на экране автомата после взрыва (KABOOM)
   protected machineBadge!: MachineBadge; // автомат: цвет корпуса и значок
@@ -234,7 +236,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.runsPlayed = this.isTapeRestart ? runNumber() : beginRun(); // откат кассетой — тот же забег, номер не двигаем (№8)
     this.deferredThisRun = false; // №10: отсрочка снова доступна
     this.pactAmuletBurns = false; // сделка №34: в новом забеге «следующий амулет сгорит» ещё не назначен
-    this.amuletChipUsedThisRun = false; // №39: амулет за фишки в новом забеге снова доступен
+    this.amuletChipUsedThisRun = false; // мини-чемодан: амулет за фишки в новом забеге снова доступен
     this.freeGiftGiven = false; // №40: подарок первого магазина ещё не выдан
     this.startSymbolId = null; // №33: выбираем символ заново в каждом новом забеге
     this.startGridGiven = false; // первая сетка ещё не получила джокера и выбранный символ
@@ -281,6 +283,7 @@ export abstract class BaseScene extends Phaser.Scene {
     this.amulets = [];
     this.amuletCounts = {};
     this.amuletOffer = [];
+    this.miniCaseOffer = [];
     this.drumSpins = 0;
     this.ticketsBought = 0; // новый забег — билеты снова по 40% банка
     this.bones = 0;

@@ -231,17 +231,6 @@ export function ticketForChips(balance: number, bought: number, mul = 1, start =
   return roundPrice(bank * ticketShare(bought, start), mul);
 }
 
-/**
- * Сколько фишек стоит покупка за tickets билетов, если один билет сейчас стоит chipPrice (улучшение №39):
- * честный размен — столько же, сколько игрок отдал бы за эти билеты в ряду билетов. Никогда не ноль:
- * нижняя граница та же, что у всех цен, — 5 фишек.
- */
-export function chipsForTickets(tickets: number, chipPrice: number): number {
-  const count = Number.isFinite(tickets) && tickets > 0 ? Math.floor(tickets) : 0;
-  const price = Number.isFinite(chipPrice) && chipPrice > 0 ? chipPrice : 0;
-  return roundPrice(count * price);
-}
-
 /** Сколько рядов предметов в торговом автомате: OFFER_SIZE плюс улучшение №37, но не больше, чем предметов в игре. */
 export function offerRowCount(bonus = 0): number {
   const extra = Number.isFinite(bonus) && bonus > 0 ? Math.floor(bonus) : 0;

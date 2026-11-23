@@ -1,8 +1,20 @@
-import { addCopy, amuletPrice, countOf, insuranceCopyPrice, maxCopiesOf, randomAmuletOffer, socketPrice, withRareAmulet, type Amulet } from '../amulets';
+import {
+  addCopy,
+  amuletPrice,
+  countOf,
+  insuranceCopyPrice,
+  maxCopiesOf,
+  MINI_CASE_PLACES,
+  miniCasePrice,
+  randomAmuletOffer,
+  socketPrice,
+  withRareAmulet,
+  type Amulet,
+} from '../amulets';
 import { amuletKey, itemKey, see, WHO_COLLECTOR } from '../codex';
 import { DEBT_FREEZE_NEXT_MUL, pactEffects, shopDebt, shopRoundOf } from '../dealerGame';
 import { canWin, DRUM_SECTORS, drumChips, drumPrice, prizeItem, randomSector, type DrumPrize } from '../drum';
-import { chipsForTickets, itemPrice, MAX_SLOTS, offerReplacement, offerRowCount, randomOffer, slotPrice, TICKETS_PER_SHOP, ticketForChips, type ShopItem } from '../items';
+import { itemPrice, MAX_SLOTS, offerReplacement, offerRowCount, randomOffer, slotPrice, TICKETS_PER_SHOP, ticketForChips, type ShopItem } from '../items';
 import { t } from '../lang';
 import { machineItemAllowed } from '../machines';
 import type { SoundName } from '../sound';
@@ -32,9 +44,6 @@ export abstract class ShopScene extends DealerScene {
   private isLeavingShop = false;
   // Сколько билетов за фишки уже куплено в этом магазине: выше items.TICKETS_PER_SHOP не продают, ряд гаснет.
   private ticketsBoughtHere = 0;
-  // Улучшение №39 (28в): цены амулетов в фишках на этот магазин и цена одного билета, по которой они посчитаны.
-  private amuletChipPrices: number[] = [];
-  private chipRate = 0;
   // Подсказка отказа висит AMULET_DENY_HINT_TIME; новый отказ снимает прошлый таймер.
   private amuletDenyHint: Phaser.Time.TimerEvent | null = null;
 
@@ -42,8 +51,6 @@ export abstract class ShopScene extends DealerScene {
   protected resetState(): void {
     super.resetState();
     this.ticketsBoughtHere = 0; // рядом с ticketsBought: тот считает билеты за забег, этот — за один заход
-    this.amuletChipPrices = [];
-    this.chipRate = 0;
   }
 
   /**
@@ -82,20 +89,25 @@ export abstract class ShopScene extends DealerScene {
     const isAmulets = this.amuletsUnlocked() && !pactEffects(this.pacts, this.round - 1).amuletsClosed;
     const amuletOffer = isAmulets ? this.amuletOfferForShop() : [];
     this.amuletOffer = amuletOffer;
-    // Улучшение №39: цена амулета в фишках — столько, сколько стоят его билеты по курсу билета этого магазина.
-    this.chipRate = ticketForChips(this.balance, 0, this.priceMul() * pactEffects(this.pacts, this.round - 1).ticketChipsMul, this.upgradeEffects.ticketShareStart);
-    this.amuletChipPrices = amuletOffer.map((amulet) => chipsForTickets(this.amuletPriceNow(amulet), this.chipRate));
-    this.seeInShop(offer.map((item) => itemKey(item.id)), amuletOffer.map((amulet) => amuletKey(amulet.id)));
+    // Мини-чемодан за фишки (DONTLIKE п.7): два амулета, которых нет в основном чемодане, — за фишки.
+    this.miniCaseOffer = isAmulets ? this.miniCaseOfferForShop(amuletOffer) : [];
+    this.seeInShop(
+      offer.map((item) => itemKey(item.id)),
+      [...amuletOffer, ...this.miniCaseOffer].filter((amulet): amulet is Amulet => amulet !== null).map((amulet) => amuletKey(amulet.id)),
+    );
     this.drumSpins = 0; // в новом магазине барабан снова дешёвый
     this.ticketsBoughtHere = 0; // и билеты за фишки снова продаются — ряд в автомате загорится при открытии панели
     const prices = offer.map((item) => this.itemPriceNow(item)); // цены — доля нового долга и скидки улучшений №22 и №36
     // Что открыто — по закрытым долгам: номер раунда уже номер этого магазина, поэтому предикаты дают его счёт.
     this.amuletCase.setAvailable(isAmulets);
-    this.amuletCase.setChipOption(this.upgradeEffects.amuletForChips, this.amuletChipUsedThisRun); // №39
+    this.miniCase.setAvailable(isAmulets); // мини-чемодан за фишки виден вместе с основным
     this.drum.setAvailable(this.drumUnlocked());
     this.cassette.setAvailable(this.cassetteUnlocked());
     // Панель поехала: чемодан и маленький автомат прошлого захода сразу пусты, цены на панели — уже от нового долга.
-    if (isAmulets) this.amuletCase.clear();
+    if (isAmulets) {
+      this.amuletCase.clear();
+      this.miniCase.clear();
+    }
     this.miniShop.clear();
     this.panel.setPhaseSignsVisible(false); // знаки фазы 2 поверх панели магазина торчать не должны
     this.sfx.play('turn');
@@ -112,11 +124,8 @@ export abstract class ShopScene extends DealerScene {
         this.sfx.play('item');
       }
       if (isAmulets) {
-        this.amuletCase.fill({
-          amulets: amuletOffer,
-          amuletPrices: amuletOffer.map((amulet) => this.amuletPriceNow(amulet)),
-          amuletChipPrices: this.amuletChipPrices,
-        });
+        this.amuletCase.fill({ amulets: amuletOffer, prices: amuletOffer.map((amulet) => this.amuletPriceNow(amulet)) });
+        this.miniCase.fill({ amulets: this.miniCaseOffer, prices: this.miniCasePricesNow() });
       }
       this.refreshShop();
     });
@@ -388,12 +397,11 @@ export abstract class ShopScene extends DealerScene {
     return this.slots - 1;
   }
 
-  /** Купить место чемодана с амулетами: в витрине только амулеты за билеты. */
+  /** Купить место основного чемодана: в нём только амулеты за билеты (за фишки — мини-чемодан, DONTLIKE п.7). */
   protected buyFromCase(place: number): void {
     if (!this.amuletsUnlocked()) return;
     if (!this.isShopping || !this.amuletCase.isOpen) return; // чемодан ещё закрыт — покупать нечего
-    if (this.amuletCase.isChipMode) this.buyAmuletForChips(place);
-    else this.buyAmulet(place);
+    this.buyAmulet(place);
   }
 
   /**
@@ -451,53 +459,78 @@ export abstract class ShopScene extends DealerScene {
   }
 
   /**
-   * Улучшение №39 (28в): амулет за фишки — раз за забег. Цена в фишках — цена его билетов по курсу билета этого
-   * магазина (chipsForTickets), поэтому амулет не бесплатный и скидки №26/№28 не отменяются: гнездо по-прежнему
-   * покупается отдельно за билеты, а скидка амулета уже сидит в его цене. Откат кассетой флаг не снимает (липкий).
+   * Мини-чемодан за фишки (DONTLIKE п.7): два амулета, которых нет в основном (из тех, что ещё можно докупить).
+   * Своей панели и окна выбора «за фишки / за билеты» нет: амулет тут сразу стоит в фишках.
    */
-  private buyAmuletForChips(place: number): void {
-    const amulet = this.amuletOffer[place];
+  private miniCaseOfferForShop(taken: (Amulet | null)[]): Amulet[] {
+    const exclude = taken.filter((amulet): amulet is Amulet => amulet !== null).map((amulet) => amulet.id);
+    return randomAmuletOffer(this.amuletIds(), this.upgradeEffects.amuletMaxCopies, MINI_CASE_PLACES, exclude).filter(
+      (amulet) => this.copiesLeft(amulet) > 0,
+    );
+  }
+
+  /**
+   * Цены мини-чемодана: амулет за фишки — доля фишек на руках (amulets.miniCasePrice), поэтому цену пересчитывают
+   * при каждой покупке. Улучшение №39 делает её вдвое меньше (miniCasePriceMul).
+   */
+  private miniCasePricesNow(): number[] {
+    const price = miniCasePrice(this.balance, this.upgradeEffects.miniCasePriceMul);
+    return this.miniCaseOffer.map((amulet) => (amulet ? price : 0));
+  }
+
+  /**
+   * Клик по месту мини-чемодана — сразу покупка за фишки, без окна выбора валюты (DONTLIKE п.7). Раз за забег
+   * (MINI_CASE_PURCHASES): амулет новый — нужно свободное гнездо, копия — в своё. Отказ — строкой на экране автомата
+   * (announceNews), без всплывающих окон; ценник при этом трясётся. Откат кассетой флаг не снимает (липкий).
+   */
+  protected buyFromMiniCase(place: number): void {
+    if (!this.amuletsUnlocked()) return;
+    if (!this.isShopping || !this.miniCase.isOpen) return; // чемодан ещё закрыт — покупать нечего
+    const amulet = this.miniCaseOffer[place];
     if (!amulet) return;
     if (this.amuletChipUsedThisRun) {
-      this.sfx.play('deny');
-      this.amuletCase.deny(place);
+      // MINI_CASE_PURCHASES = 1: один амулет за забег, флаг липкий (откат кассетой не возвращает).
+      this.refuseMiniCase(place, t('miniCaseUsed'));
       return;
     }
     if (this.copiesLeft(amulet) <= 0) {
-      this.sfx.play('deny');
-      this.amuletCase.deny(place);
+      this.refuseMiniCase(place, t('miniCaseNoCopies'));
       return;
     }
-    const socket = this.amulets.findIndex((owned) => owned.id === amulet.id);
+    const socket = this.amulets.findIndex((owned) => owned.id === amulet.id); // гнездо этого амулета; −1 — такого ещё нет
     if (socket < 0 && this.amulets.length >= this.sockets) {
-      this.sfx.play('deny');
-      this.amuletCase.deny(place); // гнездо продаётся отдельно за билеты — №28 не отменяем
+      this.refuseMiniCase(place, t('miniCaseNoSocket')); // гнездо продаётся отдельно за билеты
       return;
     }
-    const price = this.amuletChipPrices[place] ?? chipsForTickets(this.amuletPriceNow(amulet), this.chipRate);
+    const price = miniCasePrice(this.balance, this.upgradeEffects.miniCasePriceMul);
     if (price > this.balance) {
-      this.sfx.play('deny');
-      this.amuletCase.deny(place);
+      this.refuseMiniCase(place, t('miniCaseNoChips'));
       return;
     }
     this.balance -= price; // покупка, не доход: earned не растёт (earn() сюда не зовём)
-    this.amuletChipUsedThisRun = true;
-    this.amuletOffer[place] = null;
+    this.amuletChipUsedThisRun = true; // раз за забег: второй амулет за фишки не берут
+    this.miniCaseOffer[place] = null;
     const isNew = socket < 0;
     let index = socket;
     if (isNew) {
       index = this.amulets.length;
-      this.amulets.push(amulet);
+      this.amulets.push(amulet); // гнездо занято сразу: второй быстрый клик его уже не получит
     }
     addCopy(this.amuletCounts, amulet.id);
-    const count = countOf(this.amuletCounts, amulet.id);
-    this.amuletCase.sell(place, (x, y) => {
+    const count = countOf(this.amuletCounts, amulet.id); // сколько копий станет после этой покупки
+    this.miniCase.sell(place, (x, y) => {
       if (isNew) this.amuletRack.putAmulet(index, amulet, count, x, y);
       else this.amuletRack.putCopy(index, amulet, count, x, y);
       this.showBones();
     });
-    this.amuletCase.setChipOption(true, true); // одноразово: режим больше не включается, кнопка гаснет
     this.afterPurchase();
+  }
+
+  /** Отказ мини-чемодана: ценник трясётся, причина — строкой на экране автомата, окно не открывается. */
+  private refuseMiniCase(place: number, message: string): void {
+    this.sfx.play('deny');
+    this.miniCase.deny(place);
+    this.screen.announceNews(message);
   }
 
   /** Купить гнездо за билеты: с гнезда на корпусе слетает заглушка. Первое гнездо забега — по улучшению №28 бесплатно. */
@@ -592,7 +625,14 @@ export abstract class ShopScene extends DealerScene {
       if (amulet === null) return false;
       return this.amulets.length < this.sockets || countOf(this.amuletCounts, amulet.id) > 0;
     });
-    this.amuletCase.refresh(this.tickets, this.balance, amuletReady);
+    this.amuletCase.refresh(this.tickets, this.amuletOffer.map((amulet) => (amulet ? this.amuletPriceNow(amulet) : null)), amuletReady);
+    // Мини-чемодан (DONTLIKE п.7): цены в фишках пересчитываются от фишек на руках, поэтому идут в каждом refresh.
+    const miniReady = this.miniCaseOffer.map((amulet) => {
+      if (amulet === null) return false;
+      return this.amulets.length < this.sockets || countOf(this.amuletCounts, amulet.id) > 0;
+    });
+    const miniPrices = this.miniCasePricesNow().map((price, place) => (this.miniCaseOffer[place] ? price : null));
+    this.miniCase.refresh(this.balance, miniPrices, miniReady);
     this.miniShop.refresh(
       this.balance,
       this.tickets,

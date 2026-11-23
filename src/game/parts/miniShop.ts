@@ -15,7 +15,7 @@ import {
 import { t } from '../lang';
 import {
   MINI_SHOP,
-  MINI_SHOP_DOOR,
+  MINI_SHOP_BIN,
   MINI_SHOP_FRAME,
   MINI_SHOP_GLASS,
   MINI_SHOP_GOOD_X,
@@ -33,49 +33,38 @@ import { attachHint, type Hint } from './tooltip';
 export const SLOT_ROW = 0;
 export const SOCKET_ROW = 1;
 const ROWS = 2;
-// Товар стоит прямо на полке ряда: клетка полки (её значок) и гнездо амулета. Значки одного размера (≈52 px),
+// Товар стоит прямо на полке ряда: клетка полки (её значок) и гнездо амулета. Значки примерно одного размера,
 // чтобы ряды читались витриной; ценник — тёмной табличкой справа, плашек-кнопок под товаром нет.
-const GOOD_SCALES = [0.75, 1];
-const PRICE_ICON_SCALE = 0.6;
-const PRICE_TEXT_OFFSET = 11; // «× 20» — правее значка ценника
-const PRICE_FONT_SIZE = 14; // цена в ряду…
-const PRICE_MIN_FONT_SIZE = 10; // …длинная уменьшается, чтобы не вылезти за тёмную табличку и стекло…
-const PRICE_MAX_WIDTH = 42; // …а если и этого мало — ужимается по ширине: шире таблички ценник не бывает
-const PLATE_INSET = 14; // табличка ценника шире значка на столько слева
+const GOOD_SCALES = [0.68, 0.9];
+const PRICE_ICON_SCALE = 0.55;
+const PRICE_TEXT_OFFSET = 10; // «× 20» — правее значка ценника
+const PRICE_FONT_SIZE = 13; // цена в ряду…
+const PRICE_MIN_FONT_SIZE = 9; // …длинная уменьшается, чтобы не вылезти за тёмную табличку и стекло…
+const PRICE_MAX_WIDTH = 36; // …а если и этого мало — ужимается по ширине: шире таблички ценник не бывает
+const PLATE_INSET = 12; // табличка ценника шире значка на столько слева
 const PLATE_GAP = 8; // и не доходит до края витрины на столько
-const PLATE_HEIGHT = 28;
+const PLATE_HEIGHT = 26;
 // Корпус: скругление и левый бок в тени — как у торгового автомата (decor.ts, drawVendingMachine) и корпуса в комнате.
 const BODY_CORNER = 18;
-const BODY_SIDE = 14; // ширина левого бока, px
+const BODY_SIDE = 13; // ширина левого бока, px
 const TRIM_INSET = 6; // хромированная окантовка — на столько внутри края лицевой части
-// Дверца: петля слева, поэтому при открытии она сжимается по x к петле — как переворот записки.
-// Открытая дверца исчезает совсем: полосы у левого края нет, витрина свободна.
-const DOOR_CLOSED_SCALE = 1;
-const DOOR_OPEN_SCALE = 0;
-const HANDLE_WIDTH = 12;
-const HANDLE_MARGIN = 30; // от правого края дверцы до ручки
-const HANDLE_TOP = 55; // от верха дверцы до ручки
-const HANDLE_BOTTOM = 55;
-// Детали полотна в стиле корпуса: хромированная накладка-маркиза сверху и тонкий шов петли у левого края.
-const MARQUEE_Y = 16; // от верха дверцы до накладки
-const MARQUEE_HEIGHT = 5;
-const MARQUEE_INSET = 14; // накладка не доходит до окантовки на столько
-const HINGE_X = 11; // шов петли — сразу внутри левой окантовки
-const HINGE_TOP = 18;
-const HINGE_BOTTOM = 18;
+// Плашка выдачи внизу (DONTLIKE п.8): хромированная окантовка, тёмный проём и откидная крышка — как лоток торгового.
+const BIN_RIM = 5; // окантовка лотка шире проёма на столько
+const BIN_LID_SHARE = 0.55; // какую долю проёма закрывает крышка
 // Анимации, мс.
-const DOOR_TIME = 240; // открытие дверцы; закрытие мгновенное — при входе и выходе из магазина
 const PAY_FLYING = 4; // столько значков оплаты летит из шапки панели к товару (для красоты: цена может быть любой)
 const PAY_FLY_TIME = 400;
 const PAY_STAGGER = 60;
-const TAKE_TIME = 260; // покупка гаснет, когда оплата долетела
+const DROP_TIME = 320; // покупка падает в плашку выдачи, когда оплата долетела
 const SHAKE_TIME = 50; // один рывок тряски «не хватает»
+const POP_TIME = 200; // забрали из плашки: значок подпрыгивает и тает
 
 /**
  * Маленький автомат на панели магазина, слева от торгового: тот же корпус, только меньше, и стоит с торговым
- * на одном полу. Два ряда — место на полке за фишки и гнездо амулета за билеты. Витрину закрывает дверца
- * с вертикальной ручкой: клик по ней — дверца откидывается вбок, и товар с ценниками становится виден.
- * Покупку делает сцена (ShopScene.buySlot и buySocket) — здесь только показ, дверца, оплата и «не хватает».
+ * на одном полу. Два ряда — место на полке за фишки и гнездо амулета за билеты. Дверцы витрины нет (DONTLIKE п.8):
+ * товар и цены видны сразу, как только панель встала. Внизу — плашка выдачи: покупка уходит в неё, клик по плашке
+ * забирает её (значок подпрыгивает и тает). Покупку делает сцена (ShopScene.buySlot и buySocket) — здесь только
+ * показ, оплата, плашка и «не хватает».
  */
 export class MiniShop {
   private readonly scene: Phaser.Scene;
@@ -84,23 +73,22 @@ export class MiniShop {
   private readonly priceIcons: Phaser.GameObjects.Image[] = []; // ценник: фишка или билет…
   private readonly priceTexts: Phaser.GameObjects.Text[] = []; // …и «× 20»
   private readonly prices: (number | null)[] = [null, null]; // цена ряда; null — ряд не продаётся
-  private readonly door: Phaser.GameObjects.Graphics; // дверца витрины: корпус → товар → стекло → ценники → дверца
-  private readonly hint: Hint; // подсказка магазина: при открытии дверцы её табличку убираем
-  private isOpen = false; // панель встала — товар на витрине
-  private isDoorOpen = false; // дверца открыта — товар и ценники видны, покупка возможна
+  private readonly bin: Phaser.GameObjects.Graphics; // плашка выдачи: её проём, крышка и окантовка
+  private readonly binZone: Phaser.GameObjects.Zone; // клик по плашке забирает покупку
+  private taken: Phaser.GameObjects.Image | null = null; // что лежит в плашке: последняя покупка
+  private isOpen = false; // панель встала — товар на витрине и покупки возможны
 
   /** buy(row) — кликнули по ряду; layer — слой магазина, куда кладётся автомат и его товар. */
   constructor(scene: Phaser.Scene, buy: (row: number) => void, hint: Hint, layer: Phaser.GameObjects.Container) {
     this.scene = scene;
     this.layer = layer;
-    this.hint = hint;
     createChipTextures(scene);
     createTicketTexture(scene);
     createShelfTextures(scene, SHELF_CELL);
     createMiniSocketTexture(scene, MINI_SHOP_SOCKET_RADIUS);
     this.buildMachine();
-    // Порядок в витрине: корпус (с полками и табличками) → товар → стекло → ценники → дверца.
-    // Дверца последней: закрытая, она скрывает и товар, и ценники.
+    // Порядок в витрине: корпус (с полками, табличками и плашкой выдачи) → товар → стекло → ценники.
+    // Дверцы нет: ничто не закрывает витрину, товар читается сразу.
     for (let row = 0; row < ROWS; row++) {
       const good = scene.add.image(MINI_SHOP_GOOD_X, MINI_SHOP_ROW_Y[row], this.textureFor(row)).setScale(GOOD_SCALES[row]);
       good.setInteractive({ useHandCursor: true });
@@ -118,9 +106,11 @@ export class MiniShop {
       this.priceTexts.push(priceText);
       this.layer.add([priceIcon, priceText]);
     }
-    this.door = this.buildDoor();
-    this.layer.add(this.door);
-    attachHint(this.door, hint, () => this.doorHint(), () => this.openDoor());
+    const binParts = this.buildBin();
+    this.bin = binParts.bin;
+    this.binZone = binParts.zone;
+    this.layer.add([this.bin, this.binZone]);
+    attachHint(this.binZone, hint, () => [t('miniBin'), t('miniBinHow')]); // что это за проём — по наведению
     this.clear();
   }
 
@@ -167,53 +157,32 @@ export class MiniShop {
       g.fillStyle(0x020617);
       g.fillRoundedRect(plateLeft, MINI_SHOP_ROW_Y[row] - PLATE_HEIGHT / 2, plateWidth, PLATE_HEIGHT, 5); // табличка ценника
     }
-
     this.layer.add(g);
   }
 
   /**
-   * Дверца витрины: хромированная окантовка, тёмное полотно и вертикальная ручка у правого края — как дверца
-   * холодильника. На полотне — те же детали, что на корпусе автомата: хромированная накладка сверху и шов петли
-   * у левого края. Петля — левый край: дверца нарисована от (0, 0), поэтому scaleX сжимает её к петле.
+   * Плашка выдачи внизу лицевой части (DONTLIKE п.8): хромированная окантовка, тёмный проём и откидная крышка —
+   * тот же лоток, что у торгового автомата. Отдельная зона нажатия: у Graphics своего размера для попадания нет.
+   * Клик по плашке забирает покупку — значок подпрыгивает и тает (deny-тряска и покупка сюда не относятся).
    */
-  private buildDoor(): Phaser.GameObjects.Graphics {
-    const { width, height } = MINI_SHOP_DOOR;
+  private buildBin(): { bin: Phaser.GameObjects.Graphics; zone: Phaser.GameObjects.Zone } {
+    const { x, y, width, height } = MINI_SHOP_BIN;
+    const left = x - width / 2;
+    const top = y - height / 2;
     const g = this.scene.add.graphics();
-    g.fillStyle(0x000000, 0.35);
-    g.fillRoundedRect(3, 4, width, height, 10); // тень дверцы на корпусе
-    g.fillStyle(CHROME);
-    g.fillRoundedRect(0, 0, width, height, 10); // хромированная окантовка дверцы
-    g.fillStyle(0x1b2432);
-    g.fillRoundedRect(5, 5, width - 10, height - 10, 7); // тёмное полотно
-    g.fillStyle(0xffffff, 0.03);
-    g.fillRoundedRect(9, 9, width - 18, 2, 1); // узкая светлая кромка под окантовкой — дверца не сливается с лицевой частью
-
-    // Маркиза: хромированная накладка сверху полотна — как окантовка на корпусе торгового автомата.
-    g.fillStyle(CHROME);
-    g.fillRoundedRect(MARQUEE_INSET, MARQUEE_Y, width - 2 * MARQUEE_INSET, MARQUEE_HEIGHT, 2);
+    g.fillStyle(0x000000, 0.45);
+    g.fillRoundedRect(left - BIN_RIM + 2, top - BIN_RIM + 3, width + 2 * BIN_RIM, height + 2 * BIN_RIM, 8); // тень на корпусе
+    g.fillStyle(0x94a3b8);
+    g.fillRoundedRect(left - BIN_RIM, top - BIN_RIM, width + 2 * BIN_RIM, height + 2 * BIN_RIM, 8); // окантовка
+    g.fillStyle(0x020617);
+    g.fillRoundedRect(left, top, width, height, 6); // тёмный проём
+    g.fillStyle(0x334155);
+    g.fillRect(left + 4, top + 3, width - 8, Math.max(3, height * BIN_LID_SHARE - 3)); // крышка
     g.fillStyle(CHROME_LIGHT);
-    g.fillRect(MARQUEE_INSET + 3, MARQUEE_Y + 1, width - 2 * MARQUEE_INSET - 6, 1); // блик на накладке
-    // Шов петли: тёмная щель и тонкая хромовая кромка рядом — дверца читается навешенной, а не наклеенной.
-    g.fillStyle(0x0b0f19, 0.9);
-    g.fillRect(HINGE_X, HINGE_TOP, 2, height - HINGE_TOP - HINGE_BOTTOM);
-    g.fillStyle(CHROME, 0.45);
-    g.fillRect(HINGE_X + 2, HINGE_TOP, 1, height - HINGE_TOP - HINGE_BOTTOM);
-
-    const handleX = width - HANDLE_MARGIN;
-    const handleHeight = height - HANDLE_TOP - HANDLE_BOTTOM;
-    g.fillStyle(0x0b0f19);
-    g.fillRoundedRect(handleX - 4, HANDLE_TOP - 6, HANDLE_WIDTH + 8, handleHeight + 12, 7); // ниша ручки
-    g.fillStyle(CHROME);
-    g.fillRoundedRect(handleX, HANDLE_TOP, HANDLE_WIDTH, handleHeight, 6); // хромированная ручка
-    g.fillStyle(CHROME_LIGHT);
-    g.fillRoundedRect(handleX + 3, HANDLE_TOP + 3, 3, handleHeight - 6, 2); // блик на ручке
-    g.fillStyle(0x475569);
-    g.fillRect(handleX + 9, HANDLE_TOP + 2, 2, handleHeight - 4); // тень справа
-
-    g.setPosition(MINI_SHOP_DOOR.x - width / 2, MINI_SHOP_DOOR.y - height / 2);
-    // Зона нажатия — вся дверца: у Graphics нет своего размера для попадания.
-    g.setInteractive(new Phaser.Geom.Rectangle(0, 0, width, height), Phaser.Geom.Rectangle.Contains);
-    return g;
+    g.fillRect(left + 4, top + height - 3, width - 8, 1); // блик по нижней кромке проёма
+    const zone = this.scene.add.zone(x, y, width + 2 * BIN_RIM, height + 2 * BIN_RIM).setInteractive({ useHandCursor: true });
+    zone.on('pointerdown', () => this.takeFromBin());
+    return { bin: g, zone };
   }
 
   /** Стекло витрины: та же плёнка с бликом, что у торгового автомата, — товар читается за стеклом. */
@@ -239,70 +208,31 @@ export class MiniShop {
     return row === SLOT_ROW ? [t('shelfSlot'), t('shelfSlotWhat')] : [t('socket'), t('socketWhat')];
   }
 
-  /** Подсказка дверцы: пока закрыта — как открыть; открытую дверцу кликом не закрыть, поэтому подсказки нет. */
-  private doorHint(): [string, string] | null {
-    if (this.isDoorOpen) return null;
-    return [t('miniDoor'), t('miniDoorOpen')];
-  }
-
-  /** Клик по товару: покупаем, только когда дверца открыта, — за закрытой товара не видно. */
+  /** Клик по товару: покупаем, когда панель встала. Дверцы нет — товар виден и нажимается сразу. */
   private press(row: number, buy: (row: number) => void): void {
-    if (!this.isOpen || !this.isDoorOpen) return;
+    if (!this.isOpen) return;
     buy(row);
   }
 
-  /**
-   * Клик по дверце или её ручке: только открыть. Закрывается дверца сама — при входе в магазин и при выходе
-   * (open() и clear()), чтобы товар никогда не оставался открытым без хозяина.
-   */
-  private openDoor(): void {
-    if (!this.isOpen || this.isDoorOpen) return; // панель ещё едет или уже уехала; открытую дверцу клик не трогает
-    this.hint.hide(); // табличка «клик — открыть» больше не верна: дверца открывается под курсором
-    this.setDoor(true, true);
-  }
-
-  /**
-   * Дверца в нужное положение. Товар и ценники видны, только пока она открыта; закрываясь, она растёт из петли
-   * и накрывает витрину — поэтому прячем их сразу, а не в конце анимации. Открытая дверца исчезает совсем:
-   * у левого края не остаётся полосы поверх хромовой рамки витрины.
-   */
-  private setDoor(open: boolean, animate: boolean): void {
-    this.isDoorOpen = open;
-    this.scene.tweens.killTweensOf(this.door);
-    this.door.setVisible(true);
-    for (let row = 0; row < ROWS; row++) this.showRow(row);
-    if (!animate) {
-      this.door.setScale(open ? DOOR_OPEN_SCALE : DOOR_CLOSED_SCALE, 1).setVisible(!open);
-      return;
-    }
-    this.scene.tweens.add({
-      targets: this.door,
-      scaleX: open ? DOOR_OPEN_SCALE : DOOR_CLOSED_SCALE,
-      duration: DOOR_TIME,
-      ease: 'Quad.easeInOut',
-      onComplete: () => {
-        if (open) this.door.setVisible(false); // полотно ушло в петлю — до следующего закрытия его нет
-      },
-    });
-  }
-
-  /** Панель поехала: дверца закрыта, товар и ценники прошлого захода убираются сразу, чтобы на съезде не мелькал старый магазин. */
+  /** Панель поехала: товар и ценники прошлого захода убираются сразу, чтобы на съезде не мелькал старый магазин. */
   clear(): void {
-    this.hint.hide(); // ховер «клик — открыть» не должен висеть, если курсор был над дверцей в момент уезда панели
     this.isOpen = false;
-    this.setDoor(false, false);
+    this.dropTaken();
+    for (let row = 0; row < ROWS; row++) {
+      this.prices[row] = null;
+      this.showRow(row);
+    }
   }
 
-  /** Панель встала: автомат перед игроком, но дверца закрыта — её открывает игрок. */
+  /** Панель встала: автомат перед игроком, товар и цены уже видны. */
   open(): void {
-    this.hint.hide(); // подсказка прошлого захода не должна висеть под курсором у нового автомата
     this.isOpen = true;
-    this.setDoor(false, false);
+    for (let row = 0; row < ROWS; row++) this.showRow(row);
   }
 
-  /** Ряд как есть: товар на полке и ценник справа — только при открытой дверце; пустой ряд — ничего. */
+  /** Ряд как есть: товар на полке и ценник справа; пустой ряд — ничего. */
   private showRow(row: number): void {
-    const isShown = this.prices[row] !== null && this.isOpen && this.isDoorOpen;
+    const isShown = this.prices[row] !== null && this.isOpen;
     this.goods[row].setVisible(isShown);
     this.priceIcons[row].setVisible(isShown);
     this.priceTexts[row].setX(MINI_SHOP_PRICE_X + PRICE_TEXT_OFFSET).setVisible(isShown);
@@ -335,7 +265,11 @@ export class MiniShop {
     });
   }
 
-  /** Купили ряд row: из шапки панели к товару летит оплата, покупка гаснет на полке — потом landed(). */
+  /**
+   * Купили ряд row: из шапки панели к товару летит оплата, покупка гаснет на полке — и падает в плашку выдачи.
+   * Потом landed(): сцена ставит покупку на место (открывает клетку полки или гнездо). Плашка держит значок,
+   * пока его не заберут кликом или пока панель не уедет.
+   */
   sell(row: number, landed: () => void): void {
     const good = this.goods[row];
     const fromX = row === SLOT_ROW ? SHOP_HUD.chipX : SHOP_HUD.ticketX; // оплата летит от своего значка в шапке панели
@@ -343,7 +277,7 @@ export class MiniShop {
       const coin = this.scene.add.image(fromX, SHOP_HUD.y, this.priceTexture(row)).setDepth(SHOP_FLY_DEPTH);
       this.scene.tweens.add({
         targets: coin,
-        x: good.x, // к самому товару на полке: щели у автомата больше нет
+        x: good.x, // к самому товару на полке
         y: good.y,
         scale: 0.5,
         delay: index * PAY_STAGGER,
@@ -352,21 +286,59 @@ export class MiniShop {
         onComplete: () => coin.destroy(),
       });
     }
+    const wait = PAY_FLYING * PAY_STAGGER + PAY_FLY_TIME;
     const bought = this.scene.add.image(good.x, good.y, good.texture.key).setScale(good.scaleX).setDepth(POPUP_DEPTH);
     this.prices[row] = null;
     this.showRow(row); // покупки на витрине больше нет
+    // Покупка падает в плашку выдачи — так видно, куда она делась; в плашке остаётся её значок.
     this.scene.tweens.add({
       targets: bought,
-      scale: good.scaleX * 0.4,
-      alpha: 0,
-      delay: PAY_FLYING * PAY_STAGGER + PAY_FLY_TIME,
-      duration: TAKE_TIME,
+      x: MINI_SHOP_BIN.x,
+      y: MINI_SHOP_BIN.y,
+      scale: GOOD_SCALES[row] * 0.6,
+      alpha: 0.2,
+      delay: wait,
+      duration: DROP_TIME,
       ease: 'Quad.easeIn',
       onComplete: () => {
         bought.destroy();
+        this.putTaken(row);
         landed();
       },
     });
+  }
+
+  /** Покупка легла в плашку выдачи: её значок лежит в проёме, клик по плашке её забирает. */
+  private putTaken(row: number): void {
+    this.dropTaken();
+    this.taken = this.scene.add.image(MINI_SHOP_BIN.x, MINI_SHOP_BIN.y, this.textureFor(row)).setScale(GOOD_SCALES[row] * 0.6).setDepth(POPUP_DEPTH);
+    this.taken.setInteractive({ useHandCursor: true });
+    this.taken.on('pointerdown', () => this.takeFromBin());
+  }
+
+  /** Забрали из плашки: значок подпрыгивает и тает. Пусто — клик ничего не делает. */
+  private takeFromBin(): void {
+    const taken = this.taken;
+    if (!taken) return;
+    this.taken = null;
+    taken.disableInteractive();
+    this.scene.tweens.add({
+      targets: taken,
+      y: taken.y - 18,
+      scale: taken.scaleX * 1.2,
+      alpha: 0,
+      duration: POP_TIME,
+      ease: 'Quad.easeOut',
+      onComplete: () => taken.destroy(),
+    });
+  }
+
+  /** Плашка пустеет сразу: покупка прошлого ряда не должна висеть в новой витрине. */
+  private dropTaken(): void {
+    if (!this.taken) return;
+    this.scene.tweens.killTweensOf(this.taken);
+    this.taken.destroy();
+    this.taken = null;
   }
 
   /** Не хватает: ценник ряда трясётся. */

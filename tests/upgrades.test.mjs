@@ -136,7 +136,7 @@ test('0 покупок — нейтральные числа: без улучш�
   assert.equal(effects.shopPriceMul, 1, 'цены магазина обычные');
   assert.equal(effects.offerRows, 0, 'рядов в витрине три');
   assert.equal(effects.ticketShareStart, I.TICKET_SHARE_START, 'первый билет — 40% банка');
-  assert.equal(effects.amuletForChips, false, 'амулет только за билеты');
+  assert.equal(effects.miniCasePriceMul, 1, 'мини-чемодан за фишки по обычной цене');
   assert.equal(effects.freeItemFirstShop, false, 'подарка нет');
   // Четвёртая партия (28г): кассета и прочее.
   assert.equal(effects.rewindKeepsStreak, false, 'откат сбрасывает серию');
@@ -342,11 +342,15 @@ test('третья партия (28в): сетка и магазин — чис�
   assert.equal(I.ticketForChips(1000, 0), 400, 'без №38 — 400');
   assert.equal(I.ticketForChips(10, 0, 1, effects.ticketShareStart), 5, 'не ниже 5 фишек');
 
-  // №39: амулет за фишки — по цене его билетов, не бесплатно; флаг липкий (откат кассетой не возвращает).
-  assert.equal(I.chipsForTickets(3, 400), 1200, '3 билета по 400 фишек = 1200');
-  assert.equal(I.chipsForTickets(1, 400), 400, 'один билет — 400');
-  assert.equal(I.chipsForTickets(0, 400), 5, 'ноль билетов всё равно минимум 5, а не бесплатно');
-  assert.equal(UPG.upgradeEffects(buy('shop-amulet-chips')).amuletForChips, true, '№39 включён');
+  // №39: мини-чемодан вдвое дешевле; цена в фишках — доля рук (amulets.miniCasePrice), флаг липкий (кассета не возвращает).
+  assert.equal(A.miniCasePrice(10000), 5000, 'мини-чемодан: половина фишек на руках');
+  assert.equal(A.miniCasePrice(200), 300, 'мини-чемодан: ниже 300 не опускается');
+  assert.equal(A.miniCasePrice(10000, 0.5), 2500, '№39: вдвое дешевле');
+  assert.equal(A.miniCasePrice(200, 0.5), 300, '№39: нижняя граница не скидывается');
+  assert.equal(A.miniCasePrice(Number.NaN), 300, 'мусор в балансе — нижняя граница');
+  assert.equal(A.MINI_CASE_PLACES, 2, 'в мини-чемодане ровно два места');
+  assert.equal(A.MINI_CASE_PURCHASES, 1, 'амулет за фишки — один за забег');
+  assert.equal(UPG.upgradeEffects(buy('shop-amulet-chips')).miniCasePriceMul, 0.5, '№39 включён');
   assert.equal(S.amuletChipUsedOf({}, false), false, 'ещё не брали');
   assert.equal(S.amuletChipUsedOf({}, true), true, 'текущий флаг важнее плёнки');
   assert.equal(S.amuletChipUsedOf({ amuletChipUsed: true }, false), true, 'старая плёнка не возвращает покупку');
@@ -454,7 +458,7 @@ test('все 40 покупок сразу: прибавки складывают
   assert.equal(effects.shopPriceMul, 0.9, 'магазин −10%');
   assert.equal(effects.offerRows, 1, 'на ряд больше');
   assert.equal(effects.ticketShareStart, 0.3, 'первый билет — 30%');
-  assert.equal(effects.amuletForChips, true, 'амулет за фишки');
+  assert.equal(effects.miniCasePriceMul, 0.5, 'мини-чемодан вдвое дешевле');
   assert.equal(effects.freeItemFirstShop, true, 'подарок в первом магазине');
   // Четвёртая партия (28г).
   assert.equal(effects.rewindKeepsStreak, true, 'серия переживает откат');

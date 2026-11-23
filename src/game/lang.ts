@@ -150,8 +150,8 @@ const TEXTS = {
   upgShopRowWhat: { ru: 'В торговом автомате на один ряд предметов больше', en: 'One more item row in the vending machine' },
   upgShopTicket: { ru: 'Дешёвый билет', en: 'Cheap ticket' },
   upgShopTicketWhat: { ru: 'Первый билет за фишки — 30% банка вместо 40%; шаг роста прежний', en: 'The first ticket for chips costs 30% of your chips instead of 40%; the growth step is unchanged' },
-  upgShopAmulet: { ru: 'Амулет за фишки', en: 'Amulet for chips' },
-  upgShopAmuletWhat: { ru: 'Раз за забег амулет можно купить за фишки по цене его билетов', en: 'Once per run an amulet can be bought for chips at the price of its tickets' },
+  upgShopAmulet: { ru: 'Мини-чемодан дешевле', en: 'Cheaper mini case' },
+  upgShopAmuletWhat: { ru: 'Амулет за фишки в мини-чемодане стоит вдвое меньше', en: 'The amulet for chips in the mini case costs half as much' },
   upgShopGift: { ru: 'Подарок в магазине', en: 'Shop gift' },
   upgShopGiftWhat: { ru: 'В первом магазине забега — один случайный предмет бесплатно', en: 'One random item is free in the first shop of a run' },
   // №42, 44, 45 четвёртой партии (28г): кассета. Числа описаний — те же, что в константах upgrades.ts.
@@ -251,10 +251,11 @@ const TEXTS = {
   actionTickets: { ru: '{0} 🎟', en: '{0} 🎟' },
   actionPick: { ru: 'выбор', en: 'pick' },
   actionRisk: { ru: 'риск', en: 'risk' },
-  // №39: режим покупки амулета за фишки на витрине — кнопка и подписи цен.
-  amuletChipMode: { ru: 'ЗА ФИШКИ', en: 'FOR CHIPS' },
-  amuletTicketMode: { ru: 'ЗА БИЛЕТЫ', en: 'FOR TICKETS' },
-  amuletChipUsed: { ru: 'ИСПОЛЬЗОВАНО', en: 'USED' },
+  // Мини-чемодан за фишки (DONTLIKE п.7): отказы — строкой на экране автомата, без окон.
+  miniCaseNoSocket: { ru: 'НЕТ СВОБОДНОГО ГНЕЗДА', en: 'NO FREE SOCKET' },
+  miniCaseNoChips: { ru: 'МАЛО ФИШЕК', en: 'NOT ENOUGH CHIPS' },
+  miniCaseUsed: { ru: 'АМУЛЕТ ЗА ФИШКИ УЖЕ ВЗЯТ', en: 'CHIP AMULET ALREADY TAKEN' },
+  miniCaseNoCopies: { ru: 'КОПИЙ БОЛЬШЕ НЕТ', en: 'NO MORE COPIES' },
   // №10: долг отложен — сообщение на экране автомата перед магазином.
   debtDeferred: { ru: 'ДОЛГ ОТЛОЖЕН', en: 'DEBT DEFERRED' },
   // №8 (шаг 38): первый долг забега прощён — новость на стекле, чтобы игрок видел, что улучшение сработало.
@@ -322,12 +323,9 @@ const TEXTS = {
   closedSocketHow: { ru: 'Открывается за билеты в витрине', en: 'Opens for tickets in the showcase' },
   socket: { ru: 'Гнездо', en: 'Socket' },
   socketWhat: { ru: 'Ещё одно место для амулета', en: 'One more place for an amulet' },
-  // Дверца маленького автомата в магазине: пока закрыта, витрины не видно — клик по ней открывает.
-  miniDoor: { ru: 'Дверца витрины', en: 'Showcase door' },
-  miniDoorOpen: {
-    ru: 'Клик — открыть: за ней место на полке за фишки и гнездо за билеты',
-    en: 'Click to open: a shelf slot for chips and a socket for tickets behind it',
-  },
+  // Маленький автомат в магазине (DONTLIKE п.8): дверцы нет, товар и цены видны сразу; внизу — плашка выдачи.
+  miniBin: { ru: 'Плашка выдачи', en: 'Pickup tray' },
+  miniBinHow: { ru: 'Сюда падает покупка — клик забирает её', en: 'Purchases drop here — click to take one' },
   ticket: { ru: 'Билет', en: 'Ticket' }, // без эмодзи 🎟: билет в игре — одна красная картинка (decor.ts)
   ticketWhat: { ru: 'На амулеты и гнёзда', en: 'Buys amulets and sockets' },
   // Билет за фишки — четвёртый ряд торгового автомата (шаг 13): цена — доля фишек на руках, и она растёт с покупками.

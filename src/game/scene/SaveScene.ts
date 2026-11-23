@@ -121,7 +121,7 @@ export abstract class SaveScene extends ShopScene {
       devUsed: this.devUsedThisRun, // кассета помнит, что забег трогали в «ТЕСТ»: откат не делает такой рекорд честным
       rescueUsed: this.rescueUsedThisRun, // и что спасение уже было: откат яму второй раз не выпросит
       deferUsed: this.deferredThisRun, // и что отсрочка (улучшение №10) уже потрачена: откат её не возвращает
-      amuletChipUsed: this.amuletChipUsedThisRun, // и что амулет за фишки (№39) уже брали: откат не возвращает
+      amuletChipUsed: this.amuletChipUsedThisRun, // и что амулет за фишки в мини-чемодане уже брали: откат не возвращает
       freeGiftGiven: this.freeGiftGiven, // и что подарок первого магазина (№40) уже выдан
       skullCancelUsed: this.skullCancelUsedThisRun, // и что отмена черепа (№50) уже потрачена
       startSymbol: this.startSymbolId ?? undefined, // №33: выбранный символ переживает откат
@@ -160,7 +160,7 @@ export abstract class SaveScene extends ShopScene {
       rescueUsed: rescueUsedOf(record, this.rescueUsedThisRun),
       // Отсрочка липкая так же: запись до неё не возвращает вторую попытку.
       deferUsed: deferUsedOf(record, this.deferredThisRun),
-      // №39/№40: вторая покупка за фишки и второй подарок откатом не возвращаются.
+      // Мини-чемодан/№40: вторая покупка за фишки и второй подарок откатом не возвращаются.
       amuletChipUsed: amuletChipUsedOf(record, this.amuletChipUsedThisRun),
       freeGiftGiven: freeGiftUsedOf(record, this.freeGiftGiven),
       // №50 (28г): отмена черепа липкая — откат второй не даёт.
@@ -221,7 +221,7 @@ export abstract class SaveScene extends ShopScene {
     this.rescueUsedThisRun = rescueUsedOf(record, this.rescueUsedThisRun);
     // Отсрочка (улучшение №10) — по тому же правилу: текущий флаг с плёнкой, назад её не возвращает.
     this.deferredThisRun = deferUsedOf(record, this.deferredThisRun);
-    // №39 и №40 — липкие так же: откат к записи до них вторую покупку и подарок не возвращает.
+    // Мини-чемодан и №40 — липкие так же: откат к записи до них вторую покупку и подарок не возвращает.
     this.amuletChipUsedThisRun = amuletChipUsedOf(record, this.amuletChipUsedThisRun);
     this.freeGiftGiven = freeGiftUsedOf(record, this.freeGiftGiven);
     // №50 (28г): отмена черепа едет с плёнки; insertTape уже сложил текущее с записью.

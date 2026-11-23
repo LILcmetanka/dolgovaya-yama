@@ -161,6 +161,25 @@ export const START_SOCKETS = 2;
 export const MAX_SOCKETS = 6;
 export const SOCKET_PRICES = [2, 3, 4, 5]; // цена 3-го, 4-го, 5-го и 6-го гнезда в билетах
 export const AMULET_OFFER_SIZE = 3; // столько амулетов в витрине за раз
+/** Мини-чемодан за фишки (`DONTLIKE` п.7): второй, меньше, ровно на два амулета. */
+export const MINI_CASE_PLACES = 2;
+/** Цена амулета в мини-чемодане — такая доля фишек на руках (не доля билетов). */
+export const MINI_CASE_PRICE_SHARE = 0.5;
+/** Ниже этого цена не опускается: у пустого кошелька амулет всё равно стоит MINI_CASE_PRICE_MIN. */
+export const MINI_CASE_PRICE_MIN = 300;
+/** Сколько раз за забег в мини-чемодане покупают: один амулет, как и раньше за фишки (решение СОЛО 23.11.2026). */
+export const MINI_CASE_PURCHASES = 1;
+
+/**
+ * Цена амулета в мини-чемодане: доля фишек на руках (MINI_CASE_PRICE_SHARE), но не меньше MINI_CASE_PRICE_MIN.
+ * mul — скидка улучшения №39 «мини-чемодан дешевле» (0,5); на нижнюю границу она не действует.
+ * Мусор в балансе (NaN, минус) считается нулём: цена тогда — нижняя граница.
+ */
+export function miniCasePrice(balance: number, mul = 1): number {
+  const bank = Number.isFinite(balance) && balance > 0 ? balance : 0;
+  const scale = Number.isFinite(mul) && mul > 0 ? mul : 1;
+  return Math.max(MINI_CASE_PRICE_MIN, Math.round(bank * MINI_CASE_PRICE_SHARE * scale));
+}
 export const TICKETS_PER_DEBT = 1; // столько билетов за каждый отданный долг (с двумя гнёзда и амулеты заполнялись к 3–4-му долгу)
 export const EARLY_PAY_MIN_SPINS = 3; // долг отдан раньше, а прокруток осталось столько или больше — ещё EARLY_PAY_TICKETS
 export const EARLY_PAY_TICKETS = 1;
@@ -240,13 +259,16 @@ export function socketPrice(sockets: number, mul = 1, firstFree = false): number
 }
 
 /**
- * Что в витрине амулетов: AMULET_OFFER_SIZE разных случайных амулетов, которых ещё можно докупить
- * (копий меньше потолка + maxCopiesBonus — улучшение №27).
+ * Что в витрине амулетов: count разных случайных амулетов (по умолчанию AMULET_OFFER_SIZE), которых ещё можно
+ * докупить (копий меньше потолка + maxCopiesBonus — улучшение №27). exclude — их не предлагать: мини-чемодан
+ * не повторяет то, что уже лежит в основном (`DONTLIKE` п.7).
  */
-export function randomAmuletOffer(owned: AmuletId[], maxCopiesBonus = 0): Amulet[] {
-  const pool = AMULETS.filter((amulet) => copiesOf(owned, amulet.id) < maxCopiesOf(amulet, maxCopiesBonus));
+export function randomAmuletOffer(owned: AmuletId[], maxCopiesBonus = 0, count = AMULET_OFFER_SIZE, exclude: readonly AmuletId[] = []): Amulet[] {
+  const pool = AMULETS.filter(
+    (amulet) => copiesOf(owned, amulet.id) < maxCopiesOf(amulet, maxCopiesBonus) && !exclude.includes(amulet.id),
+  );
   const offer: Amulet[] = [];
-  while (offer.length < AMULET_OFFER_SIZE && pool.length > 0) {
+  while (offer.length < count && pool.length > 0) {
     const index = Math.floor(Math.random() * pool.length);
     offer.push(pool.splice(index, 1)[0]);
   }

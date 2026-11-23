@@ -113,7 +113,7 @@ export interface UpgradeGain {
   shopPriceMul?: number; // во столько раз дешевле всё в магазинах (перемножается, №36)
   offerRows?: number; // прибавка рядов предметов в торговом автомате (№37)
   ticketShareStart?: number; // доля фишек за первый билет (№38; шаги роста не меняются)
-  amuletForChips?: number; // 1 — раз за забег амулет можно купить за фишки (№39)
+  miniCasePriceMul?: number; // №39: во столько раз дешевле амулет за фишки в мини-чемодане (перемножается)
   freeItemFirstShop?: number; // 1 — в первом магазине забега один предмет бесплатно (№40)
   // Четвёртая партия (28г): кассета и прочее
   rewindKeepsStreak?: number; // 1 — откат кассетой не сбрасывает серию (№42)
@@ -165,6 +165,7 @@ export const UPGRADE_JACKPOT_WIN_MUL = 1.2; // №34: джекпот плати�
 export const UPGRADE_SHOP_PRICE_MUL = 0.9; // №36: всё в магазине дешевле на 10% (перемножается со скидкой сделки)
 export const UPGRADE_OFFER_ROW_BONUS = 1; // №37: в торговом автомате на один ряд предметов больше
 export const UPGRADE_TICKET_SHARE_START = 0.3; // №38: первый билет за фишки — 30% банка вместо 40%
+export const UPGRADE_MINI_CASE_PRICE_MUL = 0.5; // №39: амулет за фишки в мини-чемодане вдвое дешевле
 // ---------- Числа четвёртой партии (28г) ----------
 export const MEMORY_PICKS_UPGRADE = 1; // №30: ещё один амулет из прошлого забега можно взять на старте
 
@@ -308,7 +309,7 @@ export const UPGRADES: Upgrade[] = [
   },
   {
     id: 'shop-amulet-chips', group: 'shop', name: 'upgShopAmulet', desc: 'upgShopAmuletWhat', repeat: 1,
-    apply: { amuletForChips: 1 },
+    apply: { miniCasePriceMul: UPGRADE_MINI_CASE_PRICE_MUL },
   },
   {
     id: 'shop-gift-item', group: 'shop', name: 'upgShopGift', desc: 'upgShopGiftWhat', repeat: 1,
@@ -394,7 +395,7 @@ export interface UpgradeEffects {
   shopPriceMul: number;
   offerRows: number;
   ticketShareStart: number;
-  amuletForChips: boolean;
+  miniCasePriceMul: number; // №39: цена амулета за фишки в мини-чемодане (1 — как есть)
   freeItemFirstShop: boolean;
   // Четвёртая партия (28г): кассета и прочее
   rewindKeepsStreak: boolean; // №42: откат не сбрасывает серию
@@ -441,7 +442,7 @@ export function neutralUpgrades(): UpgradeEffects {
     shopPriceMul: 1,
     offerRows: 0,
     ticketShareStart: TICKET_SHARE_START,
-    amuletForChips: false,
+    miniCasePriceMul: 1,
     freeItemFirstShop: false,
     rewindKeepsStreak: false,
     freeTape: false,
@@ -512,7 +513,7 @@ export function upgradeEffects(purchased: PurchasedUpgrades): UpgradeEffects {
     if (apply.deathAmuletSave) effects.deathAmuletSave = true;
     if (apply.startJoker) effects.startJoker = true;
     if (apply.startSymbolPick) effects.startSymbolPick = true;
-    if (apply.amuletForChips) effects.amuletForChips = true;
+    if (apply.miniCasePriceMul !== undefined) effects.miniCasePriceMul *= apply.miniCasePriceMul ** count;
     if (apply.freeItemFirstShop) effects.freeItemFirstShop = true;
     if (apply.rewindKeepsStreak) effects.rewindKeepsStreak = true;
     if (apply.freeTape) effects.freeTape = true;

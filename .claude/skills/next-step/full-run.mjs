@@ -466,7 +466,7 @@ function newRun(upgraded = {}, runNumber = 1, chipRecord = 0) {
     startSymbol: startSymbolOf(upgradeEffects), // №33 (28в): выбранный ботом первый символ забега
     startGridGiven: false, // №32/33: первая сетка уже получила джокера и выбранный символ
     skullCancelUsed: false, // №50 (28г): отмена черепа в этом забеге уже потрачена (липкая, как rescueUsed)
-    amuletChipUsed: false, // №39: амулет за фишки в этом забеге уже брали (липкий, откат не снимает)
+    amuletChipUsed: false, // мини-чемодан за фишки: амулет за фишки в этом забеге уже брали (липкий, откат не снимает)
     giftGiven: false, // №40: подарок первого магазина уже выдан (липкий)
     bankKeptThisRound: false, // сделка №10: первый череп в этом раунде кон уже не сжёг
     tookThisRound: false, // сделка №23: «забрать» раз за раунд
@@ -1332,7 +1332,7 @@ function runSave(s) {
     debtCutApplied: s.debtCutApplied, // сколько срезал выкуп долга (№10): откат к записи после выкупа это помнит
     rescueUsed: s.rescueUsed, // липкий, как devUsed: откат спасение не возвращает (save.ts)
     deferUsed: s.deferUsed, // и отсрочка (улучшение №10) липкая: откат вторую попытку не даёт
-    amuletChipUsed: s.amuletChipUsed, // №39: амулет за фишки тоже липкий
+    amuletChipUsed: s.amuletChipUsed, // мини-чемодан: амулет за фишки тоже липкий
     giftGiven: s.giftGiven, // №40: подарок первого магазина тоже
     skullCancelUsed: s.skullCancelUsed, // №50 (28г): отмена черепа тоже липкая
     startSymbol: s.startSymbol, // №33: выбранный символ
@@ -1381,7 +1381,7 @@ function rewind(s, g) {
   const back = clone(saved);
   back.rescueUsed = S.rescueUsedOf(saved, s.rescueUsed); // спасение тоже липкое: откат вторую яму не выпрашивает
   back.deferUsed = S.deferUsedOf(saved, s.deferUsed); // отсрочка (улучшение №10) липкая так же
-  back.amuletChipUsed = S.amuletChipUsedOf(saved, s.amuletChipUsed); // №39 липкий
+  back.amuletChipUsed = S.amuletChipUsedOf(saved, s.amuletChipUsed); // мини-чемодан липкий
   back.giftGiven = S.freeGiftUsedOf(saved, s.giftGiven); // №40 липкий
   back.skullCancelUsed = S.skullCancelUsedOf(saved, s.skullCancelUsed); // №50 липкий: откат вторую отмену не даёт
   // №42 (28г): откат не сбрасывает серию — остаётся большая из текущей и записанной (upgrades.streakAfterRewind).
@@ -1660,25 +1660,19 @@ function openShop(s, st, g, econ, keepDebt = false, checkRound = s.round) {
       g.amuletsBought += 1;
     }
   }
-  // №39 (28в): раз за забег амулет за фишки. Бот берёт самый дорогой доступный (по цене в фишках) из тех,
-  // что вообще взял бы: копия — в своё гнездо, новый — только при свободном гнезде (гнездо за билеты не покупаем).
-  if (closed >= 1 && s.upgradeEffects.amuletForChips && !s.amuletChipUsed) {
-    const chipRate = ticketPrice(s.balance, 0, ticketShopMul, ticketStart); // курс билета этого магазина
-    const candidates = amuletOffer
+  // Мини-чемодан за фишки (DONTLIKE п.7): раз за забег амулет за фишки, цена — доля рук (amulets.miniCasePrice),
+  // улучшение №39 делает её вдвое меньше. Бот берёт первый из тех, что вообще взял бы: копия — в своё гнездо,
+  // новый — только при свободном гнезде (гнездо за билеты не покупаем).
+  if (closed >= 1 && !s.amuletChipUsed) {
+    const price = A.miniCasePrice(s.balance, s.upgradeEffects.miniCasePriceMul);
+    const pick = amuletOffer
       .filter((amulet) => A.countOf(s.amuletCounts, amulet.id) < amuletMaxNow(s, amulet, maxCopiesBonus, shopEffects))
-      .filter((amulet) => s.amulets.some((owned) => owned.id === amulet.id) || s.amulets.length < s.sockets)
-      .map((amulet) => {
-        const tickets = amuletCostNow(s, amulet, shopMul, amuletTicketsOff, shopEffects);
-        return { amulet, price: I.chipsForTickets(tickets, chipRate) };
-      })
-      .filter((option) => option.price <= s.balance)
-      .sort((a, b) => b.price - a.price); // самый дорогой доступный
-    const pick = candidates[0];
-    if (pick) {
-      const socket = s.amulets.findIndex((owned) => owned.id === pick.amulet.id);
-      s.balance -= pick.price;
-      A.addCopy(s.amuletCounts, pick.amulet.id);
-      if (socket < 0) s.amulets.push(pick.amulet);
+      .find((amulet) => s.amulets.some((owned) => owned.id === amulet.id) || s.amulets.length < s.sockets);
+    if (pick && price <= s.balance) {
+      const socket = s.amulets.findIndex((owned) => owned.id === pick.id);
+      s.balance -= price;
+      A.addCopy(s.amuletCounts, pick.id);
+      if (socket < 0) s.amulets.push(pick);
       s.amuletChipUsed = true;
       g.amuletChipsBought += 1;
     }
@@ -1847,7 +1841,7 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon(), upgraded = {},
     roundSpins: 0, maxRoundSpins: 0, roundsOverCap: 0, // прокруток в раунде: максимум и сколько раундов перевалило за потолок
     shops: 0, machineSwaps: 0, // автомат: сколько раз сменился сам в начале раунда
     amuletsBought: 0, socketsBought: 0, itemsBought: 0, slotsBought: 0, drumSpins: 0, paidEarly: 0,
-    amuletChipsBought: 0, giftsGiven: 0, // №39 и №40 (28в): амулет за фишки и подарок первого магазина
+    amuletChipsBought: 0, giftsGiven: 0, // мини-чемодан за фишки и подарок первого магазина (№39, №40)
     ticketsBought: 0, // билеты за фишки (шаг 13): сколько куплено за забег — от него растёт цена следующего
     itemSlotsDenied: 0, // сколько раз предмет не включился: все 4 места в столбике заняты
     roundPaid: 0,
