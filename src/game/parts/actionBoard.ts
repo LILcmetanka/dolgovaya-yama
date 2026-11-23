@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { t } from '../lang';
 import { ACTION_BOARD } from '../layout';
-import { addText, GOLD_TEXT, HINT_TEXT } from '../theme';
+import { addText, GOLD_TEXT } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
 /**
@@ -14,7 +14,6 @@ const BOARD_BORDER = 0xb45309;
 const BOARD_RADIUS = 8;
 const TITLE_FONT = '15px';
 const KEY_FONT = '12px';
-const KEY_BADGE = 22; // сторона кружка с клавишей A — палец тоже попадает
 const ON_ALPHA = 1;
 const OFF_ALPHA = 0.45; // действовать нельзя: табличка бледная
 
@@ -44,10 +43,8 @@ export class ActionBoard {
     }).setOrigin(0, 0.5);
     this.title = title;
     this.sub = sub;
-    // Клавиша A — в кружке, как номер клавиши на карточках улучшений.
-    const badge = scene.add.circle(x + width / 2 - KEY_BADGE / 2 - 8, y, KEY_BADGE / 2, 0x000000, 0.55).setStrokeStyle(1, BOARD_BORDER);
-    const key = addText(scene, badge.x, y, 'A', { fontSize: KEY_FONT, fontStyle: 'bold', color: HINT_TEXT }).setOrigin(0.5);
-    this.labels = [title, sub, key];
+    // Клавишу A на табличке больше не подписываем (DONTLIKE п.11): подсказок про клавиши в интерфейсе нет.
+    this.labels = [title, sub];
     // Подсказка и нажатие — одним помощником: мышью клик по нажатию, пальцем — по отпусканию (долгое — подсказка).
     attachHint(this.box, hint, () => [t('actionsTitle'), t('actionsWhat')], press);
   }

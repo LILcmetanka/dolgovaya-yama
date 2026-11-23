@@ -50,6 +50,10 @@ const MEMORY_ICON_SCALE = 1.2; // значок 36 px из гнезда чуть 
 const MEMORY_DEPTH = GAME_OVER_DEPTH + 1; // над затемнением и заголовком экрана смерти, как кнопка «ЗАНОВО»
 const MEMORY_FILL = 0x0b0b0b;
 const MEMORY_BORDER = 0xfbbf24;
+// Первое спасение за сессию: полная заставка «ВНИМАНИЕ! → АКТИВИРОВАН… → СОБЕРИ…». Дальше — короткое
+// «ПОСЛЕДНИЙ ШАНС» (DONTLIKE п.6): автору не нужно одно и то же объяснение на каждую яму. Флаг живёт модуль —
+// значит, весь сеанс страницы, и переживает «ЗАНОВО», но не перезагрузку.
+let lastChanceIntroSeen = false;
 
 /**
  * Слой Коллектора: в конце раунда к автомату приходит Коллектор. Хватает фишек — из темноты выезжает банкомат, отдаёшь долг,
@@ -70,6 +74,7 @@ export abstract class CollectorScene extends SaveScene {
   private readonly frozenColumns = new Set<number>(); // замороженные столбцы: прокрутка их не трогает
   private isRescueIntro = false; // на экране автомата идёт заставка спасения: ввод закрыт, крутить нельзя (шаг 32)
   private rescueHintLive = false; // подсказка спасения сейчас на стекле: её перерисовывает смена языка (шаг 35)
+  private rescueIntroFull = true; // полная заставка (первая яма сессии) или короткое «ПОСЛЕДНИЙ ШАНС» (DONTLIKE п.6)
   private isRescueWinPending = false; // паттерн собран: новость показана, через мгновение магазин
   private wasShoppingAtVictory = false; // победа застала магазин на экране: «ДАЛЬШЕ» доиграет его выход
   private victoryReached = false; // цель уже взята (порог сверен и пройден): падение баланса ниже chipGoal её не отменяет
@@ -253,7 +258,10 @@ export abstract class CollectorScene extends SaveScene {
     this.enterRescueMood();
     this.refreshHud();
     this.sfx.play('warning', 0.5);
-    // Заставка на экране автомата: «ВНИМАНИЕ!» → «АКТИВИРОВАН ПОСЛЕДНИЙ ШАНС» → «СОБЕРИ ЛЮБОЙ ПАТТЕРН ЧТОБЫ ВЫЖИТЬ».
+    // Заставка на экране автомата: в первую яму сессии — «ВНИМАНИЕ!» → «АКТИВИРОВАН ПОСЛЕДНИЙ ШАНС» →
+    // «СОБЕРИ ЛЮБОЙ ПАТТЕРН ЧТОБЫ ВЫЖИТЬ», дальше — только «ПОСЛЕДНИЙ ШАНС» (DONTLIKE п.6).
+    this.rescueIntroFull = !lastChanceIntroSeen;
+    lastChanceIntroSeen = true;
     this.isRescueIntro = true;
     this.rescueHintLive = false;
     this.collector.showScreenSequence(this.rescueIntroLines(), () => {
@@ -263,6 +271,7 @@ export abstract class CollectorScene extends SaveScene {
 
   /** Строки заставки спасения на текущем языке: их же заново показывает смена языка (шаг 35). */
   private rescueIntroLines(): string[] {
+    if (!this.rescueIntroFull) return [t('rescueLastChanceShort')];
     return [t('rescueAlert1'), t('rescueAlert2'), t('rescueAlert3')];
   }
 
@@ -672,11 +681,12 @@ export abstract class CollectorScene extends SaveScene {
 
   /**
    * После смерти (и только после неё — ни после победы, ни после «ДАЛЬШЕ»): три улучшения из пула, одно бесплатно.
-   * Что можно взять, считает upgrades.upgradeOffers по купленному в прогрессe. Куплено всё — экрана нет,
-   * сразу витрина памяти. Экран — выше экрана смерти: пока он открыт, «ЗАНОВО» не нажать.
-   * Режим разработчика — как у ачивок (BaseScene.unlockAchievement): улучшения не выдаются и не пишутся, и экрана
-   * нет вовсе. devUsedThisRun — липкий след «забег трогали в ТЕСТ»: он тоже закрывает экран, даже если режим
-   * к моменту смерти уже выключили, иначе улучшения фармились бы тестовыми фишками.
+   * Что можно взять, считает upgrades.upgradeOffers по купленному в прогрессe. Куплено всё — списка нет,
+   * сразу витрина памяти. Список идёт на экране автомата (шаг 37): строки названия и описания, справа «ВЗЯТЬ»;
+   * он лежит выше экрана смерти, поэтому «ЗАНОВО» под ним не нажать. Режим разработчика — как у ачивок
+   * (BaseScene.unlockAchievement): улучшения не выдаются и не пишутся, и списка нет вовсе. devUsedThisRun — липкий
+   * след «забег трогали в ТЕСТ»: он тоже закрывает список, даже если режим к моменту смерти уже выключили,
+   * иначе улучшения фармились бы тестовыми фишками.
    */
   private showUpgradeChoice(): void {
     if (isDevMode() || this.devUsedThisRun) {
@@ -685,15 +695,21 @@ export abstract class CollectorScene extends SaveScene {
     }
     const offers = upgradeOffers(this.upgrades);
     if (offers.length === 0) {
-      this.showMemorySlot(); // предлагать нечего: экран улучшений просто не показывается
+      this.showMemorySlot(); // предлагать нечего: список улучшений просто не показывается
       return;
     }
     this.upgradeOfferList = offers;
     this.upgradeSecondPhase = false;
-    this.upgradeScreen.show(offers, {
+    this.upgradeScreen.show(offers.map((upgrade) => this.upgradeRow(upgrade)), {
+      title: t('upgTitle'),
       caption: t('upgFreeHint'),
       onPick: (index) => this.pickUpgrade(index),
     });
+  }
+
+  /** Строка улучшения на экране автомата: название, описание и текстовая кнопка справа. */
+  private upgradeRow(upgrade: Upgrade, right = t('upgTake')): { title: string; desc: string; right: string } {
+    return { title: t(upgrade.name), desc: t(upgrade.desc), right };
   }
 
   /**
@@ -719,11 +735,11 @@ export abstract class CollectorScene extends SaveScene {
         this.closeUpgrades(); // второе брать не из чего или не на что — сразу к памяти и «ЗАНОВО»
         return;
       }
-      this.upgradeScreen.show(rest, {
+      this.upgradeScreen.show(rest.map((upgrade) => this.upgradeRow(upgrade, t('actionTickets', UPGRADE_SECOND_PRICE))), {
+        title: t('upgTitle'),
         caption: t('upgSecondHint', UPGRADE_SECOND_PRICE, this.tickets),
-        close: true, // второе — по желанию: экран закрывают ✕ или клавиша «0»
         onPick: (place) => this.pickUpgrade(place),
-        onClose: () => this.closeUpgrades(),
+        onClose: () => this.closeUpgrades(), // второе — по желанию: список закрывают ✕ или «0»
       });
       this.refreshHud();
       return;

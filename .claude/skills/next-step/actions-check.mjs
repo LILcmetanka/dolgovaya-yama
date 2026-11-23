@@ -168,7 +168,7 @@ try {
   await key('0');
   check((await state()).open === false, 'клавиша «0» закрывает панель');
   await key('A');
-  const closePoint = await pagePoint('g.actionPanel.buttons.length ? { centerX: 569 + 440 - 30, centerY: 320 - 218 } : { centerX: 0, centerY: 0 }');
+  const closePoint = await pagePoint('g.actionPanel.closeZone ? g.actionPanel.closeZone.getBounds() : { centerX: 0, centerY: 0 }');
   await clickAt(closePoint);
   check((await state()).open === false, 'крестик закрывает панель');
   // Табличка на стене — тоже вход.

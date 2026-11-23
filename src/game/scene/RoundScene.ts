@@ -53,7 +53,7 @@ import { RESCUE_SKULL_SHARE } from '../lastChance';
 import { machineAtRoundStart, machineSymbolAllowed, machineWinFactor, MACHINE_SWAP_CHANCE } from '../machines';
 import { phaseAt } from '../phases';
 import { skullShareOf, symbolWeightOf, type WeightContext } from '../skullShare';
-import { CENTER_X, cellX, cellY, DISPLAY, GRID_Y, PAYOUT_WINDOW, SCREEN, SPIN_LAMPS_Y } from '../layout';
+import { CENTER_X, cellX, cellY, DISPLAY, GRID_Y, PAYOUT_WINDOW, SPIN_LAMPS_Y } from '../layout';
 import { evaluateGrid, lockedColumns, ticketCells, type SpinResult } from '../patterns';
 import { revealStepMs, revealSteps, WIN_REVEAL_FADE_SHARE, WIN_REVEAL_HOLD, winGain, type RevealStep } from '../reveal';
 import {
@@ -75,7 +75,8 @@ import {
   type WeightOf,
 } from '../rules';
 import { effectPosition } from '../parts/itemShelf';
-import { addText, BLUE_TEXT, GOLD_TEXT, LAMP_BLUE, LAMP_GOLD, LAMP_GREEN, LAMP_RED, PURPLE_TEXT, RED_TEXT } from '../theme';
+import { ScreenList } from '../parts/screenList';
+import { BLUE_TEXT, GOLD_TEXT, LAMP_BLUE, LAMP_GOLD, LAMP_GREEN, LAMP_RED, PURPLE_TEXT, RED_TEXT } from '../theme';
 import { MachineScene } from './MachineScene';
 
 const COLLECT_DELAY = 1300; // после последней прокрутки: пусть фишки долетят до табло, потом расплата, мс
@@ -91,15 +92,8 @@ const TICKET_BORDER = 0xf59e0b; // рамки на клетках с билет�
 const SPIDER_BORDER = 0xa855f7; // рамки на пауках, когда они съели часть кона
 const REVEAL_NOTE_SPIN = 3; // после третьей прокрутки из тьмы проступает долг (первый забег)
 const MIN_ROUND_SPINS = 1; // сделка «−1 прокрутка» не может оставить раунд без прокруток вовсе
-// Улучшение №50 (28г): плашка «ОТМЕНИТЬ ЧЕРЕП» рядом с полем — видна, только пока череп можно отменить.
-const SKULL_CANCEL_TIME = 1600; // столько висит плашка: не нажали — череп срабатывает как обычно, мс
-const SKULL_CANCEL_Y = SCREEN.y + SCREEN.height / 2 + 16; // между окном сетки (456) и лампочками прокруток (492)
-const SKULL_CANCEL_WIDTH = 260;
-const SKULL_CANCEL_HEIGHT = 26;
-const SKULL_CANCEL_FILL = 0x1f0a0a;
-const SKULL_CANCEL_BORDER = LAMP_RED;
-const SKULL_CANCEL_DEPTH = 12; // над сеткой и всплывашками, под подсказкой (25) и паузой (30)
-const SKULL_CANCEL_FONT = '13px';
+// Улучшение №50 (28г): череп можно отменить — решение показывается списком на экране автомата (шаг 37).
+const SKULL_CANCEL_TIME = 1600; // столько висит список: не нажали — череп срабатывает как обычно, мс
 // Прошлый попап шага гаснет к следующему; POPUP_TIME не трогаем — он для прочих надписей.
 const WIN_POPUP_FADE_MS = 90;
 
@@ -154,10 +148,11 @@ export abstract class RoundScene extends MachineScene {
   private winPopup: Phaser.GameObjects.Text | null = null;
   // Улучшение №4 (шаг 28): бесплатная прокрутка за первый паттерн черепов в раунде — одна на раунд.
   private skullFreeSpinGiven = false;
-  // Улучшение №50 (28г): череп выпал, отмена ещё доступна — итог ждёт нажатия плашки или конца её таймера.
+  // Улучшение №50 (28г): череп выпал, отмена ещё доступна — итог ждёт нажатия строки на экране или конца таймера.
   private pendingSkull: { grid: Grid; result: SpinResult; isBloody: boolean } | null = null;
   private skullCancelTimer: Phaser.Time.TimerEvent | null = null;
-  private skullCancelBox: Phaser.GameObjects.GameObject[] | null = null;
+  private skullCancelList: ScreenList | null = null;
+  protected skullCancelBox: Phaser.GameObjects.GameObject[] | null = null; // что нарисовано: сценарий проверки читает этот набор
   // Действия вне прокрутки (шаг 29): что уже сделано в этом раунде, обмен, лотерея, чистка, проданные
   // символы и выкуп долга. Живёт до конца раунда, в кассету не пишется.
   protected actionState: ActionState = freshActions();
@@ -573,27 +568,26 @@ export abstract class RoundScene extends MachineScene {
   }
 
   /**
-   * Плашка «ОТМЕНИТЬ ЧЕРЕП» рядом с полем: маленькая, висит SKULL_CANCEL_TIME. Нажали — череп отменяется,
-   * не нажали — срабатывает как обычно (resolveSkullCancel(false)). Пока плашка висит, ввод закрыт: прокрутка
-   * ещё не осела, второй рычаг нажать нельзя.
+   * Плашка «ОТМЕНИТЬ ЧЕРЕП» теперь — строка списка на экране автомата (шаг 37), висит SKULL_CANCEL_TIME.
+   * Нажали — череп отменяется, не нажали — срабатывает как обычно (resolveSkullCancel(false)). Пока список висит,
+   * ввод закрыт: прокрутка ещё не осела, второй рычаг нажать нельзя.
    */
   private offerSkullCancel(grid: Grid, result: SpinResult, isBloody: boolean): void {
     this.pendingSkull = { grid, result, isBloody };
     this.isSpinning = true;
     this.sfx.play('warning', 0.25);
-    const box = this.add
-      .rectangle(CENTER_X, SKULL_CANCEL_Y, SKULL_CANCEL_WIDTH, SKULL_CANCEL_HEIGHT, SKULL_CANCEL_FILL, 0.94)
-      .setRounded(7)
-      .setStrokeStyle(2, SKULL_CANCEL_BORDER)
-      .setDepth(SKULL_CANCEL_DEPTH);
-    box.setInteractive({ useHandCursor: true }); // клик — отмена; мимо плашки кликать некуда (ввод и так закрыт)
-    box.on('pointerdown', () => this.resolveSkullCancel(true));
-    const label = addText(this, CENTER_X, SKULL_CANCEL_Y, `${t('skullCancel')} · C`, {
-      fontSize: SKULL_CANCEL_FONT,
-      fontStyle: 'bold',
-      color: GOLD_TEXT,
-    }).setOrigin(0.5).setDepth(SKULL_CANCEL_DEPTH);
-    this.skullCancelBox = [box, label];
+    const list = new ScreenList(this);
+    this.skullCancelList = list;
+    list.show(
+      [{ title: t('skullCancel'), desc: t('skullCancelWhat'), right: t('upgTake'), danger: true }],
+      {
+        title: t('skullCancelTitle'),
+        caption: t('skullCancelCaption'),
+        onPick: () => this.resolveSkullCancel(true),
+        onClose: () => this.resolveSkullCancel(false), // ✕ — не отменять, череп сработает как обычно
+      },
+    );
+    this.skullCancelBox = list.parts;
     this.skullCancelTimer = this.time.delayedCall(SKULL_CANCEL_TIME, () => this.resolveSkullCancel(false));
     this.refreshHud();
   }
@@ -627,11 +621,12 @@ export abstract class RoundScene extends MachineScene {
     this.finishSpinOutcome(pending.grid, pending.result);
   }
 
-  /** Убрать плашку и её таймер: решение снято (нажали, время вышло или забег начинается заново). */
+  /** Убрать список и его таймер: решение снято (нажали, время вышло или забег начинается заново). */
   private clearSkullCancel(): void {
     this.skullCancelTimer?.remove();
     this.skullCancelTimer = null;
-    for (const part of this.skullCancelBox ?? []) part.destroy();
+    this.skullCancelList?.close();
+    this.skullCancelList = null;
     this.skullCancelBox = null;
     this.pendingSkull = null;
   }

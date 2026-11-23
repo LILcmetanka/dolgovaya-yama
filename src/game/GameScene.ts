@@ -26,7 +26,6 @@ import { amuletKey, itemKey, machineKey, see } from './codex';
 import { lang, t, toggleLang, type Lang, type TextKey } from './lang';
 import { BODY, LEVER_GLOW, NOTE, WALL_PANEL, ZOOM } from './layout';
 import { ActionBoard } from './parts/actionBoard';
-import { ActionPanel, type ActionChoice, type ActionRow } from './parts/actionPanel';
 import { AmuletCase } from './parts/amuletCase';
 import { AmuletRack } from './parts/amuletRack';
 import { Atmosphere } from './parts/atmosphere';
@@ -41,7 +40,6 @@ import { AchievementWindow } from './parts/achievementWindow';
 import { ItemShelf } from './parts/itemShelf';
 import { machineSpec, machineWinFactor, machineSymbolAllowed, MACHINES, type MachineId } from './machines';
 import { MachineBadge } from './parts/machineBadge';
-import { MachinePickScreen } from './parts/machinePickScreen';
 import { MiniShop } from './parts/miniShop';
 import { MachinePanel } from './parts/panel';
 import { PauseScreen } from './parts/pauseScreen';
@@ -51,10 +49,9 @@ import { addRotateHint } from './parts/rotateHint';
 import { SettingsPanel } from './parts/settingsPanel';
 import { Shop } from './parts/shop';
 import { SlotScreen } from './parts/slotScreen';
-import { SymbolPickScreen } from './parts/symbolPickScreen';
+import { ScreenList, SCREEN_LIST_OVER_DEATH_DEPTH, type ScreenRow } from './parts/screenList';
 import { WallScreen, type DevActions } from './parts/wallScreen';
 import { Tooltip } from './parts/tooltip';
-import { UpgradeScreen } from './parts/upgradeScreen';
 import { CollectorScene } from './scene/CollectorScene';
 import { ITEMS, MAX_SLOTS, offerRowCount, type ItemId } from './items';
 import { isTutorialDone, markTutorialDone } from './progress';
@@ -86,6 +83,23 @@ const LOTTERY_TEXT: Record<string, TextKey> = {
   'spins-down': 'actionLotterySpinsDown',
 };
 
+/** Строка списка действий: действие, его цена и подсказка. Всё — готовыми строками из lang.ts. */
+interface ActionRow {
+  id: ActionId;
+  title: string;
+  desc: string;
+  price: string; // готовая подпись цены: «2 🎟», «120 фишек», «риск»
+  enabled: boolean; // можно ли нажать (не хватает денег, уже было в раунде, нечего выбирать…)
+  danger?: boolean; // красная строка и красное предупреждение (кража)
+}
+
+/** Символ в списке выбора (обмен и продажа): значок, подпись (вес, цена, клетки) и можно ли его выбрать. */
+interface ActionChoice {
+  symbol: SlotSymbol;
+  note: string;
+  enabled?: boolean;
+}
+
 /**
  * Единственная сцена игры «Долговая яма» — верхний слой: создаёт части автомата и разбирает клавиши.
  * Сама игра — в слоях ниже (папка scene/): BaseScene → PhaseScene → BonusScene → MachineScene → RoundScene → DealerScene → ShopScene →
@@ -95,9 +109,9 @@ export class GameScene extends CollectorScene {
   private corner!: CornerButtons; // значки в углу: «звук выключен», на телефоне ⚙ (пауза) и во весь экран
   private pauseScreen!: PauseScreen; // экран паузы
   private settingsPanel!: SettingsPanel; // настройки на экране паузы
-  private symbolPick!: SymbolPickScreen; // выбор первого символа забега (улучшение №33, шаг 28в)
-  private machinePick!: MachinePickScreen; // выбор стартового автомата (улучшение №49, шаг 28г)
-  private actionPanel!: ActionPanel; // панель шести действий вне прокрутки
+  private symbolPick!: ScreenList; // выбор первого символа забега (улучшение №33) — на экране автомата
+  private machinePick!: ScreenList; // выбор стартового автомата (улучшение №49) — там же
+  private actionPanel!: ScreenList; // шесть действий вне прокрутки — там же (шаг 29)
   private languageAtPause!: Lang; // язык, какой был, когда встали на паузу: после «▶» записка переворачивается, только если он другой
 
   constructor() {
@@ -159,10 +173,10 @@ export class GameScene extends CollectorScene {
     this.dealerTable = new DealerTable(this, (id, symbol) => this.acceptPact(id, symbol), () => this.refusePacts());
     this.effects = new Effects(this);
     this.achievements = new AchievementWindow(this); // окно ачивки — после эффектов: оно ложится поверх сетки
-    this.upgradeScreen = new UpgradeScreen(this); // экран улучшений после смерти — ложится выше окна конца забега
-    this.symbolPick = new SymbolPickScreen(this); // выбор первого символа (№33) — выше всего: игра ждёт выбора
-    this.machinePick = new MachinePickScreen(this); // выбор стартового автомата (№49) — та же манера
-    this.actionPanel = new ActionPanel(this); // панель действий вне прокрутки (шаг 29)
+    this.upgradeScreen = new ScreenList(this, SCREEN_LIST_OVER_DEATH_DEPTH); // улучшения после смерти — на экране автомата, поверх затемнения
+    this.symbolPick = new ScreenList(this); // выбор первого символа (№33) — список на экране автомата
+    this.machinePick = new ScreenList(this); // выбор стартового автомата (№49) — та же манера
+    this.actionPanel = new ScreenList(this); // шесть действий вне прокрутки (шаг 29) — тоже список на экране
     this.actionBoard = new ActionBoard(this, () => this.toggleActions(), this.tooltip); // табличка на стене — вход
     this.pumpAchievements(); // то, что выдано до постройки окна (или до рестарта), показываем теперь
     this.atmosphere = new Atmosphere(this);
@@ -208,32 +222,44 @@ export class GameScene extends CollectorScene {
   }
 
   /**
-   * Улучшение №49 (шаг 28г): перед первым раундом игрок выбирает стартовый автомат из трёх. Панель в стиле №33:
-   * затемнение, три строки со значком, названием и описанием. Отмены и таймаута нет — пока автомат не выбран,
-   * isChoosingMachine держит игру (canAct), а панель ловит клики. Дальше — выбор символа (№33), если он куплен.
+   * Улучшение №49 (шаг 28г): перед первым раундом игрок выбирает стартовый автомат из трёх. Список живёт
+   * на экране автомата (шаг 37): три строки со значком, названием и описанием, справа — «ВЫБРАТЬ».
+   * Отмены и таймаута нет — пока автомат не выбран, isChoosingMachine держит игру (canAct).
+   * Дальше — выбор символа (№33), если он куплен.
    */
   private chooseStartMachine(): void {
     this.isChoosingMachine = true;
-    this.machinePick.show(MACHINES, {
-      caption: t('machinePickWhat'),
-      onPick: (machine) => {
-        this.machineId = machine.id;
-        this.isChoosingMachine = false;
-        this.machinePick.close();
-        this.machineBadge.arrive(machine); // корпус его цвета и значок встают на место
-        see(machineKey(machine.id)); // выбранный автомат уже встречен: в «Кто есть кто» не «???»
-        this.sfx.play('news', 0.3);
-        this.refreshHud();
-        this.startRunAfterPicks();
+    this.machinePick.show(
+      MACHINES.map((machine) => ({
+        title: `${machine.sign === '' ? '◈' : machine.sign} ${t(machine.name)}`,
+        desc: t(machine.description),
+        right: t('screenPick'),
+      })),
+      {
+        title: t('machinePickTitle'),
+        caption: t('machinePickWhat'),
+        onPick: (index) => {
+          const machine = MACHINES[index];
+          if (!machine) return;
+          this.machineId = machine.id;
+          this.isChoosingMachine = false;
+          this.machinePick.close();
+          this.machineBadge.arrive(machine); // корпус его цвета и значок встают на место
+          see(machineKey(machine.id)); // выбранный автомат уже встречен: в «Кто есть кто» не «???»
+          this.sfx.play('news', 0.3);
+          this.refreshHud();
+          this.startRunAfterPicks();
+        },
       },
-    });
+    );
     this.refreshHud();
   }
 
   /**
    * Улучшение №33 (шаг 28в): перед первым раундом игрок выбирает символ. Список — платящие символы, которые уже
-   * есть в автомате, с текущими весами (амулет-память и автомат учтены). Отмены и таймаута нет: пока символ
-   * не выбран, isChoosingSymbol держит игру (canAct), а панель ловит клики. Выбранный символ подставит startGridOf.
+   * есть в автомате, с текущими весами (амулет-память и автомат учтены) — на экране автомата, справа «ВЫБРАТЬ».
+   * Отмены и таймаута нет: пока символ не выбран, isChoosingSymbol держит игру (canAct).
+   * Выбранный символ подставит startGridOf.
    */
   private chooseStartSymbol(): void {
     const base = weightsForRound(1);
@@ -242,17 +268,27 @@ export class GameScene extends CollectorScene {
       .map((symbol) => ({ symbol, weight: symbolWeightOf(symbol, base, this.weightContext(), false) }));
     if (options.length === 0) return; // выбирать не из чего — игра идёт как обычно
     this.isChoosingSymbol = true;
-    this.symbolPick.show(options, {
-      caption: t('symbolPickWhat'),
-      onPick: (symbol) => {
-        this.startSymbolId = symbol.id;
-        this.isChoosingSymbol = false;
-        this.symbolPick.close();
-        this.sfx.play('news', 0.3);
-        this.refreshHud();
-        this.panel.callLever(); // выбран символ — рычаг зовёт крутить
+    this.symbolPick.show(
+      options.map((option) => ({
+        title: option.symbol.sign,
+        desc: `${t('symbolPickWeight', Math.round(option.weight))} · ${t('symbolPickPrice', option.symbol.price)}`,
+        right: t('screenPick'),
+      })),
+      {
+        title: t('symbolPickTitle'),
+        caption: t('symbolPickWhat'),
+        onPick: (index) => {
+          const option = options[index];
+          if (!option) return;
+          this.startSymbolId = option.symbol.id;
+          this.isChoosingSymbol = false;
+          this.symbolPick.close();
+          this.sfx.play('news', 0.3);
+          this.refreshHud();
+          this.panel.callLever(); // выбран символ — рычаг зовёт крутить
+        },
       },
-    });
+    );
     this.refreshHud();
   }
 
@@ -570,11 +606,26 @@ export class GameScene extends CollectorScene {
     this.refreshHud();
   }
 
-  /** Список действий: цена, подсказка и причина, если сейчас нельзя. В ТЕСТ все шесть закрыты (ни выгоды, ни траты). */
+  /**
+   * Список действий на экране автомата: цена, подсказка и причина, если сейчас нельзя.
+   * В ТЕСТ все шесть закрыты (ни выгоды, ни траты). Подсказок про клавиши нет — только строки.
+   */
   private showActionRows(): void {
-    this.actionPanel.show(this.actionRows(), {
+    const rows = this.actionRows();
+    const list: ScreenRow[] = rows.map((row) => ({
+      title: row.title,
+      desc: row.desc,
+      right: row.price,
+      enabled: row.enabled,
+      danger: row.danger,
+    }));
+    this.actionPanel.show(list, {
+      title: t('actionsTitle'),
       caption: t('actionsCaption'),
-      onPick: (id) => this.pickAction(id),
+      onPick: (index) => {
+        const row = rows[index];
+        if (row) this.pickAction(row.id);
+      },
       onDeny: () => this.sfx.play('deny'),
       onClose: () => this.closeActions(),
     });
@@ -680,7 +731,40 @@ export class GameScene extends CollectorScene {
     }
   }
 
-  /** №2, шаг 1: что убрать — платящий символ с последней сетки. «0» — назад к списку. */
+  /**
+   * Список символов на экране автомата (обмен и продажа): значок, подпись под ним и текстовая кнопка справа.
+   * «0» и «←» — назад к списку действий, ✕ — закрыть; на экране подсказок про клавиши нет.
+   */
+  private showSymbolChoices(
+    choices: readonly ActionChoice[],
+    caption: string,
+    right: string,
+    onPickSymbol: (symbol: SlotSymbol) => void,
+    onBack: () => void,
+  ): void {
+    this.actionPanel.show(
+      choices.map((choice) => ({
+        title: choice.symbol.sign,
+        desc: choice.note,
+        right,
+        enabled: choice.enabled !== false,
+      })),
+      {
+        title: t('actionsTitle'),
+        caption,
+        onPick: (index) => {
+          const choice = choices[index];
+          if (choice && choice.enabled !== false) onPickSymbol(choice.symbol);
+          else this.sfx.play('deny');
+        },
+        onDeny: () => this.sfx.play('deny'),
+        onBack,
+        onClose: () => this.closeActions(),
+      },
+    );
+  }
+
+  /** №2, шаг 1: что убрать — платящий символ с последней сетки. «←» — назад к списку. */
   private showExchangeFrom(): void {
     if (!this.canUseActions() || actionUsed(this.actionState, 'exchange') || this.tickets < ACTION_EXCHANGE_TICKETS) {
       this.sfx.play('deny');
@@ -690,13 +774,7 @@ export class GameScene extends CollectorScene {
       symbol,
       note: `${t('symbolPickWeight', Math.round(this.currentSymbolWeight(symbol)))} · ${t('symbolPickPrice', symbol.price)}`,
     }));
-    this.actionPanel.showChoices(choices, {
-      caption: t('actionExchangeFrom', choices.length),
-      onPick: (symbol) => this.showExchangeTo(symbol),
-      onDeny: () => this.sfx.play('deny'),
-      onBack: () => this.showActionRows(),
-      onClose: () => this.closeActions(),
-    });
+    this.showSymbolChoices(choices, t('actionExchangeFrom', choices.length), t('screenPick'), (symbol) => this.showExchangeTo(symbol), () => this.showActionRows());
   }
 
   /** №2, шаг 2: на что менять — платящий символ этого автомата, кроме выбранного. */
@@ -707,13 +785,7 @@ export class GameScene extends CollectorScene {
         symbol,
         note: `${t('symbolPickWeight', Math.round(this.currentSymbolWeight(symbol)))} · ${t('symbolPickPrice', symbol.price)}`,
       }));
-    this.actionPanel.showChoices(choices, {
-      caption: t('actionExchangeTo', choices.length),
-      onPick: (to) => this.applyExchange(from, to),
-      onDeny: () => this.sfx.play('deny'),
-      onBack: () => this.showExchangeFrom(),
-      onClose: () => this.closeActions(),
-    });
+    this.showSymbolChoices(choices, t('actionExchangeTo', choices.length), t('screenPick'), (to) => this.applyExchange(from, to), () => this.showExchangeFrom());
   }
 
   /**
@@ -811,13 +883,7 @@ export class GameScene extends CollectorScene {
       const cells = symbolCells(this.lastGrid, symbol.id);
       return { symbol, note: t('actionSaleNote', symbol.price, cells, salePrice(symbol, cells)) };
     });
-    this.actionPanel.showChoices(choices, {
-      caption: t('actionSalePick', choices.length),
-      onPick: (symbol) => this.applySale(symbol),
-      onDeny: () => this.sfx.play('deny'),
-      onBack: () => this.showActionRows(),
-      onClose: () => this.closeActions(),
-    });
+    this.showSymbolChoices(choices, t('actionSalePick', choices.length), t('screenSell'), (symbol) => this.applySale(symbol), () => this.showActionRows());
   }
 
   /** №8: символ уходит из автомата до конца раунда, фишки — по его цене за каждую клетку на сетке. */
@@ -871,6 +937,16 @@ export class GameScene extends CollectorScene {
 
   // ---------- Ввод ----------
 
+  /** ↑/↓: листают открытый список на экране автомата (закрытые списки стрелки не трогают). */
+  private scrollOpenList(delta: number): void {
+    for (const list of [this.actionPanel, this.upgradeScreen, this.symbolPick, this.machinePick]) {
+      if (list?.isOpen) {
+        list.scroll(delta);
+        return;
+      }
+    }
+  }
+
   private setupKeyboard(): void {
     this.onKey('SPACE', () => this.onSpace(), true);
     this.onKey('ENTER', () => this.onEnter(), true);
@@ -892,6 +968,8 @@ export class GameScene extends CollectorScene {
     });
     this.onKey('A', () => this.toggleActions()); // шаг 29: панель действий вне прокрутки
     this.onKey('C', () => this.cancelSkullByKey()); // шаг 35: отменить висящий череп (№50) с клавиатуры
+    this.onKey('UP', () => this.scrollOpenList(-1)); // шаг 37: список на экране листается стрелками
+    this.onKey('DOWN', () => this.scrollOpenList(1));
     this.onKey('D', () => this.payEarly()); // отдать долг раньше: фишек на табло хватает — записка светится
     this.onKey('RIGHT', () => this.toggleMonitor()); // экран на стене — справа
     this.onKey('LEFT', () => this.lookBack());

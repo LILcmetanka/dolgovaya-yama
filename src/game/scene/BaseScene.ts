@@ -39,7 +39,7 @@ import type { Shop } from '../parts/shop';
 import type { SlotScreen } from '../parts/slotScreen';
 import type { WallScreen } from '../parts/wallScreen';
 import type { Tooltip } from '../parts/tooltip';
-import type { UpgradeScreen } from '../parts/upgradeScreen';
+import type { ScreenList } from '../parts/screenList';
 
 const RECORD_KEY = 'dolgovaya-yama-record'; // ключ рекорда в localStorage
 const CHIP_RECORD_KEY = 'dolgovaya-yama-chip-record'; // ключ рекорда набранных за забег фишек (отметка CHIP_RECORD)
@@ -221,7 +221,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected monitor!: WallScreen; // экран на стене справа: символы, паттерны, как играть
   protected effects!: Effects; // брызги фишек, всплывающие надписи, вспышка с тряской
   protected achievements!: AchievementWindow; // окно полученной ачивки по центру сетки
-  protected upgradeScreen!: UpgradeScreen; // экран улучшений после смерти (шаг 28): три карточки поверх экрана DEATH
+  protected upgradeScreen!: ScreenList; // улучшения после смерти (шаг 28): список на экране автомата (шаг 37)
   protected actionBoard!: ActionBoard; // табличка «ДЕЙСТВИЯ» на стене: вход в панель действий (шаг 29)
   protected reveal: Reveal | null = null; // тьма первого забега; null — обучение пройдено или его нет
 

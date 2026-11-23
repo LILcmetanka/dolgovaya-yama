@@ -135,7 +135,12 @@ try {
       redWash: g.atmosphere.redWash.alpha, redVignette: g.atmosphere.redVignette.alpha,
       lampColor: g.screen.lampColor, itemAlpha: g.itemShelf.items[0].alpha, amuletAlpha: g.amuletRack.badges[0].alpha,
       news: newsLabel ? newsLabel.text : null, newsBox: newsLabel ? b(newsLabel) : null, glassBox: strip ? b(strip) : null,
-      sequenceTitle: sequenceTitle ? sequenceTitle.text : null, sequenceParts: g.collector.screenSequence.length,
+      sequenceTitle: sequenceTitle ? sequenceTitle.text.replace(/\s+/g, ' ').trim() : null,
+      sequenceFont: sequenceTitle ? sequenceTitle.style.fontSize : null,
+      sequenceWrapped: sequenceTitle ? sequenceTitle.getWrappedText().length : 0,
+      sequenceRaw: sequenceTitle ? sequenceTitle.text : null,
+      sequenceBox: sequenceTitle ? b(sequenceTitle) : null,
+      sequenceParts: g.collector.screenSequence.length,
       screenTexts: g.children.list.filter((o) => typeof o.text === 'string' && o.visible).map((o) => o.text),
       hasBar: typeof g.rescueBar !== 'undefined',
       bandRect: g.children.list.some((o) => o.type === 'Rectangle' && Math.round(o.width) === 222 && Math.round(o.height) === 82),
@@ -176,12 +181,23 @@ try {
       g.startRescue(); return 1;
     })()`);
     const seen = [];
+    const fonts = new Set();
+    const wraps = [];
+    const boxes = [];
     for (let i = 0; i < 120; i++) {
       const s = await state();
-      if (s.sequenceTitle && !seen.includes(s.sequenceTitle)) seen.push(s.sequenceTitle);
+      if (s.sequenceTitle && !seen.includes(s.sequenceTitle)) {
+        seen.push(s.sequenceTitle);
+        fonts.add(s.sequenceFont);
+        wraps.push(s.sequenceWrapped);
+        boxes.push(s.sequenceBox);
+      }
       if (!s.intro) break;
       await sleep(80);
     }
+    seen.fonts = [...fonts]; // свойства массива в JSON-сравнение не попадают, проверки читают их отдельно
+    seen.wraps = wraps;
+    seen.boxes = boxes;
     await sleep(150); // экран заставки погас
     return seen;
   };
@@ -241,7 +257,7 @@ try {
   check(live.sequenceTitle === RU_ALERTS[0], 'живой вход: первая строка заставки — ' + JSON.stringify(live.sequenceTitle));
   const liveSpinsBefore = live.spinsLeft;
   await val('window.__g.spin(); 1');
-  await sleep(250);
+  await sleep(500); // красная плёнка проявляется за RESCUE_FADE_TIME (400 мс): успеваем её увидеть
   const liveLocked = await state();
   check(liveLocked.isSpinning === false && liveLocked.spinsLeft === liveSpinsBefore, 'пока заставка идёт, крутить нельзя: прокрутка не началась (прокруток ' + liveSpinsBefore + ' → ' + liveLocked.spinsLeft + ', spinning ' + liveLocked.isSpinning + ', intro ' + liveLocked.intro + ')');
   check(liveLocked.redWash > 0.1, 'живой вход: красный режим включился');
@@ -264,6 +280,11 @@ try {
   check(s1.isRescue === true, 'спасение идёт: isRescue');
   check(s1.spinsLeft === 5, 'на входе 5 прокруток (их ' + s1.spinsLeft + ')');
   check(JSON.stringify(ruIntro) === JSON.stringify(RU_ALERTS), 'RU: заставка тремя сообщениями по порядку: ' + JSON.stringify(ruIntro));
+  check(ruIntro.fonts.length === 1 && ruIntro.fonts[0] === '28px',
+    'RU: кегль у всех строк заставки один, без ужима: ' + JSON.stringify(ruIntro.fonts));
+  check(ruIntro.wraps.some((count) => count >= 2), 'RU: длинная строка переносится, а не ужимается (' + JSON.stringify(ruIntro.wraps) + ' строк)');
+  check(ruIntro.boxes.length > 0 && ruIntro.boxes.every((box) => box.x >= 339 && box.right <= 799 && box.y >= 170 && box.bottom <= 458),
+    'RU: текст заставки целиком в экране автомата 460×288: ' + JSON.stringify(ruIntro.boxes));
   check(s1.hasBar === false, 'плашки-окна нет: rescueBar в сцене отсутствует');
   check(s1.bandRect === false, 'плашки-окна нет: прямоугольника 222×82 в сцене нет');
   check(!s1.screenTexts.includes('СПАСЕНИЕ') && !s1.screenTexts.some((t) => t.startsWith('ОСТАЛОСЬ ПРОКРУТОК')), 'старых строк полосы («СПАСЕНИЕ», «ОСТАЛОСЬ ПРОКРУТОК») на экране нет');
@@ -429,6 +450,16 @@ try {
   check(Math.abs(won.itemAlpha - 1) < 0.02, 'предметы снова видны (alpha ' + won.itemAlpha.toFixed(2) + ')');
   await moveAway();
   await shot('rescue-ru-1280-win.png');
+
+  // ---------- Вторая яма в той же сессии (DONTLIKE п.6): только «ПОСЛЕДНИЙ ШАНС» ----------
+  const repeatIntro = await openRescue(1000, 0, 1);
+  check(JSON.stringify(repeatIntro) === JSON.stringify(['ПОСЛЕДНИЙ ШАНС']),
+    'повторное спасение: полного текста больше нет, только «' + repeatIntro.join(' / ') + '»');
+  check(repeatIntro.wraps[0] === 1 && repeatIntro.fonts[0] === '28px',
+    'повторное спасение: одна строка, тот же кегль 28px (' + JSON.stringify(repeatIntro.wraps) + ', ' + JSON.stringify(repeatIntro.fonts) + ')');
+  await shot('rescue-ru-1280-repeat.png');
+  await val('window.__g.closeRescue(); 1');
+  await sleep(300);
 
   // ---------- 390×844 ----------
   await reload();

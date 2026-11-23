@@ -147,7 +147,7 @@ try {
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 });
     await sleep(500);
   };
-  const clickCard = async (index) => clickAt(await pagePoint(`g.upgradeScreen.cards[${index}].getBounds()`));
+  const clickCard = async (index) => clickAt(await pagePoint(`g.upgradeScreen.rows[${index}].getBounds()`));
   /** Состояние экрана улучшений — по полям сцены, а не по пикселям. */
   const state = async () => JSON.parse((await val(`(() => {
     const g = window.__g;
@@ -155,7 +155,7 @@ try {
     return JSON.stringify({
       gameOver: g.isGameOver,
       open: g.upgradeScreen.isOpen,
-      cards: g.upgradeScreen.cards.length,
+      cards: g.upgradeScreen.rows.length,
       offers: g.upgradeOfferList.map((u) => u.id),
       second: g.upgradeSecondPhase,
       tickets: g.tickets,
@@ -209,7 +209,8 @@ try {
   check(s1.gameOver === true && s1.open === true, 'после KABOOM экран улучшений открыт');
   check(s1.cards === 3 && s1.offers.length === 3, 'три карточки из пула: ' + JSON.stringify(s1.offers));
   check(s1.texts.includes('УЛУЧШЕНИЯ'), 'RU: заголовок экрана — УЛУЧШЕНИЯ');
-  check(s1.texts.includes('Возьми одно бесплатно · 1–3'), 'RU: подпись «Возьми одно бесплатно · 1–3»');
+  check(s1.texts.includes('Возьми одно бесплатно'), 'RU: подпись «Возьми одно бесплатно» (без подсказки клавиш)');
+  check(!s1.texts.some((text) => /1–3|0 или|✕ —/.test(String(text))), 'RU: подсказок про клавиши на экране улучшений нет');
   check(s1.second === false && s1.effectCount === 0, 'до выбора ничего не куплено');
   await shot('upgrades-ru-cards.png');
   // Пробел на этом экране игру не двигает: экран остаётся, забег не начинается заново.
@@ -581,15 +582,16 @@ try {
     return JSON.stringify({ shown, pot: g.pot, streak: g.streak, used: g.skullCancelUsedThisRun,
       plaque: g.skullCancelBox, can: g.canCancelSkull(), spinning: g.isSpinning });
   })()`)) ?? '{}');
-  check(cancel.shown === true, '№50: череп выпал — рядом с полем появилась плашка отмены');
+  check(cancel.shown === true, '№50: череп выпал — на экране автомата появился список с отменой черепа (шаг 37)');
   check(cancel.pot === 400 && cancel.streak === 5, `№50: после отмены кон цел (${cancel.pot}), серия на месте (${cancel.streak})`);
-  check(cancel.used === true && cancel.plaque === null, '№50: отмена одноразовая — флаг стоит, плашка убрана');
+  check(cancel.used === true && cancel.plaque === null, '№50: отмена одноразовая — флаг стоит, список убран');
   check(cancel.can === false && cancel.spinning === false, '№50: второй отмены нет, прокрутка осела');
   const rescueBlocked = await val(`(() => { const g = window.__g;
     const was = g.skullCancelUsedThisRun; g.skullCancelUsedThisRun = false; g.isRescue = true;
     const blocked = g.canCancelSkull(); g.isRescue = false; g.skullCancelUsedThisRun = was; return blocked; })()`);
   check(rescueBlocked === false, '№50: в раунде спасения череп отменить нельзя');
-  // Шаг 35: плашку теперь можно снять клавишей C, и она сама это показывает. Сбрасываем расход отмены и ловим новый череп.
+  // Шаг 37: отмена — строка списка на экране автомата, подсказки про клавиши на ней нет; клавиша C продолжает работать.
+  // Сбрасываем расход отмены и ловим новый череп.
   await val(`(() => { const g = window.__g;
     g.skullCancelUsedThisRun = false; g.pot = 400; g.streak = 5; g.isSpinning = true;
     const cell = { id: 'lemon', sign: '🍋' };
@@ -598,13 +600,18 @@ try {
     return 1; })()`);
   await sleep(150);
   const plaqueText = await val(`(() => { const g = window.__g;
-    const label = (g.skullCancelBox ?? []).find((o) => o.type === 'Text'); return label ? label.text : null; })()`);
+    const label = (g.skullCancelBox ?? []).find((o) => o.type === 'Text' && String(o.text).includes('ОТМЕНИТЬ'));
+    return label ? label.text : null; })()`);
+  const listInside = await val(`(() => { const g = window.__g, L = g.skullCancelList;
+    if (!L) return false;
+    const b = (o) => o.getBounds();
+    return L.rows.every((zone) => { const r = b(zone); return r.left >= 569 - 230 && r.right <= 569 + 230 && r.top >= 314 - 144 && r.bottom <= 314 + 144; }); })()`);
   await key('C');
   const byKey = JSON.parse((await val(`(() => { const g = window.__g; return JSON.stringify({
     pot: g.pot, streak: g.streak, used: g.skullCancelUsedThisRun, plaque: g.skullCancelBox === null, spinning: g.isSpinning,
   }); })()`)) ?? '{}');
-  check(typeof plaqueText === 'string' && plaqueText.includes('C'),
-    '№50 (шаг 35): на плашке показана клавиша C: «' + plaqueText + '»');
+  check(plaqueText === 'ОТМЕНИТЬ ЧЕРЕП' && listInside === true,
+    '№50 (шаг 37): отмена — строка на экране автомата, без подсказки про клавишу: «' + plaqueText + '»');
   check(byKey.pot === 400 && byKey.streak === 5 && byKey.used === true && byKey.plaque === true && byKey.spinning === false,
     `№50 (шаг 35): клавиша C отменила череп — кон ${byKey.pot}, серия ${byKey.streak}, флаг ${byKey.used}, плашка убрана ${byKey.plaque}`);
 

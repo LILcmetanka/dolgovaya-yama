@@ -144,7 +144,7 @@ try {
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 });
     await sleep(500);
   };
-  const clickCard = async (index) => clickAt(await pagePoint(`g.upgradeScreen.cards[${index}].getBounds()`));
+  const clickCard = async (index) => clickAt(await pagePoint(`g.upgradeScreen.rows[${index}].getBounds()`));
   /** Состояние метацикла — по полям сцены и localStorage, а не по пикселям. */
   const state = async () => json(await val(`(() => {
     const g = window.__g;
@@ -154,7 +154,7 @@ try {
       upgrades: g.upgrades, effects: g.upgradeEffects,
       tickets: g.tickets, slots: g.slots, spinsLeft: g.spinsLeft, debt: g.debt, balance: g.balance,
       amulets: g.amulets.map((amulet) => amulet.id),
-      upgOpen: g.upgradeScreen.isOpen, cards: g.upgradeScreen.cards.length, offers: g.upgradeOfferList.map((u) => u.id),
+      upgOpen: g.upgradeScreen.isOpen, cards: g.upgradeScreen.rows.length, offers: g.upgradeOfferList.map((u) => u.id),
       second: g.upgradeSecondPhase,
       memoryBox: g.memoryBox !== null, memoryOptions: g.memoryOptions.map((option) => ({ id: option.amulet.id, price: option.price })),
       memoryChips: g.memoryChips.length, memoryTitle: g.memoryTitleText ? g.memoryTitleText.text : null,

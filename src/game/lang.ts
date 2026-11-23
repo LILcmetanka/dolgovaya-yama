@@ -53,6 +53,8 @@ const TEXTS = {
   rescueAlert1: { ru: 'ВНИМАНИЕ!', en: 'WARNING!' },
   rescueAlert2: { ru: 'АКТИВИРОВАН ПОСЛЕДНИЙ ШАНС', en: 'LAST CHANCE ACTIVATED' },
   rescueAlert3: { ru: 'СОБЕРИ ЛЮБОЙ ПАТТЕРН ЧТОБЫ ВЫЖИТЬ', en: 'LAND ANY PATTERN TO SURVIVE' },
+  // Вторая и следующие ямы за сессию: полное объяснение уже было — только короткая строка (DONTLIKE п.6).
+  rescueLastChanceShort: { ru: 'ПОСЛЕДНИЙ ШАНС', en: 'LAST CHANCE' },
   rescueFreezeHint: { ru: 'ЗАМОРОЗЬ СТОЛБЕЦ · ОСТАЛОСЬ {0}', en: 'FREEZE A COLUMN · {0} LEFT' },
   rescuePullHint: { ru: 'КРУТИ РЫЧАГ · ОСТАЛОСЬ {0}', en: 'PULL THE LEVER · {0} LEFT' },
   rescueLastSpin: { ru: 'ПОСЛЕДНЯЯ ПРОКРУТКА', en: 'LAST SPIN' },
@@ -65,8 +67,8 @@ const TEXTS = {
   // Улучшения после смерти (шаг 28, upgrades.ts): экран после гибели, три карточки, второе — за 6 билетов
   // из остатка погибшего забега. Название и описание каждого улучшения — ниже, ключами из upgrades.ts.
   upgTitle: { ru: 'УЛУЧШЕНИЯ', en: 'UPGRADES' },
-  upgFreeHint: { ru: 'Возьми одно бесплатно · 1–3', en: 'Take one for free · 1–3' },
-  upgSecondHint: { ru: 'Второе — {0} билетов · у тебя {1} · 0 или ✕ — не брать', en: 'A second one is {0} tickets · you have {1} · 0 or ✕ to skip' },
+  upgFreeHint: { ru: 'Возьми одно бесплатно', en: 'Take one for free' },
+  upgSecondHint: { ru: 'Второе — {0} билетов · у тебя {1}', en: 'A second one is {0} tickets · you have {1}' },
   upgSecondNoTickets: { ru: 'На второе не хватает билетов', en: 'Not enough tickets for a second one' },
   upgGroupSpins: { ru: 'ПРОКРУТКИ', en: 'SPINS' },
   upgGroupDebt: { ru: 'ДОЛГ', en: 'DEBT' },
@@ -169,17 +171,23 @@ const TEXTS = {
   upgMachinePickWhat: { ru: 'В начале забега выбираешь автомат из трёх', en: 'At the start of a run, pick a machine out of three' },
   upgSkullCancel: { ru: 'Отмена черепа', en: 'Skull cancel' },
   upgSkullCancelWhat: { ru: 'Раз за забег можно отменить выпавший череп: кон цел, серия на месте', en: 'Once per run you can cancel a landed skull: the pot is safe and the streak stays' },
-  // Выбор стартового автомата (улучшение №49): панель в начале забега, в стиле выбора символа (№33).
+  // Выбор стартового автомата (улучшение №49): список в начале забега на экране автомата (шаг 37).
   machinePickTitle: { ru: 'СТАРТОВЫЙ АВТОМАТ', en: 'STARTING MACHINE' },
   machinePickWhat: { ru: 'Выбери автомат: с него начнётся забег', en: 'Pick a machine: the run starts on it' },
-  // Отмена черепа (улучшение №50): маленькая плашка рядом с полем, видна, только пока череп можно отменить.
+  // Отмена черепа (улучшение №50): строка списка на экране автомата, видна, только пока череп можно отменить.
   skullCancel: { ru: 'ОТМЕНИТЬ ЧЕРЕП', en: 'CANCEL SKULL' },
+  skullCancelTitle: { ru: 'ЧЕРЕП ВЫПАЛ', en: 'A SKULL LANDED' },
+  skullCancelCaption: { ru: 'Раз за забег — можно оставить кон и серию', en: 'Once per run — keep the pot and the streak' },
+  skullCancelWhat: { ru: 'Кон и серия останутся как были', en: 'The pot and the streak stay as they were' },
   skullCancelled: { ru: 'ЧЕРЕП ОТМЕНЁН', en: 'SKULL CANCELLED' },
-  // №33: выбор первого символа забега — минимальная панель со списком символов и их весами.
+  // №33: выбор первого символа забега — список символов и их весов на экране автомата.
   symbolPickTitle: { ru: 'ПЕРВЫЙ СИМВОЛ', en: 'FIRST SYMBOL' },
   symbolPickWhat: { ru: 'Выбери символ: он выпадет на первой сетке забега', en: 'Pick a symbol: it lands on the first grid of the run' },
   symbolPickWeight: { ru: 'вес {0}', en: 'weight {0}' },
   symbolPickPrice: { ru: 'цена {0}', en: 'pays {0}' },
+  // Общие подписи списков на экране автомата (шаг 37): текстовая кнопка справа.
+  screenPick: { ru: 'ВЫБРАТЬ', en: 'PICK' },
+  screenSell: { ru: 'ПРОДАТЬ', en: 'SELL' },
   // Действия вне прокрутки (шаг 29): табличка на стене и панель с шестью действиями.
   actionsSign: { ru: 'ДЕЙСТВИЯ', en: 'ACTIONS' },
   actionsSignHint: { ru: 'между прокрутками', en: 'between spins' },
@@ -189,16 +197,16 @@ const TEXTS = {
     en: 'Symbol swap, lottery, servicing, theft, symbol sale, debt exchange. Each once per round',
   },
   actionsCaption: {
-    ru: 'Каждое действие — раз в раунде · 1–6, 0 или ✕ — закрыть',
-    en: 'Each action once a round · 1–6, 0 or ✕ to close',
+    ru: 'Каждое действие — раз в раунде',
+    en: 'Each action once a round',
   },
   actionExchange: { ru: 'ОБМЕН СИМВОЛА', en: 'SYMBOL SWAP' },
   actionExchangeWhat: {
     ru: 'Поменять веса двух символов автомата местами до конца раунда',
     en: 'Swap the weights of two machine symbols until the round ends',
   },
-  actionExchangeFrom: { ru: 'Что убрать · 1–{0}, 0 — назад', en: 'What to swap out · 1–{0}, 0 to go back' },
-  actionExchangeTo: { ru: 'На что менять · 1–{0}, 0 — назад', en: 'What to swap in · 1–{0}, 0 to go back' },
+  actionExchangeFrom: { ru: 'Что убрать: символ с сетки', en: 'What to swap out: a symbol on the grid' },
+  actionExchangeTo: { ru: 'На что менять: символ автомата', en: 'What to swap in: a machine symbol' },
   actionExchangeDone: { ru: 'СИМВОЛ ОБМЕНЯН', en: 'SYMBOL SWAPPED' },
   actionLottery: { ru: 'ЛОТЕРЕЯ', en: 'LOTTERY' },
   actionLotteryWhat: {
@@ -229,7 +237,7 @@ const TEXTS = {
     ru: 'Убрать символ из автомата и получить его цену за каждую клетку на сетке',
     en: 'Remove a symbol from the machine and get its price for every cell on the grid',
   },
-  actionSalePick: { ru: 'Что продать · 1–{0}, 0 — назад', en: 'What to sell · 1–{0}, 0 to go back' },
+  actionSalePick: { ru: 'Что продать: символ с сетки', en: 'What to sell: a symbol on the grid' },
   actionSaleNote: { ru: 'цена {0} × {1} кл. = {2}', en: 'pays {0} × {1} cells = {2}' },
   actionSaleDone: { ru: 'СИМВОЛ ПРОДАН', en: 'SYMBOL SOLD' },
   actionDebt: { ru: 'ДОЛГОВАЯ БИРЖА', en: 'DEBT EXCHANGE' },
