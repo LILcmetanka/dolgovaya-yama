@@ -5,6 +5,7 @@
  */
 
 import { AMULETS, type AmuletId } from './amulets';
+import { MEMORY_PICKS_BASE } from './memory';
 import { PATTERNS } from './patterns';
 import { achievementsOf, isAchievementId, type AchievementId } from './achievements';
 import { isDevMode } from './devmode';
@@ -14,13 +15,15 @@ export interface Progress {
   tutorialDone: boolean; // первый забег с тьмой пройден — больше её не показываем
   patterns: string[]; // какие паттерны уже выпадали: на стекле видно только их (кассета возвращает набор с записи)
   achievements: string[]; // какие ачивки получены: копятся навсегда, «Заново» и конец забега их не сбрасывают
-  memoryAmulet: AmuletId | null; // амулет, выбранный после смерти: стоит в гнезде следующего забега; null — памяти нет
+  runAmulets: AmuletId[]; // амулеты последнего законченного забега: из них игрок выбирает память на старте (шаг 38)
+  runAmuletPicks: number; // сколько из них можно взять бесплатно: 1 обычный, больше — №30 и сделка №34
   upgrades: PurchasedUpgrades; // улучшения после смерти (шаг 28): что куплено и по сколько раз
   runs: number; // сколько забегов начато: по нему улучшение №8 прощает первый долг каждый пятый забег
 }
 
 const PROGRESS_KEY = 'dolgovaya-yama-progress'; // ключ прогресса в localStorage
-const DEFAULT_PROGRESS: Progress = { tutorialDone: false, patterns: [], achievements: [], memoryAmulet: null, upgrades: {}, runs: 0 }; // новый игрок: тьма в первом забеге, стекло пустое, ачивок, памяти и улучшений нет
+// Новый игрок: тьма в первом забеге, стекло пустое, ачивок, памяти и улучшений нет. Памяти нет — и списка амулетов нет.
+const DEFAULT_PROGRESS: Progress = { tutorialDone: false, patterns: [], achievements: [], runAmulets: [], runAmuletPicks: MEMORY_PICKS_BASE, upgrades: {}, runs: 0 };
 
 /**
  * Свежий прогресс нового игрока. Копия, а не общий DEFAULT_PROGRESS: у него внутри массивы и объект улучшений,
@@ -68,26 +71,45 @@ function loadProgress(): Progress {
   }
 }
 
+/** Список амулетов из сохранения: не массив — пусто, чужие id и повторы отбрасываются. */
+function amuletIdsOf(value: unknown): AmuletId[] {
+  if (!Array.isArray(value)) return [];
+  const result: AmuletId[] = [];
+  for (const id of value) if (isAmuletId(id) && !result.includes(id)) result.push(id);
+  return result;
+}
+
+/** Сколько амулетов из прошлого забега можно взять: целое ≥ 1, мусор — один (правило игры). */
+function picksOf(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < MEMORY_PICKS_BASE) return MEMORY_PICKS_BASE;
+  return Math.floor(value);
+}
+
 /**
  * Разобрать сохранение в Progress. Чужое и битое молча отбрасывается по полям: старые ключи игры без новых полей
  * читаются как «так и не было». Общая дверь у загрузки и у слияния перед записью.
  */
 function parseProgress(saved: unknown): Progress {
   if (typeof saved !== 'object' || saved === null) return freshProgress();
-  const { tutorialDone, patterns, achievements, memoryAmulet, upgrades, runs } = saved as {
+  const { tutorialDone, patterns, achievements, runAmulets, runAmuletPicks, memoryAmulet, upgrades, runs } = saved as {
     tutorialDone?: unknown;
     patterns?: unknown;
     achievements?: unknown;
+    runAmulets?: unknown;
+    runAmuletPicks?: unknown;
     memoryAmulet?: unknown;
     upgrades?: unknown;
     runs?: unknown;
   };
+  // Старая память (одно поле memoryAmulet до шага 38) читается как список из одного амулета: игрок не теряет выбор.
+  const legacy = isAmuletId(memoryAmulet) ? [memoryAmulet] : [];
+  const amulets = amuletIdsOf(runAmulets);
   return {
     tutorialDone: typeof tutorialDone === 'boolean' ? tutorialDone : DEFAULT_PROGRESS.tutorialDone,
     patterns: patternsOf(patterns),
     achievements: achievementsOf(achievements),
-    // Старый ключ без поля читается как «памяти нет»: память появилась шагом 26.
-    memoryAmulet: isAmuletId(memoryAmulet) ? memoryAmulet : null,
+    runAmulets: amulets.length > 0 ? amulets : legacy,
+    runAmuletPicks: picksOf(runAmuletPicks),
     // Улучшения появились шагом 28: старая запись без них читается как «ничего не куплено».
     upgrades: upgradesOf(upgrades),
     // Счётчик забегов — тоже шаг 28; мусор в нём считается нулём (тогда прощения долга просто не будет).
@@ -112,11 +134,13 @@ function upgradesOf(value: unknown): PurchasedUpgrades {
   return result;
 }
 
-/** Память амулета стёрли в этой вкладке (её уже забрал новый забег): чужую при слиянии не возвращаем. */
-let memoryConsumed = false;
+/**
+ * Память амулетов записала эта вкладка (забег закончился здесь). После этого её снимок главнее хранилища —
+ * иначе пустой список (забег без амулетов) при слиянии снова подхватил бы старый чужой и предлагал устаревшее.
+ */
+let memoryWritten = false;
 
-/** Прогресс, который сейчас лежит в хранилище (может быть от другой вкладки). Нет или битый — null. */
-function readStoredProgress(): Progress | null {
+/** Прогресс, который сейчас лежит в хранилище (может быть от другой вкладки). Нет или битый — null. */function readStoredProgress(): Progress | null {
   try {
     const raw = localStorage.getItem(PROGRESS_KEY);
     return raw === null ? null : parseProgress(JSON.parse(raw));
@@ -132,7 +156,7 @@ function readStoredProgress(): Progress | null {
  *   • паттерны и ачивки — объединение: открытое навсегда не откатывается;
  *   • улучшения — по каждому id большая из двух покупок (потолок один, upgrades.upgradesOf его и держит);
  *   • номер забега — большее число: счётчик забегов не идёт назад;
- *   • память амулета — своя, если она непустая или здесь её уже забрали; иначе чужая.
+ *   • память амулетов — своя, если список непустой; иначе чужая (этот забег кончился без амулетов).
  */
 function mergeProgress(mine: Progress, stored: Progress): Progress {
   const patterns = [...mine.patterns];
@@ -145,11 +169,13 @@ function mergeProgress(mine: Progress, stored: Progress): Progress {
     const other = upgrades[id as UpgradeId] ?? 0;
     upgrades[id as UpgradeId] = Math.max(other, count);
   }
+  const mineMemory = memoryWritten || mine.runAmulets.length > 0;
   return {
     tutorialDone: mine.tutorialDone || stored.tutorialDone,
     patterns,
     achievements,
-    memoryAmulet: mine.memoryAmulet !== null ? mine.memoryAmulet : memoryConsumed ? null : stored.memoryAmulet,
+    runAmulets: mineMemory ? mine.runAmulets : stored.runAmulets,
+    runAmuletPicks: mineMemory ? mine.runAmuletPicks : stored.runAmuletPicks,
     upgrades,
     runs: Math.max(mine.runs, stored.runs),
   };
@@ -240,20 +266,26 @@ export function grantAchievement(id: AchievementId): boolean {
   return true;
 }
 
-/** Какой амулет перенесён из погибшего забега в следующий (экран смерти, шаг 26). null — памяти нет. */
-export function rememberedAmulet(): AmuletId | null {
-  return progress.memoryAmulet;
+/** Память амулетов следующего забега: амулеты последнего законченного забега и сколько из них можно взять. */
+export interface RunMemory {
+  amulets: AmuletId[];
+  picks: number;
+}
+
+/** Какие амулеты прошлого забега предложить новому — и сколько из них можно взять (шаг 38). Копия. */
+export function nextRunMemory(): RunMemory {
+  return { amulets: [...progress.runAmulets], picks: progress.runAmuletPicks };
 }
 
 /**
- * Запомнить амулет для следующего забега. Память одна: новый выбор заменяет старый, null стирает её.
- * Чужое id не пишем — читалось бы как «память есть», а выдать было бы нечего.
+ * Запомнить амулеты закончившегося забега (зовут CollectorScene.kaboom и startVictory). Новый забег раздаёт их
+ * на старте: один бесплатно, больше — с №30 и сделкой №34. Чужие id не пишем — выдавать было бы нечего.
  */
-export function setRememberedAmulet(id: AmuletId | null): void {
-  const next = isAmuletId(id) ? id : null;
-  memoryConsumed = next === null; // память забрали — при слиянии с другой вкладкой её не вернём
-  if (progress.memoryAmulet === next) return; // уже так — лишняя запись в localStorage каждый забег ни к чему
-  progress.memoryAmulet = next;
+export function setNextRunMemory(amulets: readonly AmuletId[], picks: number): void {
+  memoryWritten = true;
+  const list = amuletIdsOf([...amulets]);
+  progress.runAmulets = list;
+  progress.runAmuletPicks = picksOf(picks);
   saveProgress();
 }
 

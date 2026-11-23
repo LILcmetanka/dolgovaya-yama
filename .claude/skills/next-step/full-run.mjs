@@ -32,8 +32,9 @@
 //                        UPGRADE_PRIORITY). Числа и правила — из upgrades.ts, здесь только выбор бота.
 //   SIM_META=<n> — прогон с метапрогрессией: n последовательных забегов, после каждого бота берёт лучшее доступное
 //                        улучшение; в отчёте отдельная строка «улучшения». Без SIM_UPGRADES/SIM_META поведение прежнее.
-//   SIM_RECORD=<фишки> — рекорд лучшего забега по фишкам для улучшения №46 «старт с 5% рекорда» (по умолчанию 0:
-//                        в обычном прогоне рекорда нет, в SIM_META он копится от забега к забегу сам).
+//   SIM_RECORD=<фишки> — рекорд лучшего забега по фишкам. Улучшение №46 «старт с 5% рекорда» удалено шагом 38
+//                        (DONTLIKE п.10), поэтому на старт рекорд больше не влияет: ручка и поле startChips оставлены
+//                        для старых замеров и отчёта (всегда 0).
 //   SIM_ACTIONS=0      — бот не пользуется действиями вне прокрутки (шаг 29): эталон «как до действий».
 // streakReset — не переменная: это второй вариант в обычном прогоне, BASE_STRATEGY + { streakReset: true } («серия
 // сгорает в конце раунда», в коде — переходит). Числа из двух строк одного прогона сравнимы между собой.
@@ -189,10 +190,10 @@ const SIM_UPGRADES = upgradesFromEnv('SIM_UPGRADES');
 const SIM_META = upgradesFromEnv('SIM_META');
 /** Сколько последних забегов меты показывать отдельной строкой: там улучшения уже накоплены. */
 const META_TAIL = 50;
-/** Рекорд фишек для улучшения №46 (SIM_RECORD): 0 — рекорда нет, как в первом забеге. */
+/** Рекорд фишек (SIM_RECORD): №46 удалён шагом 38 — на старт он не влияет, поле нужно только отчёту. */
 const SIM_RECORD = wholeNumberFromEnv('SIM_RECORD', 0);
 
-/** Целое ≥ 0 из окружения (SIM_RECORD): мусор — падаем сразу, иначе улучшение молча не работало бы. */
+/** Целое ≥ 0 из окружения (SIM_RECORD): мусор — падаем сразу, иначе отчёт молча врал бы. */
 function wholeNumberFromEnv(name, fallback) {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
@@ -429,8 +430,9 @@ function startSymbolOf(effects) {
 
 /**
  * Новый забег. upgraded — что куплено в прогрессe (экран после смерти, шаг 28); runNumber — номер забега
- * (улучшение №8 прощает первый долг каждый пятый); chipRecord — рекорд фишек лучшего забега (улучшение №46:
- * с него начинается табло). Без покупок числа прежние: upgradeEffects({}) нейтральны.
+ * (улучшение №8 прощает первый долг каждый пятый). chipRecord оставлен для старых замеров: улучшение №46
+ * «5% рекорда к стартовым фишкам» удалено шагом 38 (DONTLIKE п.10), стартовых фишек от рекорда больше нет.
+ * Без покупок числа прежние: upgradeEffects({}) нейтральны.
  */
 function newRun(upgraded = {}, runNumber = 1, chipRecord = 0) {
   const upgradeEffects = UPG.upgradeEffects(upgraded);
@@ -439,11 +441,11 @@ function newRun(upgraded = {}, runNumber = 1, chipRecord = 0) {
   const start = forgiven ? 0 : R.startDebt(upgradeEffects.startDebtMul);
   // №21 (28б): мест на полке — START_SLOTS плюс улучшение, но не больше MAX_SLOTS (как BaseScene.resetState).
   const slots = Math.min(I.MAX_SLOTS, I.START_SLOTS + Math.max(0, upgradeEffects.itemSlots));
-  // №46 (28г): стартовые фишки от рекорда — в earned НЕ идут, как в BaseScene.resetState (рекорд не раздувается).
-  const startChips = UPG.recordStartChips(chipRecord, upgradeEffects.recordStartShare);
+  // Шаг 38: №46 удалён — стартовых фишек от рекорда нет (табло начинается с нуля, как в BaseScene.resetState).
+  const startChips = 0;
   return {
     round: 1, debtRound: 1, debtBase: start, deferAdded: 0, debtOps: [], debt: start, balance: startChips,
-    startChips, // сколько дал №46 — в отчёте видно, пришло ли улучшение в забег
+    startChips, // всегда 0: №46 удалён шагом 38 (поле оставлено для отчёта)
     tickets: upgradeEffects.startTickets, // №16 (28б): старт с билетом
     spinsLeft: R.SPINS_PER_ROUND, pot: 0, streak: 0,
     slots, shelf: new Array(slots).fill(null), effects: I.noEffects(), sockets: A.START_SOCKETS,
@@ -1914,7 +1916,7 @@ export function runGame(st = BASE_STRATEGY, econ = defaultEcon(), upgraded = {},
     // Итоги цели — с последнего состояния забега (после отката кассетой они тоже с записи).
     earned: s.earned, peakBalance: s.peakBalance, millionRound: s.millionRound, millionSeconds: s.millionSeconds,
     recordRound: s.recordRound, recordSeconds: s.recordSeconds,
-    startChips: s.startChips ?? 0, // №46 (28г): сколько забег получил от рекорда на старте
+    startChips: s.startChips ?? 0, // всегда 0: №46 «5% рекорда» удалён шагом 38
     // Чем забег кончился — для разбора победителей: раунд, долг, баланс, амулеты (копии не важны, берём id).
     finalRound: s.round, finalDebt: s.debt, finalBalance: s.balance, finalAmulets: A.amuletIdsFrom(s.amuletCounts),
   };
@@ -2028,7 +2030,7 @@ export function summarizeRuns(runs) {
     crownEvents: mean((r) => r.crownEvents), freeMax: mean((r) => r.freeMax),
     // Улучшения после смерти (шаг 28): сколько раз долг отложен (№10) и сколько бесплатных прокруток дал первый череп (№4).
     deferred: mean((r) => r.deferred), skullFree: mean((r) => r.skullFree),
-    // Шаг 28г: стартовые фишки от рекорда (№46) и отмены черепа (№50).
+    // Шаг 28г: стартовые фишки от рекорда (№46, удалён шагом 38 — всегда 0) и отмены черепа (№50).
     startChips: mean((r) => r.startChips ?? 0),
     skullCancels: mean((r) => r.skullCancels),
     // Действия вне прокрутки (шаг 29): сколько раз бот применил каждое, сколько краж провалено (и кончилось смертью),
@@ -2053,7 +2055,7 @@ export function summarizeRuns(runs) {
 export function summarize(st, games, econ, upgraded = PRELOADED_UPGRADES) {
   const runs = [];
   // Номер забега — 1…games: улучшение №8 прощает первый долг каждый пятый забег, как в игре по progress.runs.
-  // Рекорд для №46 берётся из SIM_RECORD: в обычном прогоне его нет (как в первом забеге игрока).
+  // Рекорд (SIM_RECORD) на старт больше не влияет: №46 удалён шагом 38, startChips всегда 0.
   for (let i = 0; i < games; i++) runs.push(runGame(st, econ, upgraded, i + 1, SIM_RECORD));
   return summarizeRuns(runs);
 }
@@ -2066,7 +2068,7 @@ export function summarize(st, games, econ, upgraded = PRELOADED_UPGRADES) {
 export function metaRuns(games, st = BASE_STRATEGY, econ = defaultEcon(), tailSize = META_TAIL) {
   const runs = [];
   const purchased = {};
-  let chipRecord = 0; // №46 (28г): рекорд фишек копится от забега к забегу — как localStorage в игре
+  let chipRecord = 0; // рекорд фишек копится от забега к забегу; №46 удалён (шаг 38) — на старт не влияет
   for (let index = 0; index < games; index++) {
     const run = runGame(st, econ, { ...purchased }, index + 1, chipRecord);
     runs.push(run);

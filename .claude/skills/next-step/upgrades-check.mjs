@@ -21,14 +21,14 @@
  *  9) вторая партия (28б): старт с билетом, +1 место, скидка на предметы, скидка на амулеты, бесплатное гнездо,
  *     редкий амулет в первом магазине;
  * 10) №27: копия сверх базового потолка покупается, вторая сверх нового — нет;
- * 11) №30: амулет не сгорает при смерти — перенос бесплатный даже без билетов;
+ * 11) №30: на старте забега из прошлого берут два амулета вместо одного (шаг 38);
  * 12) третья партия (28в): №31 доля черепов −1 п.п., №33 панель выбора первого символа и блокировка игры;
  * 13) №37 четыре ряда витрины, №38 билет 30% (и скидка №36), №40 подарок на полке без списания фишек;
  * 14) №39 покупка амулета за фишки и отказ второй раз за забег;
  * 15) №42/№45 откат: серия 9 пережила перемотку, 10 билетов на записи + 4 потраченных вернулись как 14;
  * 16) №44 кассета в магазине за 0 билетов;
- * 17) №46 рекорд 1 000 000 даёт 50 000 на табло, в «набрано» не идёт; без улучшения — 0;
- * 18) №47 билет за ачивку и отказ второму за ту же ачивку в том же забеге;
+ * 17) №46 «5% рекорда» удалён шагом 38: старое сохранение с ним читается как «не куплено», стартовый баланс 0;
+ * 18) №47 «билет за ачивку» удалён шагом 38: ачивка билетов не даёт, старое сохранение читается;
  * 19) №48 сорок начал раунда без смены автомата;
  * 20) №49 панель трёх автоматов, выбор и порядок «автомат → символ» вместе с №33;
  * 21) №50 плашка отмены черепа: кон и серия целы, второй отмены нет, в спасении нельзя.
@@ -72,7 +72,7 @@ const EFFECTS = {
   'amulet-copy': { amuletMaxCopies: 1 },
   'amulet-first-socket': { firstSocketFree: true },
   'amulet-first-rare': { rareAmuletFirstShop: true },
-  'amulet-survives-death': { deathAmuletSave: true },
+  'amulet-survives-death': { deathAmuletSave: true }, // шаг 38: на старте можно взять два амулета из прошлого забега
   // Третья партия (28в): сетка и магазин.
   'grid-skull-share': { skullShareDelta: -0.01 },
   'grid-start-joker': { startJoker: true },
@@ -88,8 +88,6 @@ const EFFECTS = {
   'tape-keeps-streak': { rewindKeepsStreak: true },
   'tape-free': { freeTape: true },
   'tape-refund-tickets': { rewindRefundsTickets: true },
-  'record-start-chips': { recordStartShare: 0.05 },
-  'achievement-ticket': { achievementTickets: 1 },
   'machine-no-swap': { noMachineSwap: true },
   'machine-start-pick': { startMachinePick: true },
   'skull-cancel': { skullCancelOnce: true },
@@ -166,25 +164,29 @@ try {
     });
   })()`)) ?? '{}');
   /** Состояние прогресса в localStorage (до перезагрузки страницы). */
+  // Покупки для нового забега. Память амулетов очищается: иначе список на старте висел бы поверх сценария.
   const setPurchases = async (purchases) => {
     await val(`(() => { const p = JSON.parse(localStorage.getItem('${PROGRESS_KEY}') ?? 'null') ?? {};
-      p.upgrades = ${JSON.stringify(purchases)}; p.tutorialDone = true;
+      p.upgrades = ${JSON.stringify(purchases)}; p.tutorialDone = true; p.runAmulets = []; p.runAmuletPicks = 1;
       localStorage.setItem('${PROGRESS_KEY}', JSON.stringify(p)); return 1; })()`);
   };
   const reload = async () => { await send('Page.reload'); await sleep(4000); };
-  /** Стартовые выборы забега: сначала автомат (№49), потом символ (№33) — порядок как в игре. */
+  /** Стартовые выборы забега: автомат (№49), память амулетов (шаг 38), символ (№33) — порядок как в игре.
+   *  Память здесь закрываем отказом: блоки проверяют другое, а амулеты им не нужны. */
   const passPicks = async () => {
     await val('if (window.__g.machinePick.isOpen) window.__g.machinePick.press(0); 1');
+    await sleep(300);
+    await val('if (window.__g.amuletPick.isOpen) window.__g.amuletPick.press(9); 1');
     await sleep(300);
     await val('if (window.__g.symbolPick.isOpen) window.__g.symbolPick.press(0); 1');
     await sleep(300);
   };
   /** Смерть: KABOOM 1,8 с + взрыв 0,9 с + затемнение 0,7 с — но ждём не «по часам», а пока экран улучшений
-   *  (или витрина памяти, если предлагать нечего) действительно не появится: в headless бывает медленнее. */
+   *  (или сам экран смерти, если предлагать нечего) действительно не появится: в headless бывает медленнее. */
   const die = async () => {
     await val('window.__g.finishTutorial(); window.__g.kaboom(); 1');
     for (let i = 0; i < 48; i++) {
-      if (await val('window.__g.upgradeScreen.isOpen || window.__g.memoryBox !== null')) break;
+      if (await val('window.__g.canRestartWithSpace === true')) break; // экран смерти дорисован (после KABOOM)
       await sleep(250);
     }
     await sleep(400);
@@ -347,16 +349,24 @@ try {
   check(copy.first === copy.base + 1, `№27: копия сверх базового потолка куплена (${copy.first} при базе ${copy.base})`);
   check(copy.second === copy.first, '№27: потолок поднят ровно на 1 — сверх него не покупают');
 
-  // ---------- 11: №30 — амулет не сгорает при смерти ----------
+  // ---------- 11: №30 — на старте забега берут два амулета вместо одного (шаг 38) ----------
+  await val(`localStorage.setItem('${PROGRESS_KEY}', JSON.stringify({ tutorialDone: true, patterns: [], achievements: [],
+    runAmulets: ['cherryPit', 'bell'], runAmuletPicks: 2, upgrades: { 'amulet-survives-death': 1 }, runs: 1 })); 1`);
   await reload();
-  await val('window.__g.devGiveAmulet("cherryPit"); window.__g.tickets = 0; 1');
-  await sleep(600);
-  check((await val('window.__g.amulets.length')) === 1, '№30: в новом забеге амулет в гнезде');
-  await die();
-  await key('1'); // бесплатное улучшение — билетов 0, поэтому экран закроется сам и покажет витрину памяти
-  await sleep(800);
-  const memory = JSON.parse((await val('JSON.stringify(window.__g.memoryOptions.map((option) => ({ id: option.amulet.id, price: option.price })))')) ?? '[]');
-  check(memory.length === 1 && memory[0].price === 0, `№30: амулет переносится бесплатно даже без билетов (${JSON.stringify(memory)})`);
+  const memory = JSON.parse((await val(`(() => { const g = window.__g; return JSON.stringify({
+    open: g.amuletPick.isOpen, rows: g.amuletPick.rows.length, picks: g.startAmuletPicks, blocked: g.canAct(),
+    title: g.children.list.some((o) => o.type === 'Text' && o.text === 'АМУЛЕТ ИЗ ПРОШЛОГО ЗАБЕГА'),
+  }); })()`)) ?? '{}');
+  check(memory.open === true && memory.rows === 2, `№30: список памяти на старте, вариантов ${memory.rows}`);
+  check(memory.picks === 2 && memory.blocked === false, '№30: с улучшением разрешено два амулета, пока список открыт — игра ждёт');
+  check(memory.title === true, '№30: RU-заголовок «АМУЛЕТ ИЗ ПРОШЛОГО ЗАБЕГА»');
+  await val('window.__g.amuletPick.press(0); 1');
+  await sleep(500);
+  const memoryAfter = JSON.parse((await val('(() => { const g = window.__g; return JSON.stringify({ open: g.amuletPick.isOpen, rows: g.amuletPick.rows.length, picks: g.startAmuletPicks, amulets: g.amulets.map((a) => a.id) }); })()')) ?? '{}');
+  check(memoryAfter.open === true && memoryAfter.rows === 1 && memoryAfter.picks === 1, '№30: после первого взятого список открыт с остатком');
+  await val('window.__g.amuletPick.press(0); 1');
+  await sleep(500);
+  check((await val('window.__g.amulets.length')) === 2, '№30: в гнёздах оба амулета из прошлого забега');
   await shot('upgrades-batch-b-memory.png');
 
   // ---------- 12: №31 — доля черепов ниже ровно на 1 п.п. ----------
@@ -501,31 +511,28 @@ try {
   check(freeTape.tickets === 0, `№44: ни одного билета не потрачено (${freeTape.tickets})`);
   await shot('upgrades-tape-free.png');
 
-  // ---------- 17: №46 — рекорд даёт 5% к стартовым фишкам ----------
+  // ---------- 17: №46 «5% рекорда» удалён (шаг 38, DONTLIKE п.10): старое сохранение читается ----------
   await val("localStorage.setItem('dolgovaya-yama-chip-record', '1000000'); 1");
-  await setPurchases({ 'record-start-chips': 1 });
+  await setPurchases({ 'record-start-chips': 1 }); // чужое id: в пуле его больше нет
   await reload();
   await passPicks();
-  const recordStart = JSON.parse((await val('(() => { const g = window.__g; return JSON.stringify({ balance: g.balance, earned: g.earned }); })()')) ?? '{}');
-  check(recordStart.balance === 50000, `№46: 5% рекорда 1 000 000 = 50 000 на табло (${recordStart.balance})`);
-  check(recordStart.earned === 0, '№46: стартовые фишки не идут в «набрано» — рекорд не раздувается');
-  await setPurchases({});
-  await reload();
-  check((await val('window.__g.balance')) === 0, '№46: без улучшения стартовый баланс 0');
+  const recordStart = JSON.parse((await val(`(() => { const g = window.__g; return JSON.stringify({
+    balance: g.balance, earned: g.earned, purchases: Object.keys(g.upgrades), hasField: 'recordStartShare' in g.upgradeEffects,
+  }); })()`)) ?? '{}');
+  check(recordStart.balance === 0 && recordStart.earned === 0, `№46: удалённое улучшение не даёт фишек (баланс ${recordStart.balance})`);
+  check(recordStart.purchases.length === 0 && recordStart.hasField === false, '№46: старое сохранение с ним читается как «не куплено»');
 
-  // ---------- 18: №47 — каждая ачивка даёт билет один раз за забег ----------
-  await setPurchases({ 'achievement-ticket': 1 });
+  // ---------- 18: №47 «билет за ачивку» удалён (шаг 38, DONTLIKE п.1) ----------
+  await setPurchases({ 'achievement-ticket': 1 }); // тоже чужое id
   await reload();
   await passPicks();
   const ticket = JSON.parse((await val(`(() => { const g = window.__g; const before = g.tickets;
     g.unlockAchievement('theEnd');
-    const first = g.tickets;
-    g.unlockAchievement('theEnd'); // повторная проверка той же ачивки — второго билета нет
-    return JSON.stringify({ before, first, second: g.tickets, given: g.achievementTicketGiven });
+    return JSON.stringify({ before, after: g.tickets, purchases: Object.keys(g.upgrades),
+      hasList: 'achievementTicketGiven' in g, hasField: 'achievementTickets' in g.upgradeEffects });
   })()`)) ?? '{}');
-  check(ticket.first === ticket.before + 1, `№47: первая ачивка забега дала билет (${ticket.before} → ${ticket.first})`);
-  check(ticket.second === ticket.first, '№47: за ту же ачивку в том же забеге второго билета нет');
-  check(JSON.stringify(ticket.given) === JSON.stringify(['theEnd']), `№47: список отданных ачивок помнит theEnd (${JSON.stringify(ticket.given)})`);
+  check(ticket.after === ticket.before, `№47: ачивка билетов не даёт (${ticket.before} → ${ticket.after})`);
+  check(ticket.purchases.length === 0 && ticket.hasList === false && ticket.hasField === false, '№47: ни списка, ни поля улучшения не осталось');
 
   // ---------- 19: №48 — смена автомата выключена ----------
   await setPurchases({ 'machine-no-swap': 1 });
@@ -645,8 +652,25 @@ try {
   await val(`(() => { const p = JSON.parse(localStorage.getItem('${PROGRESS_KEY}') ?? '{}'); p.runs = 4; localStorage.setItem('${PROGRESS_KEY}', JSON.stringify(p)); return 1; })()`);
   await reload();
   await passPicks();
-  const fifthRun = JSON.parse((await val('(() => { const g = window.__g; return JSON.stringify({ runs: g.runsPlayed, debt: g.debt }); })()')) ?? '{}');
+  const fifthRun = JSON.parse((await val('(() => { const g = window.__g; return JSON.stringify({ runs: g.runsPlayed, debt: g.debt, forgiven: g.isDebtForgiven }); })()')) ?? '{}');
   check(fifthRun.runs === 5 && fifthRun.debt === 0, `№8: пятый забег — первый долг прощён (забег ${fifthRun.runs}, долг ${fifthRun.debt})`);
+  check(fifthRun.forgiven === true, '№8: сцена знает, что долг прощён — на стекле будет «ДОЛГ ПРОЩЁН»');
+  // DONTLIKE п.15: прощённый долг не должен приводить к последнему шансу. Раунд 1 с нулём фишек: банкомата нет,
+  // GOOD LUCK и спасения нет, сразу магазин; второй долг — обычный 540.
+  const freeDebt = JSON.parse((await val(`(() => { const g = window.__g;
+    g.spinsLeft = 0; g.balance = 0; g.endOfSpins(false);
+    return JSON.stringify({ rescue: g.isRescue, gameOver: g.isGameOver, debt: g.debt, balance: g.balance, hasDebtDue: g.hasEnoughForDebt() });
+  })()`)) ?? '{}');
+  check(freeDebt.rescue === false && freeDebt.gameOver === false, '№8/п.15: долг 0 — спасения нет и забег не кончен');
+  check(freeDebt.hasDebtDue === true, '№8/п.15: нулевой долг считается оплаченным (hasEnoughForDebt)');
+  await sleep(2500);
+  const afterFree = JSON.parse((await val(`(() => { const g = window.__g; return JSON.stringify({
+    shop: g.isShopOpen, rescue: g.isRescue, atm: g.collector.isAtmOut, round: g.round, debt: g.debt,
+    goodLuck: g.children.list.some((o) => typeof o.text === 'string' && o.text === 'GOOD LUCK'),
+  }); })()`)) ?? '{}');
+  check(afterFree.rescue === false && afterFree.goodLuck === false, '№8/п.15: GOOD LUCK и спасения при долге 0 нет');
+  check(afterFree.atm === false, '№8/п.15: банкомат при долге 0 не выезжает — платить нечего (DONTLIKE п.5)');
+  check(afterFree.shop === true && afterFree.round === 2 && afterFree.debt === 540, `№8/п.15: сразу магазин, второй долг 540 (раунд ${afterFree.round}, долг ${afterFree.debt})`);
   await reload();
   await passPicks();
   const sixthRun = JSON.parse((await val('(() => { const g = window.__g; return JSON.stringify({ runs: g.runsPlayed, debt: g.debt }); })()')) ?? '{}');

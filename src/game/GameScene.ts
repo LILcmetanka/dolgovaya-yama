@@ -25,6 +25,7 @@ import { DEV_CHIPS, DEV_TICKETS, isDevMode } from './devmode';
 import { amuletKey, itemKey, machineKey, see } from './codex';
 import { lang, t, toggleLang, type Lang, type TextKey } from './lang';
 import { BODY, LEVER_GLOW, NOTE, WALL_PANEL, ZOOM } from './layout';
+import { memoryOptions } from './memory';
 import { ActionBoard } from './parts/actionBoard';
 import { AmuletCase } from './parts/amuletCase';
 import { AmuletRack } from './parts/amuletRack';
@@ -111,6 +112,7 @@ export class GameScene extends CollectorScene {
   private settingsPanel!: SettingsPanel; // настройки на экране паузы
   private symbolPick!: ScreenList; // выбор первого символа забега (улучшение №33) — на экране автомата
   private machinePick!: ScreenList; // выбор стартового автомата (улучшение №49) — там же
+  private amuletPick!: ScreenList; // выбор амулета из прошлого забега (шаг 38) — там же, бесплатно
   private actionPanel!: ScreenList; // шесть действий вне прокрутки — там же (шаг 29)
   private languageAtPause!: Lang; // язык, какой был, когда встали на паузу: после «▶» записка переворачивается, только если он другой
 
@@ -159,7 +161,6 @@ export class GameScene extends CollectorScene {
       this.tooltip,
     );
     this.amuletRack = new AmuletRack(this, this.sockets, this.tooltip);
-    if (!data.tape) this.grantMemoryAmulet(); // новый забег: амулет, выбранный на прошлой смерти, — сразу в гнездо
     // Полка с включёнными предметами и гнёзда амулетов — до Коллектора: его банкомат, GOOD LUCK и экран KABOOM ложатся поверх всего, что нарисовано раньше.
     this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
     this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip, offerRowCount(this.upgradeEffects.offerRows));
@@ -176,6 +177,7 @@ export class GameScene extends CollectorScene {
     this.upgradeScreen = new ScreenList(this, SCREEN_LIST_OVER_DEATH_DEPTH); // улучшения после смерти — на экране автомата, поверх затемнения
     this.symbolPick = new ScreenList(this); // выбор первого символа (№33) — список на экране автомата
     this.machinePick = new ScreenList(this); // выбор стартового автомата (№49) — та же манера
+    this.amuletPick = new ScreenList(this); // память амулетов (шаг 38): выбор на старте забега, бесплатно
     this.actionPanel = new ScreenList(this); // шесть действий вне прокрутки (шаг 29) — тоже список на экране
     this.actionBoard = new ActionBoard(this, () => this.toggleActions(), this.tooltip); // табличка на стене — вход
     this.pumpAchievements(); // то, что выдано до постройки окна (или до рестарта), показываем теперь
@@ -199,26 +201,110 @@ export class GameScene extends CollectorScene {
     this.setupPause();
     this.refreshHud();
     if (data.tape) this.playTape();
-    else this.startRunPicks(); // новый забег: №49 — выбор автомата, за ним №33 — выбор символа
+    else {
+      this.loadStartAmulets(); // память амулетов (шаг 38): что предлагать на старте — амулеты прошлого забега
+      this.startRunPicks(); // новый забег: №49 — автомат, за ним память амулетов, за ней №33 — символ
+    }
   }
 
   /**
-   * Начало нового забега: улучшение №49 (28г) сначала даёт выбрать автомат, потом №33 — первый символ.
-   * Порядок именно такой: автомат решает, какие символы вообще есть в игре, поэтому выбирать символ раньше
-   * автомата было бы неправдой. Без улучшений всё как раньше — рычаг зовёт крутить.
+   * Начало нового забега: сначала выбор автомата (№49), потом память амулетов (шаг 38), потом первый символ (№33).
+   * Порядок именно такой: автомат решает, какие символы вообще есть в игре и какие амулеты полезны; амулет
+   * меняет веса — его берут до выбора символа, где эти веса и показаны. Без улучшений всё как раньше — рычаг зовёт крутить.
    */
   private startRunPicks(): void {
     if (this.upgradeEffects.startMachinePick) {
       this.chooseStartMachine();
       return;
     }
+    this.startRunAmuletPick();
+  }
+
+  /**
+   * Память амулетов (шаг 38, DONTLIKE п.2): на старте каждого забега — список амулетов прошлого забега, бесплатно.
+   * Отказаться можно (✕): гнёзда остаются пусты. С №30 «Амулет в памяти» берут на один больше — тогда список
+   * открывается второй раз с остатком (сделка №34 даёт свою прибавку так же — её число уже в picks).
+   */
+  private startRunAmuletPick(): void {
+    if (this.startAmuletPicks <= 0 || memoryOptions(this.startAmulets).length === 0) {
+      this.finishStartAmuletPick();
+      return;
+    }
+    this.chooseStartAmulet();
+  }
+
+  /** Список памяти на экране автомата: значок и название, описание и текстовая кнопка справа (шаг 37). */
+  private chooseStartAmulet(): void {
+    const options = memoryOptions(this.startAmulets);
+    if (options.length === 0 || this.startAmuletPicks <= 0 || this.amulets.length >= this.sockets) {
+      this.finishStartAmuletPick();
+      return;
+    }
+    this.isChoosingAmulet = true;
+    this.amuletPick.show(
+      options.map((option) => ({
+        title: `${option.amulet.sign} ${t(option.amulet.name)}`,
+        desc: t(option.amulet.description),
+        right: t('screenPick'),
+      })),
+      {
+        title: t('memoryPickTitle'),
+        caption: this.startAmuletPicks > 1 ? t('memoryPickMore', this.startAmuletPicks) : t('memoryPickWhat'),
+        onPick: (index) => this.takeStartAmulet(options[index]?.amulet.id ?? null),
+        onClose: () => this.finishStartAmuletPick(), // отказ: памяти в этом забеге нет
+      },
+    );
+    this.refreshHud();
+  }
+
+  /** Взяли амулет из памяти: он встаёт в гнездо бесплатно; можно взять ещё один — если улучшение/сделка разрешают. */
+  private takeStartAmulet(id: AmuletId | null): void {
+    if (id === null || !this.grantStartAmulet(id)) {
+      this.sfx.play('deny');
+      return;
+    }
+    this.sfx.play('buy');
+    this.startAmulets = this.startAmulets.filter((owned) => owned !== id);
+    this.startAmuletPicks = Math.max(0, this.startAmuletPicks - 1);
+    this.amuletPick.close();
+    this.isChoosingAmulet = false;
+    this.refreshHud();
+    if (this.startAmuletPicks > 0 && this.amulets.length < this.sockets && memoryOptions(this.startAmulets).length > 0) {
+      this.chooseStartAmulet(); // №30/сделка №34: второй амулет — снова список
+      return;
+    }
+    this.finishStartAmuletPick();
+  }
+
+  /** Память закончилась (взяли или отказались): список закрыт, дальше выбор символа или рычаг. */
+  private finishStartAmuletPick(): void {
+    this.amuletPick.close();
+    this.isChoosingAmulet = false;
+    this.startAmulets = [];
+    this.startAmuletPicks = 0;
+    this.refreshHud();
     this.startRunAfterPicks();
   }
 
   /** Выборы закончились (или их нет): №33 — символ, иначе рычаг зовёт крутить. */
   private startRunAfterPicks(): void {
-    if (this.upgradeEffects.startSymbolPick) this.chooseStartSymbol();
-    else this.panel.callLever(); // новый забег: пока ни разу не крутил — рычаг зовёт (после отката кассетой он не нужен)
+    if (this.upgradeEffects.startSymbolPick) {
+      this.chooseStartSymbol();
+      return;
+    }
+    this.beginRunPlay();
+  }
+
+  /**
+   * Всё выбрано — забег пошёл. №8: если первый долг прощён, на стекле новость «ДОЛГ ПРОЩЁН» — иначе игрок
+   * не видит, что улучшение сработало (DONTLIKE п.15: «не сработало» — его просто не было видно).
+   */
+  private beginRunPlay(): void {
+    if (this.isDebtForgiven) {
+      this.screen.announceNews(t('debtForgiven'));
+      this.sfx.play('news', 0.3);
+    }
+    this.panel.callLever(); // новый забег: пока ни разу не крутил — рычаг зовёт (после отката кассетой он не нужен)
   }
 
   /**
@@ -248,7 +334,7 @@ export class GameScene extends CollectorScene {
           see(machineKey(machine.id)); // выбранный автомат уже встречен: в «Кто есть кто» не «???»
           this.sfx.play('news', 0.3);
           this.refreshHud();
-          this.startRunAfterPicks();
+          this.startRunAmuletPick(); // автомат выбран — дальше память амулетов (шаг 38), потом символ
         },
       },
     );
@@ -285,7 +371,7 @@ export class GameScene extends CollectorScene {
           this.symbolPick.close();
           this.sfx.play('news', 0.3);
           this.refreshHud();
-          this.panel.callLever(); // выбран символ — рычаг зовёт крутить
+          this.beginRunPlay(); // выбран символ — забег пошёл
         },
       },
     );
@@ -879,9 +965,10 @@ export class GameScene extends CollectorScene {
       this.sfx.play('deny');
       return;
     }
+    const multiplier = this.multiplier(); // текущий разгон серии: продажа соразмерна ему (шаг 38, DONTLIKE п.4)
     const choices: ActionChoice[] = this.gridSymbols().map((symbol) => {
       const cells = symbolCells(this.lastGrid, symbol.id);
-      return { symbol, note: t('actionSaleNote', symbol.price, cells, salePrice(symbol, cells)) };
+      return { symbol, note: t('actionSaleNote', symbol.price, cells, multiplier, salePrice(symbol, cells, multiplier)) };
     });
     this.showSymbolChoices(choices, t('actionSalePick', choices.length), t('screenSell'), (symbol) => this.applySale(symbol), () => this.showActionRows());
   }
@@ -889,7 +976,7 @@ export class GameScene extends CollectorScene {
   /** №8: символ уходит из автомата до конца раунда, фишки — по его цене за каждую клетку на сетке. */
   private applySale(symbol: SlotSymbol): void {
     const cells = symbolCells(this.lastGrid, symbol.id);
-    const price = salePrice(symbol, cells);
+    const price = salePrice(symbol, cells, this.multiplier()); // цена × клетки × множитель серии (с потолком)
     if (!this.canUseActions() || actionUsed(this.actionState, 'sale') || price <= 0) {
       this.sfx.play('deny');
       return;
@@ -939,7 +1026,7 @@ export class GameScene extends CollectorScene {
 
   /** ↑/↓: листают открытый список на экране автомата (закрытые списки стрелки не трогают). */
   private scrollOpenList(delta: number): void {
-    for (const list of [this.actionPanel, this.upgradeScreen, this.symbolPick, this.machinePick]) {
+    for (const list of [this.actionPanel, this.upgradeScreen, this.symbolPick, this.machinePick, this.amuletPick]) {
       if (list?.isOpen) {
         list.scroll(delta);
         return;
@@ -955,7 +1042,7 @@ export class GameScene extends CollectorScene {
     this.onKey('M', () => this.toggleMute(), true);
     this.onKey('L', () => this.toggleLanguage(), true);
     this.onKey('R', () => {
-      if (this.upgradeScreen.isOpen || this.symbolPick.isOpen || this.machinePick.isOpen) return; // сначала обязательный выбор, потом «заново»
+      if (this.upgradeScreen.isOpen || this.symbolPick.isOpen || this.machinePick.isOpen || this.amuletPick.isOpen) return; // сначала обязательный выбор, потом «заново»
       if (this.isGameOver) this.restartGame();
     });
     NUMBER_KEYS.forEach((key, index) => this.onKey(key, () => this.onNumber(index)));
@@ -997,6 +1084,7 @@ export class GameScene extends CollectorScene {
     if (this.isPaused) this.resumeGame();
     else if (this.isActionsOpen) this.closeActions(); // панель действий: Пробел её закрывает
     else if (this.machinePick.isOpen) return; // №49: сначала автомат — Пробел игру не двигает
+    else if (this.amuletPick.isOpen) return; // шаг 38: сначала память амулетов — Пробел игру не двигает
     else if (this.symbolPick.isOpen) return; // №33: сначала символ — Пробел игру не двигает
     else if (this.upgradeScreen.isOpen) return; // экран улучшений открыт: Пробел его не закрывает и забег не начинает
     else if (this.isAtMonitor) this.lookBack();
@@ -1015,6 +1103,7 @@ export class GameScene extends CollectorScene {
     if (this.isPaused) this.resumeGame();
     else if (this.isActionsOpen) this.closeActions(); // панель действий: Enter её закрывает
     else if (this.machinePick.isOpen) return; // №49: сначала автомат
+    else if (this.amuletPick.isOpen) return; // шаг 38: сначала память амулетов
     else if (this.symbolPick.isOpen) return; // №33: сначала символ
     else if (this.upgradeScreen.isOpen) return; // экран улучшений открыт: выбор — только карточкой или 1–3
     else if (this.isAwaitingPayment) this.payDebt();
@@ -1032,6 +1121,11 @@ export class GameScene extends CollectorScene {
     // Выбор стартового автомата (№49): 1–3 — строки списка; остальные клавиши игры молчат.
     if (this.machinePick.isOpen) {
       this.machinePick.press(index);
+      return;
+    }
+    // Память амулетов (шаг 38): 1–N — строки списка; остальные клавиши игры молчат.
+    if (this.amuletPick.isOpen) {
+      this.amuletPick.press(index);
       return;
     }
     // Выбор первого символа (№33): 1–5 — строки списка; остальные клавиши игры молчат.

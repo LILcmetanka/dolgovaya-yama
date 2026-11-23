@@ -219,6 +219,18 @@ export function startDebt(mul = 1): number {
 }
 
 /**
+ * Не хватает ли фишек на долг. Одна дверь для BaseScene.hasEnoughForDebt и Коллектора (шаг 38, `DONTLIKE` п.15):
+ * прощённый долг — это 0, и платить по нему нечего, значит «не хватает» быть не может. Раньше сравнение
+ * `balance >= debt` давало верный ответ случайно; теперь 0 и мусор явно считаются «долга нет»: нулевой долг
+ * не включает GOOD LUCK и раунд спасения, даже если числа долга испортит сделка или сохранение.
+ */
+export function debtShortfall(debt: number, balance: number): boolean {
+  const owed = Number.isFinite(debt) && debt > 0 ? debt : 0;
+  const chips = Number.isFinite(balance) ? Math.max(0, balance) : 0;
+  return owed > chips;
+}
+
+/**
  * Множитель прокрутки. streak — серия: +1 за каждую прокрутку без паттерна из черепов; черепа оставляют от неё
  * треть (streakAfterSkull), «забрать» уменьшает (streakAfterTake), а между раундами она сохраняется — новый раунд
  * начинает с той же серии.

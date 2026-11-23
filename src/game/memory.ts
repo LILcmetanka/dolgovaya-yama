@@ -1,47 +1,34 @@
-import { AMULETS, type Amulet, type AmuletId, type Rarity } from './amulets';
+import { AMULETS, type Amulet, type AmuletId } from './amulets';
 
 /**
- * Память амулетов после смерти (DONTLIKE §2, вариант А): один амулет погибшего забега переезжает в следующий.
- * Цена — билеты забега на момент смерти: 2 за обычный, 3 за редкий. Копии не переносятся, и если билетов
- * не хватает, слота нет совсем. Без Phaser — выбор проверяется тестами (tests/memory.test.mjs).
+ * Память амулетов (шаг 26; переделана шагом 38, `DONTLIKE.md` п.2): при старте каждого нового забега игрок
+ * выбирает один амулет из тех, что были в прошлом забеге, — бесплатно. Отказаться можно: выбора нет — гнёзда пусты.
+ * Никаких цен в билетах больше нет (`memoryPrice` удалён): амулет просто сохраняется, а не покупается после смерти.
+ * Без Phaser — список проверяется тестами (tests/memory.test.mjs).
  */
 
-/**
- * Цена переноса в билетах по редкости. Обычный и проклятый — 2 (в магазине проклятый тоже стоит как обычный),
- * редкий и легендарный — 3: автор дал две цены, всё, что реже обычного, переносится за 3.
- */
-export const MEMORY_PRICES: Record<Rarity, number> = { common: 2, rare: 3, legendary: 3, cursed: 2 };
-
-/** Что предложить на экране смерти: сам амулет и его цена в билетах. */
+/** Что предложить на старте забега: сам амулет. Цены у памяти больше нет — перенос всегда бесплатный. */
 export interface MemoryOption {
   amulet: Amulet;
-  price: number;
-}
-
-/** Цена неизвестной редкости: как обычный. Без запаса `undefined` ушёл бы в билеты и дал NaN. */
-const DEFAULT_MEMORY_PRICE = 2;
-
-/** Цена переноса амулета этой редкости в билетах. Неизвестная редкость — как обычный, а не NaN. */
-export function memoryPrice(rarity: Rarity): number {
-  return MEMORY_PRICES[rarity] ?? DEFAULT_MEMORY_PRICE;
 }
 
 /**
- * Какие амулеты забега можно перенести: только уникальные (копии не считаются) и только те, на которые
- * хватает билетов. Пустой список — слота памяти нет. Порядок — как в AMULETS, чтобы витрина не прыгала.
- * freeSaves > 0 — улучшение №30 (шаг 28б): один амулет не сгорает при смерти, поэтому витрина предлагает
- * все амулеты забега по 0 билетов и без оглядки на кошелёк.
+ * Сколько амулетов из прошлого забега можно взять за новый забег. Один — правило игры; №30 «Амулет в памяти»
+ * и сделка №34 дают свои прибавки отдельно (upgrades.memoryPickCount, CollectorScene.bankRunAmulets).
  */
-export function memoryOptions(owned: readonly AmuletId[], tickets: number, freeSaves = 0): MemoryOption[] {
-  // Билеты — целые; мусор (NaN, минус) считаем нулём: тогда не хватает на всё и слота нет.
-  const budget = Number.isFinite(tickets) ? Math.max(0, Math.floor(tickets)) : 0;
-  const isFree = Number.isFinite(freeSaves) && freeSaves > 0;
+export const MEMORY_PICKS_BASE = 1;
+
+/** Сделка №34 «амулет не сгорает при смерти»: ещё один амулет прошлого забега можно взять на старте. */
+export const MEMORY_PICKS_PACT = 1;
+
+/**
+ * Какие амулеты прошлого забега предложить: только уникальные и в порядке AMULETS, чтобы список не прыгал.
+ * Чужие id отбрасываются (в прогрессе мог остаться мусор от старой версии игры). Пустой список — выбора нет.
+ */
+export function memoryOptions(owned: readonly AmuletId[]): MemoryOption[] {
   const options: MemoryOption[] = [];
   for (const amulet of AMULETS) {
-    if (!owned.includes(amulet.id)) continue; // амулета в забеге не было
-    const price = isFree ? 0 : memoryPrice(amulet.rarity);
-    if (price > budget) continue; // копии не переносятся, а долговой слот не даём — просто не предлагаем
-    options.push({ amulet, price });
+    if (owned.includes(amulet.id)) options.push({ amulet });
   }
   return options;
 }

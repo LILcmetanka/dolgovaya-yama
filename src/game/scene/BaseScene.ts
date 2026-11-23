@@ -7,17 +7,16 @@ import type { Pact } from '../dealerGame';
 import { CHIP_GOAL } from '../gameConfig';
 import { garlicOn, noEffects, type Item, type ItemEffects, type ShopItem } from '../items';
 import { formatChips, t } from '../lang';
-import { CENTER_X, PAYOUT_WINDOW } from '../layout';
 import { PHASES, type Phase } from '../phases';
 import type { MachineId } from '../machines';
 import type { Pattern } from '../patterns';
-import { beginRun, grantAchievement, hasPattern, markPatternOpen, markTutorialDone, openedPatterns, purchasedUpgrades, rememberedAmulet, runNumber, setRememberedAmulet } from '../progress';
-import { multiplierForStreak, SPINS_PER_ROUND, startDebt } from '../rules';
+import { beginRun, grantAchievement, hasPattern, markPatternOpen, markTutorialDone, nextRunMemory, openedPatterns, purchasedUpgrades, runNumber } from '../progress';
+import { debtShortfall, multiplierForStreak, SPINS_PER_ROUND, startDebt } from '../rules';
 import { skullShareOf, type WeightContext } from '../skullShare';
 import type { RunSave, TapeState } from '../save';
 import { Sound } from '../sound';
 import { LAMP_ANGRY, LAMP_BLOOD, LAMP_GARLIC, LAMP_GOLD, LAMP_LUCK } from '../theme';
-import { forgivesDebt, neutralUpgrades, recordStartChips, startItemSlots, symbolWeightBonus, upgradeEffects, achievementTicket, type PurchasedUpgrades, type UpgradeEffects } from '../upgrades';
+import { forgivesDebt, neutralUpgrades, startItemSlots, symbolWeightBonus, upgradeEffects, type PurchasedUpgrades, type UpgradeEffects } from '../upgrades';
 import type { AmuletCase } from '../parts/amuletCase';
 import type { AmuletRack } from '../parts/amuletRack';
 import type { Atmosphere } from '../parts/atmosphere';
@@ -155,7 +154,6 @@ export abstract class BaseScene extends Phaser.Scene {
   /** Сцена перезапущена откатом кассетой (data.tape): тот же забег, номер не растёт. Ставит GameScene.create до resetState. */
   protected isTapeRestart = false;
   protected deferredThisRun = false; // улучшение №10: отсрочка в этом забеге уже была (липкая, как rescueUsed)
-  protected amuletSavedThisRun = false; // улучшение №30 (28б): бесплатный перенос амулета при смерти уже был в этом забеге
   protected pactAmuletBurns = false; // сделка №34: следующий купленный амулет сгорит сразу
   protected amuletChipUsedThisRun = false; // улучшение №39 (28в): амулет за фишки уже брали — откат кассетой это не возвращает
   protected freeGiftGiven = false; // улучшение №40 (28в): подарок первого магазина уже выдан
@@ -163,8 +161,11 @@ export abstract class BaseScene extends Phaser.Scene {
   protected startGridGiven = false; // первая сетка забега уже получила джокера (№32) и выбранный символ (№33)
   protected isChoosingSymbol = false; // висит выбор первого символа (№33): игра ждёт, крутить нельзя
   protected isChoosingMachine = false; // висит выбор стартового автомата (№49, 28г): игра ждёт, крутить нельзя
+  protected isChoosingAmulet = false; // висит выбор амулета из прошлого забега (шаг 38): игра ждёт, крутить нельзя
+  protected startAmulets: AmuletId[] = []; // амулеты прошлого забега, из которых выбирают память (шаг 38)
+  protected startAmuletPicks = 0; // сколько из них ещё можно взять: закончилось — список закрывается
+  protected isDebtForgiven = false; // №8: первый долг этого забега прощён — на стекле новость, платить нечего
   protected skullCancelUsedThisRun = false; // №50 (28г): отмена черепа в этом забеге уже была (липкая, как rescueUsed)
-  protected achievementTicketGiven: string[] = []; // №47 (28г): ачивки, которые уже дали билет в этом забеге
   protected ticketsSpentOnTape = 0; // №45 (28г): сколько билетов потрачено после записи на кассету — их вернёт откат
   protected debtCarry = 0; // улучшение №10: неуплаченный долг, который прибавится к следующему (ShopScene.applyShopDebt)
   protected cigarettesThisRound = 0; // сколько сигарет включили в этом раунде — для «Курильщика»
@@ -232,7 +233,6 @@ export abstract class BaseScene extends Phaser.Scene {
     this.upgradeEffects = upgradeEffects(this.upgrades);
     this.runsPlayed = this.isTapeRestart ? runNumber() : beginRun(); // откат кассетой — тот же забег, номер не двигаем (№8)
     this.deferredThisRun = false; // №10: отсрочка снова доступна
-    this.amuletSavedThisRun = false; // №30: перенос амулета при смерти снова доступен один раз
     this.pactAmuletBurns = false; // сделка №34: в новом забеге «следующий амулет сгорит» ещё не назначен
     this.amuletChipUsedThisRun = false; // №39: амулет за фишки в новом забеге снова доступен
     this.freeGiftGiven = false; // №40: подарок первого магазина ещё не выдан
@@ -240,21 +240,21 @@ export abstract class BaseScene extends Phaser.Scene {
     this.startGridGiven = false; // первая сетка ещё не получила джокера и выбранный символ
     this.isChoosingSymbol = false;
     this.isChoosingMachine = false; // №49: выбор автомата в новом забеге ещё впереди
+    this.isChoosingAmulet = false; // шаг 38: выбор амулета из прошлого забега в новом забеге ещё впереди
+    this.startAmulets = [];
+    this.startAmuletPicks = 0;
     this.skullCancelUsedThisRun = false; // №50: отмена черепа в новом забеге снова доступна
-    this.achievementTicketGiven = []; // №47: список ачивок, давших билет, свой у каждого забега
     this.ticketsSpentOnTape = 0; // №45: на плёнке пока ничего не потрачено
     this.debtCarry = 0; // неплатежа с прошлого забега нет
     this.round = 1;
-    // №6 «стартовый долг −5%»: только первый долг; дальше кривая от раунда. №8: каждый пятый забег — первый долг 0.
-    this.debt = forgivesDebt(this.upgradeEffects.debtForgiveEveryRuns, this.runsPlayed) ? 0 : startDebt(this.upgradeEffects.startDebtMul);
+    // №8: каждый пятый забег — первый долг 0. Флаг isDebtForgiven нужен стеклу: новость «ДОЛГ ПРОЩЁН» (шаг 38).
+    this.isDebtForgiven = forgivesDebt(this.upgradeEffects.debtForgiveEveryRuns, this.runsPlayed);
+    this.debt = this.isDebtForgiven ? 0 : startDebt(this.upgradeEffects.startDebtMul);
     this.debtNextMul = 1; // «следующий долг +20%» — только из сделки, в новом забеге его нет
     this.balance = 0;
     this.earned = 0;
     this.chipGoal = CHIP_GOAL; // новый забег снова идёт к миллиону; 10 000 000 — только после «ДАЛЬШЕ»
     this.chipRecord = loadChipRecord();
-    // №46 (28г): рекорд даёт +5% к стартовым фишкам. Только рекорд (лучший забег), а не каждый забег:
-    // в earned прибавка не идёт, поэтому рекорд не раздувается сам от себя.
-    this.balance = recordStartChips(this.chipRecord, this.upgradeEffects.recordStartShare);
     this.devUsedThisRun = false; // новый забег чистый: что было накручено в прошлом, к рекорду не относится
     this.rescueUsedThisRun = false; // и спасение в новом забеге ещё не тратили
     this.cigarettesThisRound = 0;
@@ -318,21 +318,25 @@ export abstract class BaseScene extends Phaser.Scene {
   }
 
   /**
-   * Память амулетов (шаг 26): амулет, выбранный на экране смерти, стоит в свободном гнезде с первого кадра
-   * нового забега и билетов не стоит — они списаны на смерти (CollectorScene.rememberAmulet). Память читается
-   * один раз и сразу стирается: иначе один и тот же амулет выдавался бы бесплатно в каждом следующем забеге.
+   * Память амулетов (шаг 38): выбранный на старте забега амулет из прошлого забега встаёт в свободное гнездо.
+   * Бесплатно и без продажи: амулет просто сохраняется. Вызывающий (GameScene.chooseStartAmulet) уже проверил,
+   * что амулет есть в списке прошлого забега; здесь — только место в гнезде и отрисовка.
    */
-  protected grantMemoryAmulet(): void {
-    const id = rememberedAmulet();
-    if (id === null) return;
-    // Гнёзд не хватает — амулет подождёт следующего забега: память НЕ стираем, иначе выбор пропал бы впустую.
-    if (this.amulets.length >= this.sockets) return;
-    setRememberedAmulet(null); // прочитано — память чиста, следующий выбор будет после следующей смерти
+  protected grantStartAmulet(id: AmuletId): boolean {
     const amulet = AMULETS.find((item) => item.id === id);
-    if (!amulet || this.amulets.some((owned) => owned.id === id)) return; // чужое id или амулет уже есть
+    if (!amulet || this.amulets.length >= this.sockets) return false; // чужое id или гнёзд нет — брать некуда
+    if (this.amulets.some((owned) => owned.id === id)) return false; // такой амулет уже стоит
     this.amulets.push(amulet);
     addCopy(this.amuletCounts, id);
     this.amuletRack.setAmulets(this.amulets, this.amuletCounts);
+    return true;
+  }
+
+  /** Что предлагать на старте забега: амулеты прошлого забега и сколько из них можно взять (шаг 38). */
+  protected loadStartAmulets(): void {
+    const memory = nextRunMemory();
+    this.startAmulets = memory.amulets;
+    this.startAmuletPicks = memory.picks;
   }
 
   /** Обновить табло, окошко множителя, лампочки прокруток, окошко выплаты и записку (светится ли) по текущему состоянию. */
@@ -430,24 +434,7 @@ export abstract class BaseScene extends Phaser.Scene {
       return;
     }
     if (!grantAchievement(id)) return; // ачивка уже была
-    this.grantAchievementTicket(id); // улучшение №47 (28г): каждая ачивка забега — билет
     this.showAchievement(id);
-  }
-
-  /**
-   * №47 (28г): каждая ачивка, выданная в этом забеге, даёт по билету — один раз за ачивку в забеге.
-   * Список achievementTicketGiven липкий (кассета его не сбрасывает) и начинается заново каждый забег:
-   * повторная проверка той же ачивки второго билета не даёт.
-   */
-  private grantAchievementTicket(id: AchievementId): void {
-    const count = achievementTicket(this.upgradeEffects.achievementTickets, id, this.achievementTicketGiven);
-    if (count === 0) return;
-    this.achievementTicketGiven.push(id);
-    this.tickets += count;
-    this.panel.showTickets(this.tickets);
-    this.shop.showMoney(this.balance, this.tickets);
-    this.panel.flyTickets(count, CENTER_X, PAYOUT_WINDOW.y);
-    this.sfx.play('ticket');
   }
 
   /**
@@ -572,7 +559,8 @@ export abstract class BaseScene extends Phaser.Scene {
   /** Насколько близко беда — от неё бьётся «сердце» в музыке: не хватает на долг, а прокрутки кончаются. */
   protected tension(): number {
     if (this.isRoundOver || this.isGameOver) return 0.6;
-    const missing = 1 - Math.min(1, this.balance / this.debt); // какой доли долга не хватает
+    // Долга нет (прощённый первый долг, шаг 38): не хватает ничего — делить на ноль нельзя, иначе тревога NaN.
+    const missing = this.debt > 0 ? 1 - Math.min(1, this.balance / this.debt) : 0; // какой доли долга не хватает
     const spent = 1 - Math.min(1, this.spinsLeft / SPINS_PER_ROUND); // сколько раунда прошло
     const angry = this.phase === PHASES[0] ? 0 : ANGRY_TENSION; // в фазе 2 сердце бьётся чаще
     return Math.min(1, missing * (0.3 + 0.7 * spent) + angry);
@@ -643,14 +631,20 @@ export abstract class BaseScene extends Phaser.Scene {
       !this.isRescue &&
       !this.isChoosingSymbol &&
       !this.isChoosingMachine &&
+      !this.isChoosingAmulet &&
       !this.isShopping &&
       this.freeSpins === 0
     );
   }
 
-  /** Хватает ли фишек на табло, чтобы отдать долг этого раунда. */
+  /** Хватает ли фишек на табло, чтобы отдать долг этого раунда. Долга нет (прощение) — платить нечего, хватает. */
   protected hasEnoughForDebt(): boolean {
-    return this.balance >= this.debt;
+    return !debtShortfall(this.debt, this.balance);
+  }
+
+  /** Есть ли что платить вообще: долг больше нуля. С прощённым первым долгом платить нечего (шаг 38). */
+  protected isDebtFree(): boolean {
+    return !(this.debt > 0);
   }
 
   /**
@@ -661,7 +655,7 @@ export abstract class BaseScene extends Phaser.Scene {
    */
   protected canPayEarly(): boolean {
     const isRoundGoing = !this.isRoundOver && !this.isDealing && !this.isGameOver && !this.isRewinding && !this.isRerolling;
-    return this.hasEnoughForDebt() && isRoundGoing && this.spinsLeft <= PAY_EARLY_GLOW_SPINS;
+    return this.debt > 0 && this.hasEnoughForDebt() && isRoundGoing && this.spinsLeft <= PAY_EARLY_GLOW_SPINS;
   }
 
   /** Можно ли записать на чистую кассету: между прокрутками у автомата (canAct). */

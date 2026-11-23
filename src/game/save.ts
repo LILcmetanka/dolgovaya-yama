@@ -1,5 +1,4 @@
 import { ticketPrice, type Amulet, type AmuletCounts } from './amulets';
-import { isAchievementId } from './achievements';
 import type { Pact } from './dealerGame';
 import type { MachineId } from './machines';
 import type { Item, ItemEffects } from './items';
@@ -54,7 +53,6 @@ export interface RunSave {
   amuletChipUsed?: boolean; // улучшение №39 (28в): амулет за фишки уже брали; липкое, откат не возвращает
   freeGiftGiven?: boolean; // улучшение №40 (28в): подарок первого магазина уже выдан; липкое, откат второй не даёт
   skullCancelUsed?: boolean; // улучшение №50 (28г): отмена черепа уже потрачена; липкая, откат вторую не даёт
-  achievementTickets?: string[]; // улучшение №47 (28г): какие ачивки уже дали билет в этом забеге; липкий список
   startSymbol?: string; // улучшение №33 (28в): выбранный первый символ забега
   startGridGiven?: boolean; // первая сетка уже получила джокера (№32) и выбранный символ (№33)
 }
@@ -116,21 +114,6 @@ export function freeGiftUsedOf(record: { freeGiftGiven?: unknown }, current = fa
  */
 export function skullCancelUsedOf(record: { skullCancelUsed?: unknown }, current = false): boolean {
   return current || record.skullCancelUsed === true;
-}
-
-/**
- * Липкий список ачивок, которые уже дали билет в этом забеге (улучшение №47, шаг 28г): откат кассетой не даёт
- * второй билет за ту же ачивку. Список — объединение текущего и записанного; чужие id и повторы отбрасываются,
- * как в progress.ts. Старая плёнка без поля — пустой список.
- */
-export function achievementTicketIdsOf(record: { achievementTickets?: unknown }, current: readonly string[] = []): string[] {
-  const result: string[] = [];
-  const add = (id: unknown): void => {
-    if (isAchievementId(id) && !result.includes(id)) result.push(id);
-  };
-  for (const id of current) add(id);
-  if (Array.isArray(record.achievementTickets)) for (const id of record.achievementTickets) add(id);
-  return result;
 }
 
 /**

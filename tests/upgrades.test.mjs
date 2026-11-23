@@ -43,8 +43,8 @@ const MACH = await import('../src/game/machines.ts');
 /** Покупки из списка id по одному разу: так в тестах виднее, что именно взято. */
 const buy = (...ids) => Object.fromEntries(ids.map((id) => [id, 1]));
 
-test('пул: 42 улучшения с уникальными id, все однократные, кроме «Ещё копия» (×2)', () => {
-  assert.equal(UPG.UPGRADES.length, 42, 'первая партия 11 (28а), вторая 13 (28б), третья 10 (28в), четвёртая 8 (28г)');
+test('пул: 40 улучшений с уникальными id, все однократные, кроме «Ещё копия» (×2)', () => {
+  assert.equal(UPG.UPGRADES.length, 40, 'первая партия 11 (28а), вторая 13 (28б), третья 10 (28в), четвёртая 6 (28г): №46 и №47 удалены шагом 38');
   const ids = UPG.UPGRADES.map((upgrade) => upgrade.id);
   assert.equal(new Set(ids).size, ids.length, 'id не повторяются');
   for (const upgrade of UPG.UPGRADES) {
@@ -53,7 +53,8 @@ test('пул: 42 улучшения с уникальными id, все одн�
     assert.ok(['spins', 'debt', 'chips', 'tickets', 'items', 'amulets', 'grid', 'shop', 'tape', 'other'].includes(upgrade.group), `${upgrade.id}: известная группа`);
   }
   // Номера исходного списка: 1, 3, 4 (прокрутки), 6, 7, 8, 10 (долг), 12, 13, 14, 15 (фишки), 16, 17, 18 (билеты),
-  // 21–25 (предметы), 26–30 (амулеты), 31–35 (сетка), 36–40 (магазин), 42, 44, 45 (кассета), 46–50 (прочее).
+  // 21–25 (предметы), 26–30 (амулеты), 31–35 (сетка), 36–40 (магазин), 42, 44, 45 (кассета), 48–50 (прочее).
+  // №46 «+5% рекорда» и №47 «билет за ачивку» удалены целиком (DONTLIKE п.10 и п.1).
   assert.deepEqual(
     ids,
     [
@@ -65,7 +66,7 @@ test('пул: 42 улучшения с уникальными id, все одн�
       'grid-skull-share', 'grid-start-joker', 'grid-start-symbol', 'grid-jackpot', 'grid-blood-weight',
       'shop-discount', 'shop-extra-row', 'shop-ticket-share', 'shop-amulet-chips', 'shop-gift-item',
       'tape-keeps-streak', 'tape-free', 'tape-refund-tickets',
-      'record-start-chips', 'achievement-ticket', 'machine-no-swap', 'machine-start-pick', 'skull-cancel',
+      'machine-no-swap', 'machine-start-pick', 'skull-cancel',
     ],
     'состав пула и порядок чисел',
   );
@@ -78,7 +79,7 @@ test('пул: 42 улучшения с уникальными id, все одн�
   assert.equal(UPG.UPGRADES.filter((upgrade) => upgrade.group === 'grid').length, 5, 'сетки 5');
   assert.equal(UPG.UPGRADES.filter((upgrade) => upgrade.group === 'shop').length, 5, 'магазина 5');
   assert.equal(UPG.UPGRADES.filter((upgrade) => upgrade.group === 'tape').length, 3, 'кассеты 3');
-  assert.equal(UPG.UPGRADES.filter((upgrade) => upgrade.group === 'other').length, 5, 'прочего 5');
+  assert.equal(UPG.UPGRADES.filter((upgrade) => upgrade.group === 'other').length, 3, 'прочего 3: №48–50');
 });
 
 test('у каждого улучшения есть название и описание на двух языках', () => {
@@ -141,8 +142,6 @@ test('0 покупок — нейтральные числа: без улучш�
   assert.equal(effects.rewindKeepsStreak, false, 'откат сбрасывает серию');
   assert.equal(effects.freeTape, false, 'кассета платная');
   assert.equal(effects.rewindRefundsTickets, false, 'билеты откат не возвращает');
-  assert.equal(effects.recordStartShare, 0, 'стартовых фишек от рекорда нет');
-  assert.equal(effects.achievementTickets, 0, 'билетов за ачивки нет');
   assert.equal(effects.noMachineSwap, false, 'автомат меняется сам');
   assert.equal(effects.startMachinePick, false, 'автомат не выбираешь');
   assert.equal(effects.skullCancelOnce, false, 'череп отменить нельзя');
@@ -271,12 +270,10 @@ test('вторая партия (билеты, предметы, амулеты)
   const rareFirst = A.AMULETS.find((amulet) => amulet.rarity === 'rare');
   const alreadyRare = [rareFirst, ...nonRare.slice(0, 2)];
   assert.deepEqual(A.withRareAmulet(alreadyRare, [], 0, () => 0).map((amulet) => amulet.id), alreadyRare.map((amulet) => amulet.id), 'витрину с редким не трогаем');
-  // №30: бесплатный перенос амулета — один раз за забег.
-  assert.equal(UPG.freeMemorySave(UPG.upgradeEffects(buy('amulet-survives-death')), false), true, 'первый раз — бесплатно');
-  assert.equal(UPG.freeMemorySave(UPG.upgradeEffects(buy('amulet-survives-death')), true), false, 'второй раз за забег — платно');
-  assert.equal(UPG.freeMemorySave(UPG.upgradeEffects({}), false), false, 'без улучшения — платно');
-  assert.deepEqual(MEM.memoryOptions(['cherryPit'], 0).map((option) => option.price), [], 'без билетов слот пуст');
-  assert.deepEqual(MEM.memoryOptions(['cherryPit'], 0, 1).map((option) => option.price), [0], 'с улучшением — бесплатно даже без билетов');
+  // №30: на старте забега можно взять на один амулет из прошлого больше (шаг 38, DONTLIKE п.2).
+  assert.equal(UPG.memoryPickCount(UPG.upgradeEffects({})), 1, 'без улучшения — один амулет');
+  assert.equal(UPG.memoryPickCount(UPG.upgradeEffects(buy('amulet-survives-death'))), 2, 'с улучшением — два');
+  assert.deepEqual(MEM.memoryOptions(['cherryPit']).map((option) => option.amulet.id), ['cherryPit'], 'память предлагает амулет без цены');
 });
 
 test('третья партия (28в): сетка и магазин — числа и поведение', () => {
@@ -390,26 +387,15 @@ test('четвёртая партия (28г): кассета — серия, ц�
   assert.equal(effects.rewindRefundsTickets, true, '№45 включён');
 });
 
-test('четвёртая партия (28г): прочее — рекорд, ачивки, автомат, отмена черепа', () => {
-  const effects = UPG.upgradeEffects(buy('record-start-chips', 'achievement-ticket', 'machine-no-swap', 'machine-start-pick', 'skull-cancel'));
+test('четвёртая партия (28г): прочее — автомат и отмена черепа; №46/№47 удалены', () => {
+  const effects = UPG.upgradeEffects(buy('machine-no-swap', 'machine-start-pick', 'skull-cancel'));
 
-  // №46: стартовые фишки — доля рекорда, а не «плюс каждый забег»: рекорд 1 000 000 даёт 50 000.
-  assert.equal(UPG.upgradeEffects(buy('record-start-chips')).recordStartShare, 0.05, 'доля 5%');
-  assert.equal(UPG.recordStartChips(1_000_000, 0.05), 50_000, '5% от миллиона');
-  assert.equal(UPG.recordStartChips(0, 0.05), 0, 'рекорда нет — прибавки нет');
-  assert.equal(UPG.recordStartChips(1_000_000, 0), 0, 'без улучшения прибавки нет');
-  assert.equal(UPG.recordStartChips(Number.NaN, 0.05), 0, 'мусор в рекорде — ноль');
-  assert.equal(UPG.recordStartChips(100, 5), 100, 'доля больше 1 не даёт больше самого рекорда');
-
-  // №47: билет за ачивку — по одному на ачивку за забег; повтор в том же забеге мимо.
-  const per = effects.achievementTickets;
-  assert.equal(per, 1, 'один билет с №47');
-  assert.equal(UPG.achievementTicket(per, 'yourTicket', []), 1, 'первая ачивка забега — билет');
-  assert.equal(UPG.achievementTicket(per, 'yourTicket', ['yourTicket']), 0, 'повторно та же — нет');
-  assert.equal(UPG.achievementTicket(per, 'theEnd', ['yourTicket']), 1, 'другая ачивка — снова билет');
-  assert.equal(UPG.achievementTicket(0, 'theEnd', []), 0, 'без улучшения билета нет');
-  assert.deepEqual(S.achievementTicketIdsOf({}, []), [], 'старая плёнка без поля — пустой список');
-  assert.deepEqual(S.achievementTicketIdsOf({ achievementTickets: ['theEnd', 'theEnd', 'bogus'] }, ['yourTicket']), ['yourTicket', 'theEnd'], 'объединение без повторов и чужих id');
+  // №46 и №47 удалены целиком (DONTLIKE п.10 и п.1): их нет ни в пуле, ни среди эффектов.
+  assert.equal(UPG.UPGRADES.some((upgrade) => upgrade.id === 'record-start-chips'), false, '№46 «рекорд в кармане» удалён из пула');
+  assert.equal(UPG.UPGRADES.some((upgrade) => upgrade.id === 'achievement-ticket'), false, '№47 «билет за ачивку» удалён из пула');
+  assert.equal('recordStartShare' in UPG.neutralUpgrades(), false, 'и его поля в эффектах нет');
+  assert.equal('achievementTickets' in UPG.neutralUpgrades(), false, 'поля билетов за ачивки нет');
+  assert.deepEqual(S.achievementTicketIdsOf, undefined, 'старый липкий список ачивок удалён вместе с полем плёнки');
 
   // №48: смена автомата выключена — шанс 0, автомат тот же; без улучшения правило игры его не трогает.
   assert.equal(effects.noMachineSwap, true, '№48 включён');
@@ -431,7 +417,7 @@ test('четвёртая партия (28г): прочее — рекорд, а�
   assert.equal(S.skullCancelUsedOf({}, true), true, 'текущий флаг важнее плёнки');
 });
 
-test('все 42 покупки сразу: прибавки складываются, множители перемножаются', () => {
+test('все 40 покупок сразу: прибавки складываются, множители перемножаются', () => {
   const all = buy(...UPG.UPGRADES.map((upgrade) => upgrade.id));
   const effects = UPG.upgradeEffects(all);  assert.equal(effects.firstRoundSpins, 1, 'одна прокрутка');
   assert.equal(effects.spinCapBonus, 2, 'два к потолку');
@@ -474,17 +460,15 @@ test('все 42 покупки сразу: прибавки складывают
   assert.equal(effects.rewindKeepsStreak, true, 'серия переживает откат');
   assert.equal(effects.freeTape, true, 'кассета бесплатна');
   assert.equal(effects.rewindRefundsTickets, true, 'билеты возвращаются откатом');
-  assert.equal(effects.recordStartShare, 0.05, '5% рекорда на старте');
-  assert.equal(effects.achievementTickets, 1, 'билет за ачивку');
   assert.equal(effects.noMachineSwap, true, 'автомат не меняется');
   assert.equal(effects.startMachinePick, true, 'автомат выбираешь');
   assert.equal(effects.skullCancelOnce, true, 'череп можно отменить');
 });
 
-test('все 42 покупки: поле «все 34» больше не проходит, а все 42 — да', () => {
-  // Заслон от недоделанной четвёртой партии: если в пуле снова 34, тест выше станет короче и это заметно здесь.
-  assert.equal(UPG.UPGRADES.length, 42, 'в пуле 42 улучшения');
-  assert.equal(Object.keys(UPG.upgradeEffects(buy(...UPG.UPGRADES.map((upgrade) => upgrade.id)))).length, 42, 'у эффектов 42 поля');
+test('пул: ровно 40 улучшений, и у эффектов столько же полей', () => {
+  // Заслон от недоделанной партии: если в пуле снова 34 или вернули №46/№47, тест выше станет короче и это заметно здесь.
+  assert.equal(UPG.UPGRADES.length, 40, 'в пуле 40 улучшений');
+  assert.equal(Object.keys(UPG.upgradeEffects(buy(...UPG.UPGRADES.map((upgrade) => upgrade.id)))).length, 40, 'у эффектов 40 полей');
 });
 
 test('мусор в покупках не ломает числа: чужие id и глупости считаются как «не брали»', () => {

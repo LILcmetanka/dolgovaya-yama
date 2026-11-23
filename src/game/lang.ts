@@ -60,10 +60,11 @@ const TEXTS = {
   rescueLastSpin: { ru: 'ПОСЛЕДНЯЯ ПРОКРУТКА', en: 'LAST SPIN' },
   rescueSurvived: { ru: 'ПАТТЕРН СОБРАН', en: 'PATTERN LANDED' },
   // Провал спасения текстов больше не имеет: он сразу кончает забег (KABOOM, шаг 34).
-  // Память амулетов после смерти (шаг 26): один амулет погибшего забега переезжает в следующий за билеты.
-  // Цены (2 за обычный, 3 за редкий) — числами под амулетами; название стоит в строке памяти после выбора.
-  memoryTitle: { ru: 'ВИТРИНА ПАМЯТИ', en: 'MEMORY SHOWCASE' },
-  memoryKept: { ru: 'В ПАМЯТИ: {0}', en: 'REMEMBERED: {0}' },
+  // Память амулетов (шаг 38, DONTLIKE п.2): на старте забега — список амулетов прошлого забега, бесплатно.
+  // Это тот же экранный список, что у улучшений и выбора автомата (шаг 37): строки на экране автомата.
+  memoryPickTitle: { ru: 'АМУЛЕТ ИЗ ПРОШЛОГО ЗАБЕГА', en: 'AMULET FROM THE LAST RUN' },
+  memoryPickWhat: { ru: 'Возьми один бесплатно — или откажись', en: 'Take one for free — or refuse' },
+  memoryPickMore: { ru: 'Можно взять ещё один: {0}', en: 'You can take one more: {0}' },
   // Улучшения после смерти (шаг 28, upgrades.ts): экран после гибели, три карточки, второе — за 6 билетов
   // из остатка погибшего забега. Название и описание каждого улучшения — ниже, ключами из upgrades.ts.
   upgTitle: { ru: 'УЛУЧШЕНИЯ', en: 'UPGRADES' },
@@ -131,7 +132,7 @@ const TEXTS = {
   upgAmuletRare: { ru: 'Редкий в витрине', en: 'Rare on display' },
   upgAmuletRareWhat: { ru: 'В первом магазине всегда есть редкий амулет', en: 'The first shop always offers a rare amulet' },
   upgAmuletDeath: { ru: 'Амулет в памяти', en: 'Amulet in memory' },
-  upgAmuletDeathWhat: { ru: 'Амулет не сгорает при смерти: один перенос в следующий забег бесплатно (раз за забег)', en: 'An amulet does not burn on death: one transfer to the next run is free (once per run)' },
+  upgAmuletDeathWhat: { ru: 'На старте забега из прошлого берут не один амулет, а два — оба бесплатно', en: 'At the start of a run you take two amulets from the last run instead of one — both free' },
   // №31–40 третьей партии (28в): сетка и магазин. Числа описаний — те же, что в константах upgrades.ts.
   upgGridSkull: { ru: 'Реже черепа', en: 'Fewer skulls' },
   upgGridSkullWhat: { ru: 'Доля черепов ниже на 1 п.п. — складывается со сделками и колокольчиком', en: 'The skull share is 1 pp lower — stacks with deals and the little bell' },
@@ -160,11 +161,7 @@ const TEXTS = {
   upgTapeFreeWhat: { ru: 'Кассета в магазине бесплатна: билеты за неё не платишь', en: 'The tape in the shop is free: no tickets for it' },
   upgTapeTickets: { ru: 'Билеты с плёнки', en: 'Tickets off the tape' },
   upgTapeTicketsWhat: { ru: 'Откат возвращает билеты, потраченные после записи — не больше, чем потрачено', en: 'Rewinding returns the tickets spent after recording — no more than you spent' },
-  // №46–50 четвёртой партии (28г): прочее.
-  upgRecordChips: { ru: 'Рекорд в кармане', en: 'Record in hand' },
-  upgRecordChipsWhat: { ru: 'Забег начинается с 5% рекорда фишек — только от рекорда, а не от каждого забега', en: 'A run starts with 5% of your chip record — from the record, not from every run' },
-  upgAchievementTicket: { ru: 'Билет за ачивку', en: 'Achievement ticket' },
-  upgAchievementTicketWhat: { ru: 'Каждая ачивка забега даёт по билету — один раз за ачивку в забеге', en: 'Every achievement of a run pays a ticket — once per achievement per run' },
+  // №48–50 четвёртой партии (28г): прочее. №46 «Рекорд в кармане» и №47 «Билет за ачивку» удалены шагом 38.
   upgMachineNoSwap: { ru: 'Автомат не меняется', en: 'The machine stays' },
   upgMachineNoSwapWhat: { ru: 'В начале раунда автомат больше не меняется сам', en: 'The machine no longer swaps on its own at the start of a round' },
   upgMachinePick: { ru: 'Свой автомат', en: 'Your machine' },
@@ -221,24 +218,25 @@ const TEXTS = {
   actionLotterySpinsDown: { ru: 'ЛОТЕРЕЯ: −1 ПРОКРУТКА', en: 'LOTTERY: −1 SPIN' },
   actionService: { ru: 'ОБСЛУЖИВАНИЕ АВТОМАТА', en: 'MACHINE SERVICING' },
   actionServiceWhat: {
-    ru: 'Черепа реже на 4 п.п. два раунда: этот и следующий',
-    en: 'Skulls 4 pp rarer for two rounds: this one and the next',
+    ru: 'Черепа реже на 4 п.п. два раунда: этот и следующий (доля долга, но не меньше 30 фишек)',
+    en: 'Skulls 4 pp rarer for two rounds: this one and the next (a share of the debt, at least 30 chips)',
   },
   actionServiceDone: { ru: 'АВТОМАТ ОБСЛУЖЕН', en: 'MACHINE SERVICED' },
   actionServiceActive: { ru: 'уже чистится', en: 'already serviced' },
   actionTheft: { ru: 'КРАЖА', en: 'THEFT' },
   actionTheftWhat: {
-    ru: 'Вытащить кон из кассы Коллектора: провал — сразу KABOOM, успех даёт фишки',
-    en: 'Take the pot from the Collector: failure is instant KABOOM, success pays chips',
+    ru: 'Вытащить кон из кассы Коллектора: провал — сразу KABOOM, успех даёт фишки. Шанс растёт с каждым раундом',
+    en: 'Take the pot from the Collector: failure is instant KABOOM, success pays chips. The chance grows every round',
   },
   actionTheftDone: { ru: 'УКРАЛ!', en: 'STOLEN!' },
   actionSale: { ru: 'ПРОДАЖА СИМВОЛА', en: 'SYMBOL SALE' },
   actionSaleWhat: {
-    ru: 'Убрать символ из автомата и получить его цену за каждую клетку на сетке',
-    en: 'Remove a symbol from the machine and get its price for every cell on the grid',
+    ru: 'Убрать символ из автомата и получить его цену за каждую клетку — с поправкой на текущий разгон',
+    en: 'Remove a symbol from the machine and get its price for every cell — scaled by the current multiplier',
   },
   actionSalePick: { ru: 'Что продать: символ с сетки', en: 'What to sell: a symbol on the grid' },
-  actionSaleNote: { ru: 'цена {0} × {1} кл. = {2}', en: 'pays {0} × {1} cells = {2}' },
+  // №8 (шаг 38): формула словами — цена символа × клетки × множитель серии (не выше потолка ACTION_SALE_MULT_CAP).
+  actionSaleNote: { ru: 'цена {0} × {1} кл. × ×{2} = {3}', en: 'pays {0} × {1} cells × ×{2} = {3}' },
   actionSaleDone: { ru: 'СИМВОЛ ПРОДАН', en: 'SYMBOL SOLD' },
   actionDebt: { ru: 'ДОЛГОВАЯ БИРЖА', en: 'DEBT EXCHANGE' },
   actionDebtWhat: { ru: 'Заплати {0} сейчас — следующий долг меньше на {1}', en: 'Pay {0} now — the next debt drops by {1}' },
@@ -259,6 +257,8 @@ const TEXTS = {
   amuletChipUsed: { ru: 'ИСПОЛЬЗОВАНО', en: 'USED' },
   // №10: долг отложен — сообщение на экране автомата перед магазином.
   debtDeferred: { ru: 'ДОЛГ ОТЛОЖЕН', en: 'DEBT DEFERRED' },
+  // №8 (шаг 38): первый долг забега прощён — новость на стекле, чтобы игрок видел, что улучшение сработало.
+  debtForgiven: { ru: 'ДОЛГ ПРОЩЁН', en: 'DEBT FORGIVEN' },
   pause: { ru: 'ПАУЗА', en: 'PAUSE' }, // над знаком паузы
   // Экран на стене (WallScreen): вкладки и их надписи.
   tabSymbols: { ru: 'СИМВОЛЫ', en: 'SYMBOLS' },

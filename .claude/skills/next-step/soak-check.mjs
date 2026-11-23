@@ -5,7 +5,7 @@
  * Снимки — в scratchpad, профиль Chrome — в scratchpad/prof-soak. Порт 8777 и Chrome на 9343 — свои.
  *
  * Зачем: до шага 36 никто ни разу не прогнал живьём весь метацикл подряд — забег, смерть, улучшения за билеты,
- * витрина памяти, новый забег с эффектом и перезагрузку со сохранённым прогрессом. Каждый шаг по отдельности
+ * память амулетов (записанная смертью и выбранная на старте), новый забег с эффектом и перезагрузку с прогрессом. Каждый шаг по отдельности
  * проверен (upgrades-check, memory-check), а стык между ними — нет.
  *
  * Что проверяет (47 проверок, ~30 секунд):
@@ -156,12 +156,11 @@ try {
       amulets: g.amulets.map((amulet) => amulet.id),
       upgOpen: g.upgradeScreen.isOpen, cards: g.upgradeScreen.rows.length, offers: g.upgradeOfferList.map((u) => u.id),
       second: g.upgradeSecondPhase,
-      memoryBox: g.memoryBox !== null, memoryOptions: g.memoryOptions.map((option) => ({ id: option.amulet.id, price: option.price })),
-      memoryChips: g.memoryChips.length, memoryTitle: g.memoryTitleText ? g.memoryTitleText.text : null,
+      pickOpen: g.amuletPick.isOpen, startAmulets: g.startAmulets, picks: g.startAmuletPicks,
       purchases: progress && progress !== 'broken' ? progress.upgrades ?? {} : progress,
-      memory: progress && progress !== 'broken' ? progress.memoryAmulet ?? null : progress,
+      memory: progress && progress !== 'broken' ? progress.runAmulets ?? [] : progress,
       progressRuns: progress && progress !== 'broken' ? progress.runs ?? 0 : progress,
-      choosing: g.isChoosingSymbol || g.isChoosingMachine,
+      choosing: g.isChoosingSymbol || g.isChoosingMachine || g.isChoosingAmulet,
     });
   })()`)) ?? {};
 
@@ -177,7 +176,7 @@ try {
   await val('window.__g.finishTutorial(); 1');
   await sleep(600);
   const fresh = await state();
-  check(fresh.progressRuns === 1 && Object.keys(fresh.purchases).length === 0 && fresh.memory === null,
+  check(fresh.progressRuns === 1 && Object.keys(fresh.purchases).length === 0 && (fresh.memory ?? []).length === 0,
     `прогресс чистый: забег ${fresh.progressRuns}, улучшений ${Object.keys(fresh.purchases).length}, памяти нет`);
   /** Подготовка забега: билеты на второе улучшение и витрину памяти, пара амулетов в гнезде, ускорение времени. */
   const prepared = await val(`(() => {
@@ -213,7 +212,7 @@ try {
         : g.isDealing || g.isDealerClosing ? 'dealer'
         : g.isShopOpen || g.isLeavingShop ? 'shop'
         : g.isSpinning || g.isRoundOver || g.isRewinding || g.isVictoryPending ? 'busy'
-        : g.isChoosingSymbol ? 'sym' : g.isChoosingMachine ? 'mac'
+        : g.isChoosingSymbol ? 'sym' : g.isChoosingMachine ? 'mac' : g.isChoosingAmulet ? 'amu'
         : g.isAchievementShown ? 'ach' : g.isPaused ? 'pause' : 'idle';
       // В отчёт — только заметные события и смены раунда: idle/busy мелькают на каждой прокрутке и топят строку.
       const notable = st !== 'idle' && st !== 'busy' && st !== 'ach';
@@ -231,6 +230,7 @@ try {
       if (st === 'busy' || st === 'ach') { await raf(); continue; }
       if (st === 'sym') { g.symbolPick.press(0); await wait(20); continue; }
       if (st === 'mac') { g.machinePick.press(0); await wait(20); continue; }
+      if (st === 'amu') { g.amuletPick.press(0); await wait(20); continue; } // память: бот берёт первый амулет
       if (st === 'dealer') {
         if (g.isDealing) { g.refusePacts(); out.deals += 1; }
         await wait(80); continue;
@@ -263,7 +263,7 @@ try {
 
   // Экран смерти и улучшения: ждём появления, а не «по часам» (KABOOM идёт 1,8 + 0,9 + 0,7 с).
   for (let i = 0; i < 60; i++) {
-    if (await val('window.__g.upgradeScreen.isOpen || window.__g.memoryBox !== null')) break;
+    if (await val('window.__g.canRestartWithSpace === true')) break; // экран смерти дорисован
     await sleep(250);
   }
   await sleep(400);
@@ -299,28 +299,14 @@ try {
   check(afterSecond.upgOpen === false && afterSecond.cards === 0, 'экран улучшений закрыт — дальше витрина памяти');
   check(Object.keys(afterSecond.purchases).length === 2, 'в прогрессе две покупки: ' + Object.keys(afterSecond.purchases).join(', '));
 
-  // ---------- 3. Витрина памяти: варианты из memory.ts, клик по амулету ----------
-  console.log('--- 3. витрина памяти амулетов');
+  // ---------- 3. Память амулетов: смерть записала амулеты забега, витрины на экране смерти нет ----------
+  console.log('--- 3. память амулетов записана смертью');
   const memory = await state();
-  const owned = ['bell', 'boost'];
-  const expectedMemory = MEMORY.memoryOptions(owned, memory.tickets, 0).map((option) => ({ id: option.amulet.id, price: option.price }));
-  check(memory.memoryBox === true && memory.memoryChips === expectedMemory.length,
-    `витрина памяти на экране смерти: значков ${memory.memoryChips} (ждали ${expectedMemory.length})`);
-  check(JSON.stringify(memory.memoryOptions) === JSON.stringify(expectedMemory),
-    'варианты и цены — из memory.ts: ' + JSON.stringify(expectedMemory));
-  check(memory.memoryTitle === 'ВИТРИНА ПАМЯТИ', 'RU: заголовок витрины — ' + JSON.stringify(memory.memoryTitle));
+  const expectedMemory = MEMORY.memoryOptions(['bell', 'boost']).map((option) => option.amulet.id);
+  check(JSON.stringify(memory.memory) === JSON.stringify(expectedMemory),
+    'смерть записала амулеты забега в прогресс: ' + JSON.stringify(memory.memory));
+  check(memory.pickOpen === false, 'на экране смерти списка памяти нет — он будет на старте забега (шаг 38)');
   await shot('soak-3-memory.png');
-  const bellIndex = memory.memoryOptions.findIndex((option) => option.id === 'bell');
-  const bellPrice = bellIndex >= 0 ? memory.memoryOptions[bellIndex].price : 0;
-  check(bellIndex >= 0 && bellPrice === MEMORY.memoryPrice(byId('bell').rarity), `в витрине есть 🔔 за ${bellPrice} (memoryPrice по редкости)`);
-  const bellPoint = await pagePoint(`g.memoryChips[${Math.max(0, bellIndex)}].getBounds()`);
-  await clickAt(bellPoint);
-  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 8, y: 8 });
-  await val('window.__g.tooltip.hide(); 1');
-  const kept = await state();
-  check(kept.tickets === memory.tickets - bellPrice, `клик по амулету списал цену: ${memory.tickets} → ${kept.tickets} (цена ${bellPrice})`);
-  check(kept.memory === 'bell', 'выбор записан в localStorage: ' + JSON.stringify(kept.memory));
-  check(kept.memoryChips === 0 && kept.memoryTitle === 'В ПАМЯТИ: ' + byId('bell').name.ru, 'витрина стала строкой памяти: ' + JSON.stringify(kept.memoryTitle));
 
   // ---------- 4. Новый забег: покупки действуют, амулет из памяти в гнезде ----------
   console.log('--- 4. новый забег с улучшениями и памятью');
@@ -328,6 +314,11 @@ try {
   await val('window.__g.restartGame(); 1');
   await sleep(4500);
   if (await val('window.__g.isChoosingMachine')) { await val('window.__g.machinePick.press(0); 1'); await sleep(300); }
+  // Память амулетов (шаг 38): список на старте, берём первый — 🔔.
+  const pickState = JSON.parse((await val('(() => { const g = window.__g; return JSON.stringify({ open: g.amuletPick.isOpen, rows: g.amuletPick.rows.length, picks: g.startAmuletPicks }); })()')) ?? '{}');
+  check(pickState.open === true && pickState.rows === 2, `память на старте: список из ${pickState.rows} амулетов прошлого забега`);
+  await val('window.__g.amuletPick.press(0); 1');
+  await sleep(400);
   if (await val('window.__g.isChoosingSymbol')) { await val('window.__g.symbolPick.press(0); 1'); await sleep(300); }
   const next = await state();
   const purchases = next.purchases;
@@ -342,8 +333,9 @@ try {
   check(next.slots === UPGRADES.startItemSlots(effects.itemSlots), `мест на полке по эффектам: ${next.slots} = ${UPGRADES.startItemSlots(effects.itemSlots)}`);
   check(next.spinsLeft === RULES.SPINS_PER_ROUND + effects.firstRoundSpins, `прокруток в первом раунде по эффектам: ${next.spinsLeft} = ${RULES.SPINS_PER_ROUND} + ${effects.firstRoundSpins}`);
   check(next.debt === expectedDebt, `первый долг по эффектам: ${next.debt} = ${expectedDebt}`);
-  check(next.amulets.includes('bell') && next.memory === null, 'амулет из памяти стоит в гнезде, память стёрта: ' + next.amulets.join(', '));
-  check(next.amulets.length === 1, 'в новом забеге только амулет из памяти: ' + next.amulets.join(', '));
+  check(next.amulets.join(',') === 'bell', 'амулет из памяти стоит в гнезде: ' + next.amulets.join(', '));
+  check(next.amulets.length === 1, 'в новом забеге только выбранный амулет памяти: ' + next.amulets.join(', '));
+  check(next.tickets === effects.startTickets, 'память амулета бесплатная: билеты только стартовые');
   check(consoleErrors.length === errorsBeforeRestart, `ошибок консоли в новом забеге нет: ${consoleErrors.length - errorsBeforeRestart}`);
   await shot('soak-4-new-run.png');
 
@@ -354,11 +346,16 @@ try {
   await send('Page.reload');
   await sleep(4000);
   if (await val('window.__g.isChoosingMachine')) { await val('window.__g.machinePick.press(0); 1'); await sleep(300); }
+  // Память — это снимок прошлого забега: после перезагрузки он снова на старте. Здесь отказываемся (✕).
+  const rePick = JSON.parse((await val('(() => { const g = window.__g; return JSON.stringify({ open: g.amuletPick.isOpen, rows: g.amuletPick.rows.length }); })()')) ?? '{}');
+  check(rePick.open === true && rePick.rows === 2, 'после перезагрузки список памяти снова на старте');
+  await val('window.__g.amuletPick.press(9); 1'); // отказ
+  await sleep(400);
   if (await val('window.__g.isChoosingSymbol')) { await val('window.__g.symbolPick.press(0); 1'); await sleep(300); }
   const third = await state();
   const expectedDebt3 = UPGRADES.forgivesDebt(effects.debtForgiveEveryRuns, third.progressRuns) ? 0 : RULES.startDebt(effects.startDebtMul);
   check(samePurchases(third.purchases, purchases), 'localStorage сохранил улучшения после перезагрузки: ' + JSON.stringify(third.purchases));
-  check(third.memory === null, 'память амулета после перезагрузки чиста');
+
   check(third.runs === runsBeforeReload + 1, `перезагрузка начала новый (третий) забег: ${runsBeforeReload} → ${third.runs}`);
   check(samePurchases(third.upgrades, purchases) && sameEffects(third.effects, effects),
     'третий забег: покупки и эффекты те же, что до перезагрузки');
@@ -366,7 +363,7 @@ try {
   check(third.tickets === effects.startTickets && third.slots === UPGRADES.startItemSlots(effects.itemSlots) && third.spinsLeft === RULES.SPINS_PER_ROUND + effects.firstRoundSpins,
     `третий забег: билеты ${third.tickets}, места ${third.slots}, прокрутки ${third.spinsLeft} — по эффектам`);
   check(third.debt === expectedDebt3, `третий забег: первый долг ${third.debt} = ${expectedDebt3}`);
-  check(third.amulets.length === 0, 'память амулета второй раз не выдана: гнёзда пусты');
+  check(third.amulets.length === 0, 'после отказа гнёзда пусты: память не выдана насильно');
   check(consoleErrors.length === errorsBeforeReload, `ошибок консоли после перезагрузки нет: ${consoleErrors.length - errorsBeforeReload}`);
   await shot('soak-5-reload-run.png');
 

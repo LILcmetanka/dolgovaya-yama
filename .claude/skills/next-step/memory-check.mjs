@@ -1,32 +1,29 @@
 /**
- * Проверка памяти амулетов после смерти (шаг 26) на живой сборке в headless Chrome.
+ * Проверка памяти амулетов (шаг 26; переделана шагом 38, DONTLIKE п.2) на живой сборке в headless Chrome.
  * Запуск: node .claude/skills/next-step/memory-check.mjs <scratchpad>, где <scratchpad>/dist — сборка с хуком
  * window.__g (см. hookbuild.sh: «bash .claude/skills/next-step/hookbuild.sh <scratchpad> .»).
  * Снимки — в scratchpad, профиль Chrome — в scratchpad/prof-memory.
  *
- * Правило (DONTLIKE §2, вариант А): после смерти (и только после неё) на экране автомата появляется «витрина
- * памяти»: один амулет из погибшего забега за билеты — 2 за обычный, 3 за редкий. Копии не переносятся,
- * а если билетов не хватает, слота нет совсем. Выбранный амулет стоит в гнезде с первого кадра нового забега
- * и билетов уже не стоит: они списаны на смерти.
+ * Правило шага 38 (DONTLIKE п.2): при старте КАЖДОГО нового забега на экране автомата — список амулетов
+ * прошлого забега (тот же экранный список, что у улучшений, шаг 37). Берут бесплатно: цен в билетах больше нет.
+ * Отказаться можно (✕ или «0») — гнёзда останутся пусты. Выбранный амулет стоит в гнезде с начала забега
+ * и не продаётся. Старой витрины «после смерти за билеты» нет вовсе.
  *
  * Что проверяет:
- *  1) до смерти слота нет;
- *  2) после KABOOM слот есть: панель, заголовок, значки амулетов и цены из memory.ts (не из копии чисел);
- *  3) в витрине только уникальные амулеты забега и только те, на которые хватает билетов;
- *  4) панель внутри чёрного экрана автомата и не залезает на счёт и «ЗАНОВО»;
- *  5) клик по амулету списывает ровно его цену, пишет выбор в localStorage и превращает витрину в «В ПАМЯТИ: …»;
- *  6) второй клик по тому же месту ничего не списывает;
- *  7) новый забег начинается с этим амулетом в гнезде, билетов за него не берёт, память из localStorage стирает;
- *     второй «ЗАНОВО» амулет повторно не выдаёт — память одноразовая;
- *  8) при нехватке билетов (1 билет на цену 2–3) слота нет;
- *  9) после победы слота тоже нет;
- * 10) русский и английский тексты витрины.
- * Порт 8772 — свой: dev-сервер 5173 и порты 8766/8767/8770/8771 из других сценариев не трогаем.
+ *  1) в первом забеге (прошлого забега ещё нет) выбора нет;
+ *  2) смерть записывает амулеты забега в прогресс: runAmulets и runAmuletPicks (без №30 — один выбор);
+ *  3) на старте нового забега список открыт: заголовок, две строки, игра ждёт (canAct false);
+ *  4) выбор бесплатный: билеты не тратятся, амулет в гнезде, список закрыт, крутить можно;
+ *  5) список — снимок прошлого забега: он не тает после выбора (новый забег без смерти видит его снова);
+ *  6) отказ (✕/«0») оставляет гнёзда пустыми;
+ *  7) №30 «Амулет в памяти»: выборов два — список открывается второй раз с остатком;
+ *  8) русский и английский тексты списка.
+ * Порт 8772 — свой: dev-сервер 5173 и порты 8766/8767/8770/8771/8773 из других сценариев не трогаем.
  */
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import './ts-resolve.mjs'; // тот же резолвер, что у симулятора: Node находит './rules' без расширения
+import './ts-resolve.mjs'; // тот же резолвер, что у симулятора: Node находит './memory' без расширения
 const SP = process.argv[2];
 if (!SP) {
   console.log('нужен scratchpad: node memory-check.mjs <scratchpad> (там dist с хуком window.__g)');
@@ -34,7 +31,7 @@ if (!SP) {
 }
 const SHOTS = SP;
 mkdirSync(SHOTS, { recursive: true });
-// Эталоны — из игры, а не из копии чисел: memory.ts решает, что предлагать и по какой цене.
+// Эталоны — из игры, а не из копии чисел: memory.ts решает, что предлагать.
 const SRC = process.env.SIM_SRC ?? fileURLToPath(new URL('../../../src/game/', import.meta.url));
 const MEMORY = await import(SRC + 'memory.ts');
 const AMULETS = await import(SRC + 'amulets.ts');
@@ -63,20 +60,20 @@ try {
   let ok = 0, all = 0;
   const check = (cond, what) => { all++; if (cond) ok++; console.log((cond ? 'OK   ' : 'FAIL ') + what); };
 
-  /** Состояние экрана смерти и витрины памяти — по полям сцены, а не по пикселям. */
+  /** Состояние памяти и забега — по полям сцены и localStorage, а не по пикселям. */
   const state = async () => JSON.parse((await val(`(() => {
     const g = window.__g;
     const b = (o) => { if (!o) return null; const r = o.getBounds(); return { x: Math.round(r.x), y: Math.round(r.y), right: Math.round(r.right), bottom: Math.round(r.bottom), w: Math.round(r.width), h: Math.round(r.height) }; };
+    const progress = (() => { try { return JSON.parse(localStorage.getItem('dolgovaya-yama-progress') ?? 'null'); } catch { return null; } })();
     return JSON.stringify({
-      gameOver: g.isGameOver, endScreen: g.isEndScreenOpen, tickets: g.tickets,
-      options: g.memoryOptions.map((o) => ({ id: o.amulet.id, price: o.price })),
-      chips: g.memoryChips.length,
-      panel: g.memoryPanel.length,
-      box: b(g.memoryBox),
-      title: g.memoryTitleText ? g.memoryTitleText.text : null,
-      amulets: g.amulets.map((a) => a.id),
-      counts: g.amuletCounts,
-      memory: (() => { try { const p = JSON.parse(localStorage.getItem('dolgovaya-yama-progress') ?? 'null'); return p ? p.memoryAmulet ?? null : null; } catch { return 'broken'; } })(),
+      pickOpen: g.amuletPick.isOpen, rows: g.amuletPick.rows.length, choosing: g.isChoosingAmulet,
+      startAmulets: g.startAmulets, picks: g.startAmuletPicks, canAct: g.canUseActions(),
+      amulets: g.amulets.map((a) => a.id), counts: g.amuletCounts, tickets: g.tickets,
+      debt: g.debt, gameOver: g.isGameOver, endScreen: g.isEndScreenOpen,
+      pickTitle: (() => { const t = g.amuletPick.parts.find((part) => typeof part.text === 'string' && part.style && part.style.fontSize === '15px'); return t ? t.text : null; })(),
+      texts: g.children.list.filter((o) => typeof o.text === 'string' && o.visible).map((o) => o.text),
+      progressAmulets: progress ? progress.runAmulets ?? null : 'broken',
+      progressPicks: progress ? progress.runAmuletPicks ?? null : 'broken',
       badge: g.amuletRack.badges[0] ? { visible: g.amuletRack.badges[0].visible, key: g.amuletRack.badges[0].texture.key } : null,
     });
   })()`)) ?? '{}');
@@ -94,7 +91,7 @@ try {
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1 });
     await sleep(500);
   };
-  const clickChip = async (index) => clickAt(await pagePoint(`g.memoryChips[${index}].getBounds()`));
+  const clickRow = async (index) => clickAt(await pagePoint(`g.amuletPick.rows[${index}].getBounds()`));
   const moveAway = async () => {
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 8, y: 8 });
     await val('window.__g.tooltip.hide(); 1');
@@ -105,171 +102,132 @@ try {
   const setAmulets = async (ids) => {
     const amulets = ids.map((amuletId) => byId(amuletId));
     const counts = Object.fromEntries(ids.map((amuletId) => [amuletId, 1]));
-    const done = await val(`(() => { const g = window.__g; g.amulets = ${JSON.stringify(amulets)}; g.amuletCounts = ${JSON.stringify(counts)}; return g.amulets.length; })()`);
+    const done = await val(`(() => { const g = window.__g; g.amulets = ${JSON.stringify(amulets)}; g.amuletCounts = ${JSON.stringify(counts)}; g.amuletRack.setAmulets(g.amulets, g.amuletCounts); return g.amulets.length; })()`);
     if (done !== ids.length) throw new Error('не удалось положить амулеты: ' + done);
     await sleep(150);
   };
-  /** Смерть: KABOOM 1,8 с + 0,9 с, затемнение 0,7 с — но ждём не «по часам», а пока экран смерти и витрина
-   *  памяти правда не появятся: в headless бывает медленнее, и фиксированная пауза ловила пустой экран. */
+  /** Смерть: ждём не «по часам», а пока забег правда не кончился (в headless бывает медленнее). */
   const die = async () => {
-    await val('window.__g.kaboom(); 1');
+    await val('window.__g.finishTutorial(); window.__g.kaboom(); 1');
     for (let i = 0; i < 48; i++) {
-      if (await val('window.__g.isGameOver && (window.__g.upgradeScreen.isOpen || window.__g.memoryBox !== null)')) break;
+      if (await val('window.__g.isGameOver && (window.__g.upgradeScreen.isOpen || window.__g.endScreenCleanup !== null)')) break;
       await sleep(250);
     }
     await sleep(400);
-    // Шаг 28: после смерти сверху ложится экран улучшений. Берём одно бесплатное клавишей, экран закрывается
-    // (билетов здесь меньше 6 — второй фазы нет), и на экране смерти снова видна витрина памяти.
-    // №30 «амулет не сгорает при смерти» нарочно пропускаем: он делает перенос бесплатным, а здесь проверяются
-    // именно цены витрины. Если он единственный в предложении (так не бывает), берём его — сценарий не падает.
-    if (await val('window.__g.upgradeScreen.isOpen')) {
-      const safe = await val(`(() => { const list = window.__g.upgradeOfferList;
-        const index = list.findIndex((upgrade) => upgrade.id !== 'amulet-survives-death');
-        return index < 0 ? 0 : index; })()`);
-      await val(`window.__g.upgradeScreen.press(${safe}); 1`);
-      await sleep(600);
-    }
   };
   /** Новый забег: сцена перезапускается и строится заново. */
   const restart = async () => {
     await val('window.__g.restartGame(); 1');
     await sleep(4200);
   };
+  /** Прогресс с чистого листа: список памяти и покупки обнулены (язык — русский). */
+  const freshProgress = async (extra = {}) => {
+    await val(`localStorage.setItem('dolgovaya-yama-lang', 'ru');
+      localStorage.setItem('dolgovaya-yama-progress', JSON.stringify({ tutorialDone: true, patterns: [], achievements: [], runAmulets: [], runAmuletPicks: 1, upgrades: {}, runs: 1, ...${JSON.stringify(extra)} })); 1`);
+    await send('Page.reload');
+    await sleep(3500);
+  };
 
   await send('Runtime.enable'); await send('Page.enable');
   await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: 'http://127.0.0.1:8772/' });
   await sleep(3500);
-  // Язык — из localStorage (headless Chrome англоязычный), прогресс — с чистого листа.
-  await val(`localStorage.setItem('dolgovaya-yama-lang', 'ru'); localStorage.removeItem('dolgovaya-yama-progress'); 1`);
-  await send('Page.reload');
-  await sleep(3500);
+  await freshProgress();
   check((await val('typeof window.__g')) === 'object', 'hook: сцена в window.__g');
-  await val('window.__g.finishTutorial(); 1');
-  await sleep(900);
 
-  // ---------- Русский: смерть с двумя амулетами и тремя билетами ----------
+  // ---------- 1. Первый забег: памяти нет ----------
+  const first = await state();
+  check(first.pickOpen === false && first.startAmulets.length === 0, 'первый забег: прошлого забега нет — выбора тоже нет');
+  check(first.canAct === true, 'без памяти игра сразу идёт');
+  check(Array.isArray(first.progressAmulets) && first.progressAmulets.length === 0, 'в прогрессе пустой список амулетов: ' + JSON.stringify(first.progressAmulets));
+
+  // ---------- 2. Смерть записывает амулеты забега ----------
   await setAmulets(['bell', 'boost']);
-  await val('window.__g.tickets = 3; window.__g.refreshHud(); 1');
-  await sleep(200);
-  const before = await state();
-  check(before.box === null && before.chips === 0, 'до смерти витрины памяти нет');
-
   await die();
-  const s1 = await state();
-  const expected = MEMORY.memoryOptions(['bell', 'boost'], 3);
-  check(s1.gameOver === true && s1.endScreen === true, 'KABOOM: экран смерти открыт');
-  check(s1.box !== null, 'после смерти появилась витрина памяти');
-  check(s1.title === 'ВИТРИНА ПАМЯТИ', 'RU: заголовок витрины — ' + JSON.stringify(s1.title));
-  check(s1.chips === 2 && s1.options.length === 2, 'в витрине два амулета забега (' + JSON.stringify(s1.options) + ')');
-  check(
-    JSON.stringify(s1.options) === JSON.stringify(expected.map((option) => ({ id: option.amulet.id, price: option.price }))),
-    'варианты и цены — из memory.ts: ' + JSON.stringify(expected.map((option) => ({ id: option.amulet.id, price: option.price }))),
-  );
-  check(s1.options.every((option) => MEMORY.memoryPrice(byId(option.id).rarity) === option.price), 'цена каждого — по его редкости');
-  check(s1.tickets === 3, 'билеты до выбора целы (3)');
-  check(s1.memory === null, 'до выбора памяти нет');
-  // Панель — внутри чёрного экрана автомата (SCREEN) и выше счёта с кнопкой «ЗАНОВО».
-  const screen = LAYOUT.SCREEN;
-  const insideScreen =
-    s1.box.x >= screen.x - screen.width / 2 && s1.box.right <= screen.x + screen.width / 2 &&
-    s1.box.y >= screen.y - screen.height / 2 && s1.box.bottom <= screen.y + screen.height / 2;
-  check(insideScreen, `панель внутри экрана автомата (панель ${JSON.stringify(s1.box)}, экран ${screen.x - screen.width / 2}…${screen.x + screen.width / 2})`);
-  check(s1.box.bottom < 500, 'панель не залезает на счёт (500) и кнопку «ЗАНОВО» (566): низ ' + s1.box.bottom);
-  check(s1.box.w <= screen.width - 12, 'панель по ширине уже экрана: ' + s1.box.w + ' ≤ ' + (screen.width - 12));
-  await moveAway();
-  await shot('memory-ru-death.png');
+  const dead = await state();
+  check(dead.gameOver === true, 'KABOOM: забег кончился');
+  check(JSON.stringify(dead.progressAmulets) === JSON.stringify(['bell', 'boost']), 'смерть записала амулеты забега в прогресс: ' + JSON.stringify(dead.progressAmulets));
+  check(dead.progressPicks === MEMORY.MEMORY_PICKS_BASE, 'без №30 выборов один: ' + dead.progressPicks);
+  check(dead.texts.every((text) => !['ВИТРИНА ПАМЯТИ', 'В ПАМЯТИ:'].includes(text)), 'старой витрины «после смерти за билеты» на экране смерти нет');
 
-  // Выбор: клик по обычному амулету (🔔 за 2 билета) — билеты списываются, выбор уходит в localStorage.
-  const bellIndex = s1.options.findIndex((option) => option.id === 'bell');
-  const bellPrice = s1.options[bellIndex].price;
-  const chipPoint = await pagePoint(`g.memoryChips[${bellIndex}].getBounds()`);
-  await clickChip(bellIndex);
-  const s2 = await state();
-  check(s2.tickets === 3 - bellPrice, `клик списал цену амулета: 3 → ${s2.tickets} (цена ${bellPrice})`);
-  check(s2.memory === 'bell', 'выбор записан в localStorage: ' + JSON.stringify(s2.memory));
-  check(s2.chips === 0 && s2.title === 'В ПАМЯТИ: ' + byId('bell').name.ru, 'витрина стала строкой памяти: ' + JSON.stringify(s2.title));
-  check(s2.box !== null && s2.panel === 3, 'строка памяти нарисована (панель, заголовок, значок)');
-  // Второй клик по тому же месту: значков больше нет, билеты не тратятся.
-  await clickAt(chipPoint);
-  const s3 = await state();
-  check(s3.tickets === s2.tickets && s3.memory === 'bell', 'второй клик ничего не списал и память не сменил');
-  await moveAway();
-  await shot('memory-ru-kept.png');
-
-  // ---------- Новый забег: амулет из памяти стоит в гнезде и ничего не стоит ----------
+  // ---------- 3. Новый забег: список памяти на экране автомата ----------
   await restart();
-  const s4 = await state();
-  check((await val('typeof window.__g')) === 'object', 'после «ЗАНОВО» сцена снова жива');
-  check(JSON.stringify(s4.amulets) === JSON.stringify(['bell']), 'новый забег начался с 🔔 в гнезде: ' + JSON.stringify(s4.amulets));
-  check(s4.counts.bell === 1, 'копия амулета одна: ' + JSON.stringify(s4.counts));
-  check(s4.tickets === 0, 'за память в новом забеге билеты не брали (' + s4.tickets + ')');
-  check(s4.memory === null, 'память прочитана один раз и стёрта: ' + JSON.stringify(s4.memory));
-  check(s4.badge && s4.badge.visible === true && s4.badge.key === 'amulet-bell', 'значок 🔔 виден в первом гнезде: ' + JSON.stringify(s4.badge));
+  const offered = await state();
+  const expected = MEMORY.memoryOptions(['bell', 'boost']);
+  check(offered.pickOpen === true && offered.choosing === true, 'новый забег: список памяти открыт');
+  check(offered.rows === expected.length && offered.rows === 2, 'в списке два амулета прошлого забега: ' + offered.rows);
+  check(offered.canAct === false, 'пока память не выбрана, крутить нельзя');
+  check(offered.startAmulets.join(',') === 'bell,boost', 'предлагаются именно амулеты прошлого забега: ' + offered.startAmulets.join(', '));
+  check(offered.texts.includes(MEMORY.memoryOptions(['bell']).length ? 'АМУЛЕТ ИЗ ПРОШЛОГО ЗАБЕГА' : ''), 'RU: заголовок списка — АМУЛЕТ ИЗ ПРОШЛОГО ЗАБЕГА');
+  check(offered.texts.includes('Возьми один бесплатно — или откажись'), 'RU: подпись «Возьми один бесплатно — или откажись»');
+  check(offered.texts.every((text) => !/1–3|клавиш/.test(text)), 'подсказок про клавиши на списке нет');
+  const screen = LAYOUT.SCREEN;
+  const insideScreen = await val(`(() => { const g = window.__g; const L = g.amuletPick; const r = L.rows.map((z) => z.getBounds());
+    return ${JSON.stringify(screen)} && r.every((b) => b.left >= ${screen.x - screen.width / 2} && b.right <= ${screen.x + screen.width / 2} && b.top >= ${screen.y - screen.height / 2} && b.bottom <= ${screen.y + screen.height / 2}); })()`);
+  check(insideScreen === true, 'список целиком на экране автомата (шаг 37)');
+  await moveAway();
+  await shot('memory-ru-start.png');
+
+  // ---------- 4. Бесплатный выбор: билетов не тратит, амулет в гнезде ----------
+  await clickRow(0);
+  const picked = await state();
+  check(picked.pickOpen === false && picked.choosing === false, 'после выбора список закрыт');
+  check(picked.amulets.join(',') === 'bell', 'выбранный 🔔 стоит в гнезде: ' + picked.amulets.join(', '));
+  check(picked.counts.bell === 1, 'копия одна: ' + JSON.stringify(picked.counts));
+  check(picked.tickets === 0, 'память бесплатная: билеты не списаны (' + picked.tickets + ')');
+  check(picked.canAct === true, 'амулет выбран — крутить можно');
+  check(picked.badge && picked.badge.visible === true && picked.badge.key === 'amulet-bell', 'значок 🔔 виден в первом гнезде: ' + JSON.stringify(picked.badge));
   await moveAway();
   await shot('memory-ru-new-run.png');
 
-  // ---------- Второй «ЗАНОВО»: память одноразовая — тот же амулет второй раз не выдают ----------
+  // ---------- 5. Список — снимок прошлого забега, он не тает от выбора ----------
   await restart();
   const again = await state();
-  check(JSON.stringify(again.amulets) === JSON.stringify([]), 'во втором забеге амулет заново не выдан (халявы нет): ' + JSON.stringify(again.amulets));
-  check(again.counts.bell === undefined, 'копий 🔔 в гнезде нет: ' + JSON.stringify(again.counts));
-  check(again.memory === null, 'память после выдачи пуста и не оживает: ' + JSON.stringify(again.memory));
-  await moveAway();
-  await shot('memory-ru-second-run.png');
+  check(again.pickOpen === true && again.startAmulets.join(',') === 'bell,boost', 'новый забег без смерти снова видит тех же амулетов: ' + again.startAmulets.join(', '));
+  check(again.progressAmulets.join(',') === 'bell,boost', 'выбор память не стирает: в прогрессе те же амулеты');
 
-  // ---------- Нехватка билетов: слота нет совсем ----------
-  await setAmulets(['boost']); // редкий: 3 билета
-  await val('window.__g.tickets = 1; window.__g.refreshHud(); 1');
-  await sleep(200);
-  await die();
-  const s5 = await state();
-  check(s5.gameOver === true, 'вторая смерть: экран смерти открыт');
-  check(s5.options.length === 0 && s5.box === null && s5.chips === 0, 'при 1 билете витрины памяти нет');
-  check(s5.memory === null, 'нехватка билетов память не пишет');
+  // ---------- 6. Отказ: гнёзда пусты ----------
+  await val('window.__g.amuletPick.press(9); 1'); // «0» — закрыть список (отказ)
+  await sleep(500);
+  const refused = await state();
+  check(refused.pickOpen === false && refused.choosing === false, 'отказ закрыл список');
+  check(refused.amulets.length === 0, 'после отказа гнёзда пусты: ' + refused.amulets.join(', '));
+  check(refused.canAct === true, 'отказ не держит игру');
   await moveAway();
-  await shot('memory-ru-poor.png');
+  await shot('memory-ru-refused.png');
 
-  // ---------- Английский: та же витрина, тексты другие ----------
-  await val(`localStorage.setItem('dolgovaya-yama-lang', 'en')`);
+  // ---------- 7. №30 «Амулет в памяти»: выборов два ----------
+  await freshProgress({ upgrades: { 'amulet-survives-death': 1 }, runAmulets: ['bell', 'boost'], runAmuletPicks: 2 });
+  const two = await state();
+  check(two.pickOpen === true && two.picks === 2, '№30: на старте разрешено два амулета (' + two.picks + ')');
+  check(two.texts.some((text) => String(text).includes('Можно взять ещё один')), '№30: подпись «Можно взять ещё один»');
+  await clickRow(0);
+  const afterOne = await state();
+  check(afterOne.amulets.length === 1 && afterOne.picks === 1, '№30: первый взят, осталось ещё одно место');
+  check(afterOne.pickOpen === true && afterOne.rows === 1, '№30: список открылся второй раз с остатком (строк: ' + afterOne.rows + ')');
+  await clickRow(0);
+  const afterTwo = await state();
+  check(afterTwo.amulets.length === 2 && afterTwo.picks === 0, '№30: оба амулета в гнёздах — ' + afterTwo.amulets.join(', '));
+  check(afterTwo.pickOpen === false && afterTwo.canAct === true, '№30: выборов больше нет — игра идёт');
+  await moveAway();
+  await shot('memory-ru-two.png');
+
+  // ---------- 8. Английский ----------
+  await val(`localStorage.setItem('dolgovaya-yama-lang', 'en');
+    localStorage.setItem('dolgovaya-yama-progress', JSON.stringify({ tutorialDone: true, patterns: [], achievements: [], runAmulets: ['boost'], runAmuletPicks: 1, upgrades: {}, runs: 1 })); 1`);
   await send('Page.reload');
-  await sleep(4000);
-  check((await val('typeof window.__g')) === 'object', 'EN: сцена снова в window.__g');
-  await val('window.__g.finishTutorial(); 1');
-  await sleep(700);
-  await setAmulets(['boost']);
-  await val('window.__g.tickets = 3; window.__g.refreshHud(); 1');
-  await sleep(200);
-  await die();
+  await sleep(3500);
   const en = await state();
-  check(en.title === 'MEMORY SHOWCASE', 'EN: заголовок витрины — ' + JSON.stringify(en.title));
-  check(en.chips === 1 && en.options.length === 1 && en.options[0].price === MEMORY.memoryPrice(byId('boost').rarity), 'EN: редкий ⚡ за 3 билета: ' + JSON.stringify(en.options));
+  check(en.pickOpen === true && en.rows === 1, 'EN: список памяти открыт');
+  check(en.texts.includes('AMULET FROM THE LAST RUN'), 'EN: заголовок — AMULET FROM THE LAST RUN');
+  check(en.texts.includes('Take one for free — or refuse'), 'EN: подпись — Take one for free — or refuse');
   await moveAway();
-  await shot('memory-en-death.png');
-  // Отказ крестиком: витрина убирается, память не пишется, билеты целы. Потом витрину зовём снова — и берём амулет.
-  const closePoint = await pagePoint('g.memoryPanel.find((part) => part.text === "✕").getBounds()');
-  await clickAt(closePoint);
-  const closed = await state();
-  check(closed.box === null && closed.chips === 0 && closed.options.length === 0, 'крестик убирает витрину с экрана смерти');
-  check(closed.tickets === 3 && closed.memory === null, 'отказ ничего не пишет и билеты не трогает');
-  await val('window.__g.showMemorySlot(); 1');
-  await sleep(400);
-  await clickChip(0);
-  const en2 = await state();
-  check(en2.memory === 'boost' && en2.tickets === 0, 'EN: клик записал ⚡ и списал 3 билета');
-  check(en2.title === 'REMEMBERED: ' + byId('boost').name.en, 'EN: строка памяти — ' + JSON.stringify(en2.title));
+  await shot('memory-en-start.png');
+  await clickRow(0);
+  const enPicked = await state();
+  check(enPicked.amulets.join(',') === 'boost' && enPicked.tickets === 0, 'EN: ⚡ взят бесплатно, в гнезде');
   await moveAway();
-  await shot('memory-en-kept.png');
-
-  // ---------- Победа: витрины памяти нет (она только после смерти) ----------
-  await restart();
-  await val('window.__g.startVictory(); 1');
-  await sleep(5200);
-  const victory = await state();
-  check(victory.gameOver === true && victory.endScreen === true, 'экран победы открыт');
-  check(victory.box === null && victory.options.length === 0 && victory.chips === 0, 'после победы витрины памяти нет');
-  await moveAway();
-  await shot('memory-en-victory.png');
+  await shot('memory-en-new-run.png');
 
   console.log(`итог ${ok} из ${all}`);
   ws.close();

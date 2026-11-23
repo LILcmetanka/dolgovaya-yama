@@ -13,8 +13,8 @@
  *  1) панель: вход клавишей A и табличкой на стене, шесть строк, Пробел/Enter/Esc/«0»/✕ закрывают, ввод не застревает;
  *  2) обмен символа: выбор «что убрать» и «на что менять», 2 билета списаны, веса двух символов поменялись, сетка перерисована;
  *  3) лотерея: 1 билет, жребий подставлен, эффект в состоянии и в множителе выигрыша;
- *  4) обслуживание: цена от долга, доля черепов ниже, второй раз не берут, чистка тикает в следующем раунде;
- *  5) продажа: фишки по цене за клетку, символ выпадает из автомата до конца раунда;
+ *  4) обслуживание: цена от долга (20%, минимум 30 — шаг 38), доля черепов ниже, второй раз не берут, чистка тикает;
+ *  5) продажа: цена × клетки × текущий множитель серии (шаг 38), символ выпадает из автомата до конца раунда;
  *  6) долговая биржа: фишки списаны, следующий долг меньше на выкупленную долю;
  *  7) кража: успех даёт фишки, провал — сразу KABOOM без очков и магазина;
  *  8) одноразовость: повторное действие в раунде не проходит и денег не берёт;
@@ -243,15 +243,21 @@ try {
 
   // ---------- Д. Продажа символа ----------
   await setGrid();
+  // Шаг 38 (DONTLIKE п.4): цена продажи соразмерна текущему разгону — ставим серию 4, значит множитель ×5.
+  await val('window.__g.streak = 4; window.__g.refreshHud(); 1');
+  await sleep(200);
   const e0 = await state();
+  const saleMultiplier = await val('window.__g.multiplier()');
+  check(saleMultiplier === 5, `продажа: множитель серии ×5 (${saleMultiplier})`);
   await key('A');
   await key('5');
   const e1 = await state();
   check(e1.rows === 3, 'на продажу — три символа сетки: ' + e1.rows);
   await key('1'); // вишня
   const e2 = await state();
-  const salePrice = ACT.salePrice(symbolById('cherry'), 4);
-  check(e2.balance === e0.balance + salePrice, `продажа дала ${salePrice} за клетки: ${e0.balance} → ${e2.balance}`);
+  const salePrice = ACT.salePrice(symbolById('cherry'), 4, saleMultiplier);
+  check(e2.balance === e0.balance + salePrice, `продажа дала ${salePrice} за 4 клетки на ×${saleMultiplier}: ${e0.balance} → ${e2.balance}`);
+  check(salePrice === ACT.salePrice(symbolById('cherry'), 4) * 5, 'и это ровно впятеро больше базовой цены за клетки');
   check(e2.actionState.sold.includes('cherry'), 'вишня ушла из автомата до конца раунда: ' + JSON.stringify(e2.actionState.sold));
   check(e2.weightCherry === 0, 'проданная вишня не выпадает: вес ' + e2.weightCherry);
   check((await val('window.__g.currentSkullShare()')) > 0, 'доля черепов считается по новому составу автомата');
@@ -327,7 +333,7 @@ try {
   await send('Emulation.setEmulatedMedia', { features: [{ name: 'hover', value: 'none' }, { name: 'pointer', value: 'coarse' }] });
   await send('Page.reload');
   await sleep(4200);
-  await val(`localStorage.setItem('dolgovaya-yama-progress', JSON.stringify({ tutorialDone: true, patterns: [], achievements: [], memoryAmulet: null, upgrades: {}, runs: 0 })); 1`);
+  await val(`localStorage.setItem('dolgovaya-yama-progress', JSON.stringify({ tutorialDone: true, patterns: [], achievements: [], runAmulets: [], runAmuletPicks: 1, upgrades: {}, runs: 0 })); 1`);
   await send('Page.reload');
   await sleep(4200);
   await val('window.__g.finishTutorial(); 1');

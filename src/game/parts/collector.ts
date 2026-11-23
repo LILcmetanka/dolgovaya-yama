@@ -133,10 +133,11 @@ export class Collector {
     if (debt === this.noteDebt) this.redrawNote();
   }
 
-  /** Нарисовать записку заново по запомненным числам. */
+  /** Нарисовать записку заново по запомненным числам. Долга нет (прощение) — полоска полная, деления на 0 нет. */
   private redrawNote(): void {
-    const paid = Math.min(1, this.noteBalance / this.noteDebt);
-    const pending = Math.min(1 - paid, this.notePot / this.noteDebt);
+    const owed = this.noteDebt > 0 ? this.noteDebt : 0;
+    const paid = owed > 0 ? Math.min(1, this.noteBalance / owed) : 1;
+    const pending = owed > 0 ? Math.min(1 - paid, this.notePot / owed) : 0;
     drawNoteTexture(
       this.scene,
       NOTE.width,

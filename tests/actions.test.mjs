@@ -57,11 +57,14 @@ test('новый раунд: одноразовые снова доступны,
 });
 
 test('обслуживание автомата: цена от долга, минимум, доля черепов на два раунда без повторной покупки', () => {
-  assert.equal(ACT.servicePrice(150), 15, '10% от долга 150 — 15');
-  assert.equal(ACT.servicePrice(7000), 700, '10% от долга 7000 — 700');
+  // Шаг 38 (DONTLIKE п.3, решение СОЛО): обслуживание дороже — 20% долга и минимум 30 фишек.
+  assert.equal(ACT.ACTION_SERVICE_SHARE, 0.2, 'доля долга 20%');
+  assert.equal(ACT.ACTION_SERVICE_MIN, 30, 'минимум 30 фишек');
+  assert.equal(ACT.servicePrice(150), 30, '20% от долга 150 — ровно минимум 30');
+  assert.equal(ACT.servicePrice(7000), 1400, '20% от долга 7000 — 1400');
   assert.equal(ACT.servicePrice(0), ACT.ACTION_SERVICE_MIN, 'без долга — минимум');
-  assert.equal(ACT.servicePrice(1200), 120, 'цена округляется до 5, как в магазине');
-  assert.equal(ACT.servicePrice(1202), I.roundPrice(120.2), 'округление то же, что у цен магазина');
+  assert.equal(ACT.servicePrice(1200), 240, '20% от долга 1200 — 240');
+  assert.equal(ACT.servicePrice(1202), I.roundPrice(240.4), 'округление то же, что у цен магазина');
   const state = ACT.freshActions();
   assert.equal(ACT.serviceAllowed(state), true, 'пока не чищено — можно');
   assert.equal(ACT.serviceSkullDelta(state), 0, 'без чистки поправки нет');
@@ -100,16 +103,24 @@ test('лотерея: три бафа и три дебафа, баф/дебаф 
   assert.equal(ACT.actionSkullDelta(skullLottery), -0.03 - 0.04, 'лотерея и чистка складываются');
 });
 
-test('кража: шанс падает с раундом, успех платит долю долга, провал — провал', () => {
-  assert.equal(ACT.theftChance(1), 0.55, 'первый раунд — 55%');
-  assert.equal(ACT.theftChance(2), 0.52, 'второй — на 3 п.п. ниже');
-  assert.equal(ACT.theftChance(11), ACT.ACTION_THEFT_CHANCE_MIN, 'на 11-м — нижняя граница 25%');
-  assert.equal(ACT.theftChance(40), ACT.ACTION_THEFT_CHANCE_MIN, 'ниже границы не падает');
+test('кража: шанс растёт с раундом до потолка, успех платит долю долга, провал — провал', () => {
+  // Шаг 38 (DONTLIKE п.14, решение СОЛО): начинать с малого и расти — 25% + 5 п.п. за раунд, потолок 60%.
+  assert.equal(ACT.ACTION_THEFT_CHANCE_START, 0.25, 'первый раунд — 25%');
+  assert.equal(ACT.ACTION_THEFT_CHANCE_STEP, 0.05, 'шаг 5 п.п.');
+  assert.equal(ACT.ACTION_THEFT_CHANCE_MAX, 0.6, 'потолок 60%');
+  assert.equal(ACT.theftChance(1), 0.25, 'в первом раунде 25%');
+  assert.equal(ACT.theftChance(2), 0.3, 'во втором — на 5 п.п. выше');
+  assert.equal(ACT.theftChance(5), 0.45, 'в пятом — 45%');
+  assert.equal(ACT.theftChance(8), 0.6, 'в восьмом — потолок 60%');
+  assert.equal(ACT.theftChance(40), ACT.ACTION_THEFT_CHANCE_MAX, 'выше потолка не растёт');
+  assert.equal(ACT.theftChance(Number.NaN), ACT.ACTION_THEFT_CHANCE_START, 'мусор в раунде — как первый');
   assert.equal(ACT.theftReward(150), 40, 'доля маленького долга упирается в минимум 40');
   assert.equal(ACT.theftReward(7000), 1750, 'четверть долга 7000');
-  assert.equal(ACT.theftSucceeds(1, () => 0.1), true, '0,1 меньше 55% — успех');
-  assert.equal(ACT.theftSucceeds(1, () => 0.9), false, '0,9 — провал');
-  assert.equal(ACT.theftSucceeds(11, () => 0.3), false, 'в 11-м раунде 30% — уже провал (шанс 25%)');
+  assert.equal(ACT.theftSucceeds(1, () => 0.1), true, '0,1 меньше 25% — успех');
+  assert.equal(ACT.theftSucceeds(1, () => 0.3), false, '0,3 в первом раунде — уже провал (шанс 25%)');
+  assert.equal(ACT.theftSucceeds(2, () => 0.28), true, '0,28 во втором раунде — успех (шанс 30%)');
+  assert.equal(ACT.theftSucceeds(8, () => 0.55), true, 'на потолке и 0,55 — успех');
+  assert.equal(ACT.theftSucceeds(8, () => 0.9), false, '0,9 — провал даже на потолке');
   assert.equal(ACT.theftSucceeds(1, () => Number.NaN), false, 'мусор — провал, а не случайная смерть');
 });
 
@@ -123,11 +134,20 @@ test('продажа символа: клетки на сетке, цена за
   assert.equal(ACT.symbolCells(grid, 'lemon'), 3, 'три лимона');
   assert.equal(ACT.symbolCells(grid, 'skull'), 1, 'череп считается, но не продаётся');
   assert.equal(ACT.symbolCells(null, 'cherry'), 0, 'сетки ещё нет');
-  assert.equal(ACT.salePrice(symbolById('cherry'), 3), 12, 'вишня по 4 за клетку');
+  assert.equal(ACT.salePrice(symbolById('cherry'), 3), 12, 'без множителя — вишня по 4 за клетку');
   assert.equal(ACT.salePrice(symbolById('seven'), 3), 75, 'семёрка по 25');
-  assert.equal(ACT.salePrice(symbolById('skull'), 3), 0, 'череп ничего не стоит — продать нельзя');
+  // Шаг 38 (DONTLIKE п.4, решение СОЛО): цена × клетки × текущий множитель серии, с потолком цены.
+  assert.equal(ACT.salePrice(symbolById('cherry'), 3, 5), 60, 'на ×5 — впятеро больше (4 × 3 × 5)');
+  assert.equal(ACT.salePrice(symbolById('seven'), 3, 4), 300, 'семёрка на ×4 — 300');
+  assert.equal(ACT.salePrice(symbolById('cherry'), 3, ACT.ACTION_SALE_MULT_CAP), 120, 'на потолке множителя — 10×');
+  assert.equal(ACT.salePrice(symbolById('cherry'), 3, 25), 120, 'выше потолка множитель не растёт');
+  assert.equal(ACT.salePrice(symbolById('cherry'), 3, 1.4), 17, 'дробный множитель считается: 4 × 3 × 1,4 = 16,8 → 17');
+  assert.equal(ACT.salePrice(symbolById('cherry'), 3, 0.5), 12, 'множитель меньше 1 — как ×1 (разгон не штрафует)');
+  assert.equal(ACT.salePrice(symbolById('cherry'), 3, 0), 12, 'ноль — как ×1, а не бесплатно');
+  assert.equal(ACT.salePrice(symbolById('cherry'), 3, Number.NaN), 12, 'мусор — как ×1');
+  assert.equal(ACT.salePrice(symbolById('skull'), 3, 9), 0, 'череп ничего не стоит — продать нельзя');
   assert.equal(ACT.salePrice(symbolById('joker'), 3), 0, 'джокер тоже');
-  assert.equal(ACT.salePrice(symbolById('cherry'), 0), 0, 'нет клеток — нет фишек');
+  assert.equal(ACT.salePrice(symbolById('cherry'), 0, 9), 0, 'нет клеток — нет фишек');
 });
 
 test('долговая биржа: платишь меньше, чем срезаешь с долга следующего раунда', () => {

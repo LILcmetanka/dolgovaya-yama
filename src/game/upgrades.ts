@@ -19,8 +19,9 @@ export type UpgradeGroup = 'spins' | 'debt' | 'chips' | 'tickets' | 'items' | 'a
 
 /**
  * Id пула. Первая партия (28а) — 11 штук; вторая (28б) — ещё 13: билеты (№16–18), предметы (№21–25),
- * амулеты (№26–30); третья (28в) — 10: сетка (№31–35) и магазин (№36–40); четвёртая (28г) — 8:
- * кассета (№42, 44, 45) и прочее (№46–50).
+ * амулеты (№26–30); третья (28в) — 10: сетка (№31–35) и магазин (№36–40); четвёртая (28г) — кассета
+ * (№42, 44, 45) и прочее (№48–50). №46 «+5% рекорда к стартовым фишкам» и №47 «билет за ачивку» удалены
+ * шагом 38 (`DONTLIKE.md` п.1 и п.10): пул 42 → 40.
  */
 export type UpgradeId =
   | 'spin-first-round'
@@ -66,9 +67,7 @@ export type UpgradeId =
   | 'tape-keeps-streak'
   | 'tape-free'
   | 'tape-refund-tickets'
-  // 28г: прочее (№46–50)
-  | 'record-start-chips'
-  | 'achievement-ticket'
+  // 28г: прочее (№48–50)
   | 'machine-no-swap'
   | 'machine-start-pick'
   | 'skull-cancel';
@@ -104,7 +103,7 @@ export interface UpgradeGain {
   amuletMaxCopies?: number; // прибавка к потолку копий любого амулета (перемножается по копиям улучшения, №27)
   firstSocketFree?: number; // 1 — первое гнездо в забеге бесплатно (№28)
   rareAmuletFirstShop?: number; // 1 — в первом магазине всегда есть редкий амулет (№29)
-  deathAmuletSave?: number; // 1 — при смерти один амулет не сгорает (№30)
+  deathAmuletSave?: number; // 1 — при выборе памяти на старте можно взять на один амулет больше (№30)
   // Третья партия (28в)
   skullShareDelta?: number; // поправка к доле черепов, складывается со сделками и колокольчиком (№31)
   startJoker?: number; // 1 — на первой сетке забега джокер (№32)
@@ -120,8 +119,6 @@ export interface UpgradeGain {
   rewindKeepsStreak?: number; // 1 — откат кассетой не сбрасывает серию (№42)
   freeTape?: number; // 1 — кассета в магазине стоит 0 билетов (№44)
   rewindRefundsTickets?: number; // 1 — откат возвращает билеты, потраченные после записи (№45)
-  recordStartShare?: number; // доля рекорда фишек, с которой начинается забег (№46)
-  achievementTickets?: number; // билетов за каждую ачивку забега (№47)
   noMachineSwap?: number; // 1 — автомат больше не меняется сам в начале раунда (№48)
   startMachinePick?: number; // 1 — перед забегом игрок выбирает автомат (№49)
   skullCancel?: number; // 1 — раз за забег можно отменить выпавший череп (№50)
@@ -169,13 +166,12 @@ export const UPGRADE_SHOP_PRICE_MUL = 0.9; // №36: всё в магазине 
 export const UPGRADE_OFFER_ROW_BONUS = 1; // №37: в торговом автомате на один ряд предметов больше
 export const UPGRADE_TICKET_SHARE_START = 0.3; // №38: первый билет за фишки — 30% банка вместо 40%
 // ---------- Числа четвёртой партии (28г) ----------
-export const UPGRADE_RECORD_START_SHARE = 0.05; // №46: забег начинается с 5% рекорда лучшего забега по фишкам
-export const UPGRADE_ACHIEVEMENT_TICKETS = 1; // №47: каждая ачивка забега даёт 1 билет
+export const MEMORY_PICKS_UPGRADE = 1; // №30: ещё один амулет из прошлого забега можно взять на старте
 
 /**
- * Пул — 42 улучшения (номера — исходные из `DONTLIKE.md` §1): 11 первой партии (28а), 13 второй (28б),
- * 10 третьей (28в), 8 четвёртой (28г). Прокрутки (№1, 3, 4), долг (№6, 7, 8, 10), фишки (№12–15); билеты (№16–18),
- * предметы (№21–25), амулеты (№26–30); сетка (№31–35), магазин (№36–40); кассета (№42, 44, 45) и прочее (№46–50).
+ * Пул — 40 улучшений (номера — исходные из `DONTLIKE.md` §1): 11 первой партии (28а), 13 второй (28б),
+ * 10 третьей (28в), 6 четвёртой (28г). Прокрутки (№1, 3, 4), долг (№6, 7, 8, 10), фишки (№12–15); билеты (№16–18),
+ * предметы (№21–25), амулеты (№26–30); сетка (№31–35), магазин (№36–40); кассета (№42, 44, 45) и прочее (№48–50).
  */
 export const UPGRADES: Upgrade[] = [
   {
@@ -333,14 +329,6 @@ export const UPGRADES: Upgrade[] = [
   },
   // ---------- Четвёртая партия (28г): прочее ----------
   {
-    id: 'record-start-chips', group: 'other', name: 'upgRecordChips', desc: 'upgRecordChipsWhat', repeat: 1,
-    apply: { recordStartShare: UPGRADE_RECORD_START_SHARE },
-  },
-  {
-    id: 'achievement-ticket', group: 'other', name: 'upgAchievementTicket', desc: 'upgAchievementTicketWhat', repeat: 1,
-    apply: { achievementTickets: UPGRADE_ACHIEVEMENT_TICKETS },
-  },
-  {
     id: 'machine-no-swap', group: 'other', name: 'upgMachineNoSwap', desc: 'upgMachineNoSwapWhat', repeat: 1,
     apply: { noMachineSwap: 1 },
   },
@@ -412,8 +400,6 @@ export interface UpgradeEffects {
   rewindKeepsStreak: boolean; // №42: откат не сбрасывает серию
   freeTape: boolean; // №44: кассета в магазине бесплатна
   rewindRefundsTickets: boolean; // №45: откат возвращает билеты, потраченные после записи
-  recordStartShare: number; // №46: доля рекорда фишек на старте забега (0 — ничего)
-  achievementTickets: number; // №47: билетов за каждую ачивку забега
   noMachineSwap: boolean; // №48: смена автомата выключена
   startMachinePick: boolean; // №49: в начале забега выбираешь автомат
   skullCancelOnce: boolean; // №50: раз за забег можно отменить череп
@@ -460,8 +446,6 @@ export function neutralUpgrades(): UpgradeEffects {
     rewindKeepsStreak: false,
     freeTape: false,
     rewindRefundsTickets: false,
-    recordStartShare: 0,
-    achievementTickets: 0,
     noMachineSwap: false,
     startMachinePick: false,
     skullCancelOnce: false,
@@ -509,14 +493,12 @@ export function upgradeEffects(purchased: PurchasedUpgrades): UpgradeEffects {
     effects.skullShareDelta += (apply.skullShareDelta ?? 0) * count;
     effects.bloodWeight += (apply.bloodWeight ?? 0) * count;
     effects.offerRows += (apply.offerRows ?? 0) * count;
-    effects.achievementTickets += (apply.achievementTickets ?? 0) * count;
     if (apply.startDebtMul !== undefined) effects.startDebtMul *= apply.startDebtMul ** count;
     if (apply.debtGrowthMul !== undefined) effects.debtGrowthMul *= apply.debtGrowthMul ** count;
     if (apply.winMul !== undefined) effects.winMul *= apply.winMul ** count;
     if (apply.itemPriceMul !== undefined) effects.itemPriceMul *= apply.itemPriceMul ** count;
     if (apply.jackpotWinMul !== undefined) effects.jackpotWinMul *= apply.jackpotWinMul ** count;
     if (apply.shopPriceMul !== undefined) effects.shopPriceMul *= apply.shopPriceMul ** count;
-    if (apply.recordStartShare !== undefined) effects.recordStartShare += apply.recordStartShare * count;
     if (apply.ticketShareStart !== undefined) effects.ticketShareStart = Math.min(effects.ticketShareStart, apply.ticketShareStart);
     if (apply.debtForgiveEveryRuns !== undefined) {
       effects.debtForgiveEveryRuns = Math.max(effects.debtForgiveEveryRuns, apply.debtForgiveEveryRuns);
@@ -642,11 +624,12 @@ export function jackpotWinFactor(isJackpotHit: boolean, effects: UpgradeEffects)
 }
 
 /**
- * Бесплатно ли первое сохранение амулета при смерти (№30): флаг улучшения и «в этом забеге ещё не тратили».
- * Одноразовость держит вызывающий: он ставит флаг used, когда игрок берёт амулет за 0.
+ * Сколько амулетов прошлого забега можно взять на старте (шаг 38): один всегда, ещё один — с №30 «Амулет в памяти».
+ * Одноразовость и место в гнёздах держит вызывающий (GameScene.chooseStartAmulet): больше свободных гнёзд не взять.
+ * Сделка №34 даёт свою прибавку отдельно — это её число (MEMORY_PICKS_PACT), а не улучшения.
  */
-export function freeMemorySave(effects: UpgradeEffects, used: boolean): boolean {
-  return effects.deathAmuletSave && !used;
+export function memoryPickCount(effects: UpgradeEffects): number {
+  return 1 + (effects.deathAmuletSave ? MEMORY_PICKS_UPGRADE : 0);
 }
 
 /** Целое ≥ 0 из любого числа: мусор (NaN, ∞, минус, дроби) не должен ломать ни билеты, ни серию. */
@@ -681,24 +664,9 @@ export function ticketsAfterRewind(recordTickets: number, spentSinceRecord: numb
   return refunds ? back + safeCount(spentSinceRecord) : back;
 }
 
-/**
- * №46 «Рекорд даёт +5% к стартовым фишкам»: доля рекорда фишек — разовая прибавка к табло в начале забега.
- * Это именно рекорд (лучший забег), а не «плюс 5% каждый забег»: сколько записано в рекорде, столько даёт.
- * Мусор и пустой рекорд — 0; доля больше 1 ужимается до самого рекорда.
- */
-export function recordStartChips(record: number, share: number): number {
-  if (!Number.isFinite(record) || record <= 0 || !Number.isFinite(share) || share <= 0) return 0;
-  return Math.floor(record * Math.min(1, share));
-}
+/** №46 «Рекорд даёт +5% к стартовым фишкам»: удалено шагом 38 (`DONTLIKE.md` п.10) — ломало баланс. */
 
-/**
- * №47 «Каждая ачивка даёт по билету раз в забег»: сколько билетов дать за ачивку id. 0 — улучшения нет или
- * эта ачивка уже давала билет в этом забеге (список given — свой на каждый забег).
- */
-export function achievementTicket(per: number, id: string, given: readonly string[]): number {
-  if (!Number.isFinite(per) || per <= 0 || given.includes(id)) return 0;
-  return Math.floor(per);
-}
+/** №47 «Каждая ачивка даёт по билету раз в забег»: удалено шагом 38 (`DONTLIKE.md` п.1) — билетов за ачивки нет. */
 
 /** №50 «Один раз за забег можно отменить череп»: улучшение взято и в этом забеге ещё не тратили. */
 export function skullCancelAllowed(effects: UpgradeEffects, used: boolean): boolean {

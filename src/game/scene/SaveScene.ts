@@ -2,7 +2,6 @@ import { readPacts } from '../dealerGame';
 import { copyEffects } from '../items';
 import { isPatternId } from '../progress';
 import {
-  achievementTicketIdsOf,
   amuletChipUsedOf,
   debtNextMulOf,
   deferUsedOf,
@@ -125,7 +124,6 @@ export abstract class SaveScene extends ShopScene {
       amuletChipUsed: this.amuletChipUsedThisRun, // и что амулет за фишки (№39) уже брали: откат не возвращает
       freeGiftGiven: this.freeGiftGiven, // и что подарок первого магазина (№40) уже выдан
       skullCancelUsed: this.skullCancelUsedThisRun, // и что отмена черепа (№50) уже потрачена
-      achievementTickets: [...this.achievementTicketGiven], // и какие ачивки (№47) уже дали билет
       startSymbol: this.startSymbolId ?? undefined, // №33: выбранный символ переживает откат
       startGridGiven: this.startGridGiven, // и первая сетка уже получила джокера/символ
     };
@@ -165,9 +163,8 @@ export abstract class SaveScene extends ShopScene {
       // №39/№40: вторая покупка за фишки и второй подарок откатом не возвращаются.
       amuletChipUsed: amuletChipUsedOf(record, this.amuletChipUsedThisRun),
       freeGiftGiven: freeGiftUsedOf(record, this.freeGiftGiven),
-      // №50 (28г): отмена черепа липкая — откат второй не даёт; №47: список ачивок с билетом — объединение с плёнкой.
+      // №50 (28г): отмена черепа липкая — откат второй не даёт.
       skullCancelUsed: skullCancelUsedOf(record, this.skullCancelUsedThisRun),
-      achievementTickets: achievementTicketIdsOf(record, this.achievementTicketGiven),
       // №42 (28г): откат не сбрасывает серию — берём большую из текущей и записанной.
       streak: streakAfterRewind(record.streak, this.streak, this.upgradeEffects.rewindKeepsStreak),
       // №45 (28г): откат возвращает билеты, потраченные после записи, — к снимку с плёнки.
@@ -227,9 +224,8 @@ export abstract class SaveScene extends ShopScene {
     // №39 и №40 — липкие так же: откат к записи до них вторую покупку и подарок не возвращает.
     this.amuletChipUsedThisRun = amuletChipUsedOf(record, this.amuletChipUsedThisRun);
     this.freeGiftGiven = freeGiftUsedOf(record, this.freeGiftGiven);
-    // №50 и №47 (28г): отмена черепа и список ачивок с билетом едут с плёнки; insertTape уже сложил текущее с записью.
+    // №50 (28г): отмена черепа едет с плёнки; insertTape уже сложил текущее с записью.
     this.skullCancelUsedThisRun = skullCancelUsedOf(record, this.skullCancelUsedThisRun);
-    this.achievementTicketGiven = achievementTicketIdsOf(record, this.achievementTicketGiven);
     // №42/№45 (28г): серия и билеты на плёнке уже посчитаны с улучшениями (insertTape), здесь просто читаются.
     // Откат съедает счётчик трат: эти билеты вернулись — второй раз их откат не начислит (кассеты уже нет).
     // №33: выбранный символ и признак «первая сетка уже с бонусом» едут с плёнкой.
