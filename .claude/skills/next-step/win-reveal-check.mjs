@@ -11,7 +11,14 @@
  * Что проверяет:
  *  - рамки НЕ копятся: на шаге i на сетке ровно столько клеток, сколько в паттерне i, клетки прошлого шага уже сняты
  *    (считаем рамки по вызовам strokeRoundedRect в графике сцены, а не по числу шагов);
- *  - рамка шага гаснет: alpha графики 1 в начале шага и уходит в ноль к его концу, последняя догорает за паузу hold;
+ *  - рамка шага гаснет: alpha графики 1 в начале шага и уходит в ноль к его концу, последняя догорает за паузу hold.
+ *    Замер гашения — отдельный заход по игровому времени (шаг 36): прежний порог «minAlpha по кадрам < 0,6» стоял ровно
+ *    на границе и плавал (116/117). Теперь на время каскада сцена замедляется (timeScale 0,1 у Clock и TweenManager),
+ *    поэтому кадров на шаг в разы больше, шаги режутся по записанным вызовам затухания (а не по расчётным окнам),
+ *    а проверка сравнивает «до/после» с явным запасом: alpha 1 в начале шага и ≤ 0,35 на последнем кадре, который
+ *    заведомо не раньше 3/4 затухания (на 3/4 кривая Quad.easeIn даёт 0,44, а без гашения там 1,0). Тайминги (задержка и длительность
+ *    твина, включая паузу hold у последнего шага) сверяются с reveal.ts — шаг, доля затухания и пауза читаются
+ *    из исходника, а не держатся числами в сценарии;
  *  - звук на каждый паттерн и один итоговый: N коротких coin по шагам, win/bigWin — в конце каскада (в начале тишина);
  *  - число в окошке выплаты растёт по шагам, а не появляется разом: промежуточное меньше финального;
  *  - финальное окошко = potBefore + gain, где gain посчитан здесь независимо: цена символа × множитель паттерна × множитель серии;
@@ -43,6 +50,8 @@
  */
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import './ts-resolve.mjs'; // тот же резолвер, что у симулятора: Node находит './reveal' без расширения
 const SP = process.argv[2];
 if (!SP) {
   console.log('нужен scratchpad: node win-reveal-check.mjs <scratchpad> (там dist с хуком window.__g)');
@@ -51,6 +60,12 @@ if (!SP) {
 const srv = spawn('python3', ['-m', 'http.server', '8772', '--directory', SP + '/dist', '--bind', '127.0.0.1'], { stdio: 'ignore' });
 const chrome = spawn('google-chrome-stable', ['--headless=new', '--remote-debugging-port=9337', '--window-size=1280,720', '--user-data-dir=' + SP + '/prof-reveal', '--no-sandbox', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=gl', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/**
+ * Тайминги показа — из самого src/game/reveal.ts (шаг 36): длину шага считает revealStepMs, паузу перед итогом
+ * и долю затухания отдаёт сам модуль. Копии чисел в сценарии больше нет: правка reveal.ts сразу видна проверке.
+ * Модуль чистый (без Phaser), поэтому Node читает его через ts-resolve, как симулятор.
+ */
+const REVEAL = await import(fileURLToPath(new URL('../../../src/game/reveal.ts', import.meta.url)));
 /**
  * Паттерны — из самих PATTERNS (src/game/patterns.ts), а не копией в сценарии: копия тихо разошлась бы
  * с игрой после первой правки таблицы. Читаем файл рядом (сценарий лежит в .claude/skills/next-step) и берём
@@ -185,9 +200,10 @@ try {
       window.__snd.push({ name, t: window.__hl.firstAt === null ? null : Math.round(window.__clock - window.__hl.firstAt) });
       return origPlay(name, delay);
     };
-    // Clock подписан на 'update' сценой, своей ссылкой — подмена метода его не ловит; берём ту же дельту из 'preupdate'.
+    // Часы сценария — дельта, которую получает Clock (и не копим, пока сцена на паузе), умноженная на его timeScale:
+    // это ровно то время, в котором живут delayedCall, и оно же остаётся игровым при замедлении показа на шаге 36.
     g.events.on('preupdate', (time, delta) => {
-      if (!g.time.paused) window.__clock += delta;
+      if (!g.time.paused) window.__clock += delta * g.time.timeScale;
       const hl = window.__hl;
       if (hl.firstAt === null || !g.isSpinning) return; // кадры каскада, а не всей прокрутки
       window.__hist.push({ t: Math.round(window.__clock - hl.firstAt), alpha: Math.round(gfx.alpha * 100) / 100, drawn: window.__gfx.drawn });
@@ -199,8 +215,25 @@ try {
       const cells = hits.reduce((n, hit) => n + hit.cells.length, 0);
       h.cells += cells;
       h.perCall.push(cells);
-      if (h.firstAt === null) h.firstAt = window.__clock;
+      if (h.firstAt === null) {
+        h.firstAt = window.__clock;
+        // Замер гашения (шаг 36): __slowReveal замедляет каскад, чтобы на шаг пришлось в разы больше кадров.
+        if (window.__slowReveal) {
+          g.time.timeScale = window.__slowReveal;
+          g.tweens.timeScale = window.__slowReveal;
+        }
+      }
       return origWin(hits);
+    };
+    /**
+     * Затухание рамки: записываем, когда оно позвано и с какими таймингами. По этим записям шаги и режутся
+     * на замер (рамка шага i гаснет от __fades[i] до __fades[i+1]), а сами числа сверяются с reveal.ts.
+     */
+    window.__fadeLog = [];
+    const origFade = s.fadeWinHighlights.bind(s);
+    s.fadeWinHighlights = (delay, duration) => {
+      window.__fadeLog.push({ t: Math.round(window.__clock - (window.__hl.firstAt ?? window.__clock)), delay, duration });
+      return origFade(delay, duration);
     };
     /** Ждать игровые ms от первой рамки; дольше wallLimit по часам страницы — ошибка, а не вечное ожидание. */
     window.__at = (ms) => new Promise((resolve, reject) => {
@@ -265,6 +298,7 @@ try {
     });
     /** Кадры каскада и звуки — одним вызовом: между ними ничего не успевает случиться. */
     window.__frames = () => JSON.stringify(window.__hist);
+    window.__fades = () => JSON.stringify(window.__fadeLog ?? []);
     window.__sounds = () => JSON.stringify(window.__snd);
     /**
      * Ждать условие на странице по ИГРОВОМУ времени: expr — строка-предикат. Нужен там, где конец шага определяет
@@ -322,6 +356,7 @@ try {
     window.__hist = [];
     window.__snd = [];
     window.__popups = [];
+    window.__fadeLog = [];
     return JSON.stringify({ pot: g.pot, spinsLeft: g.spinsLeft, multiplier: g.multiplier(), debt: g.debt, machine: g.machineId, amulets: g.amuletIds(), pacts: g.pacts.length, spinning: g.isSpinning });
   }; 1`);
 
@@ -385,8 +420,8 @@ try {
     { pattern: 'row3', symbol: 'bell' },
     { pattern: 'diagonalUp', symbol: 'bell' },
   ];
-  const STEP3 = 340; // шаг платного каскада на трёх паттернах (reveal.ts: WIN_REVEAL_STEP)
-  const HOLD3 = 320; // пауза перед итогом (WIN_REVEAL_HOLD)
+  const STEP3 = REVEAL.revealStepMs(HITS3.length, false); // шаг платного каскада на трёх паттернах (reveal.ts: revealStepMs)
+  const HOLD3 = REVEAL.WIN_REVEAL_HOLD; // пауза перед итогом (WIN_REVEAL_HOLD)
   const cells3 = HITS3.map((hit) => cellsOf(hit.pattern)); // 3 + 3 + 3 — по шагу, а не суммой на сетке
   const POT_BEFORE = 500;
   const tend3 = HITS3.reduce((sum, hit) => sum + symbols[hit.symbol].price * multOf(hit.pattern), 0);
@@ -428,8 +463,45 @@ try {
   const frames1 = stepFrames(json(await val('window.__frames()')), STEP3, HITS3.length, HOLD3);
   check(frames1.every((f) => f.maxAlpha === 1), `каждый шаг зажигает рамку заново: alpha ${frames1.map((f) => f.maxAlpha).join(', ')}`);
   check(frames1.every((f, i) => f.drawn.length === 1 && f.drawn[0] === cells3[i]), `на шаге на сетке ровно клетки этого паттерна: ${frames1.map((f) => f.drawn.join('/')).join(', ')}`);
-  check(frames1[0].minAlpha < 0.6 && frames1[1].minAlpha < 0.6, `к концу шага рамка гаснет: alpha ${frames1.slice(0, 2).map((f) => f.minAlpha).join(', ')} перед следующей`);
-  check(frames1[2].minAlpha <= 0.2, `последняя рамка догорает за паузу hold почти в ноль: alpha ${frames1[2].minAlpha}`);
+
+  // ---------- Затухание рамки: замер по игровому времени, с замедлением сцены (шаг 36) ----------
+  // Прежняя проверка «minAlpha по кадрам < 0,6» стояла ровно на границе и плавала (116/117, alpha ровно 0,60).
+  // Здесь тот же каскад идёт при timeScale 0,1 у Clock и TweenManager: вдесятеро больше кадров на шаг, поэтому последний
+  // кадр шага надёжно попадает в самую последнюю часть затухания. Шаги режутся не по расчётным окнам, а по записанным
+  // вызовам fadeWinHighlights — сдвиг на пару игровых миллисекунд ничего не ломает. Проверка «до/после» с явным
+  // запасом: в начале шага alpha 1, к концу — ≤ 0,35; на 3/4 кривой Quad.easeIn alpha = 1 − 0,75² = 0,44, а если
+  // рамка не гаснет вовсе, там будет 1,0. Числа (шаг, пауза, доля затухания) — из src/game/reveal.ts.
+  console.log('--- затухание: замер по игровому времени (timeScale 0,1)');
+  const FADE = REVEAL.WIN_REVEAL_FADE_SHARE;
+  const fadeMs = STEP3 * FADE;
+  const fadeDelay = STEP3 - fadeMs;
+  await val('window.__slowReveal = 0.1; 1');
+  await val(`window.__reset(${POT_BEFORE})`);
+  await spinGrid(GRID3);
+  await waitStart('затухание: каскад начался');
+  await val('window.__at(300)');
+  await shot('reveal-fade-slow.png');
+  await val('window.__measure()');
+  await val('window.__g.time.timeScale = 1; window.__g.tweens.timeScale = 1; window.__slowReveal = null; 1');
+  const fades = json(await val('window.__fades()'));
+  const fadeHist = json(await val('window.__frames()'));
+  const wantFades = HITS3.map((_, i) => ({ delay: fadeDelay, duration: fadeMs + (i === HITS3.length - 1 ? HOLD3 : 0) }));
+  check(
+    fades.length === HITS3.length && fades.every((f, i) => Math.abs(f.delay - wantFades[i].delay) < 0.01 && Math.abs(f.duration - wantFades[i].duration) < 0.01),
+    `тушение идёт по таймингам reveal.ts: ${fades.map((f) => `${f.delay}+${f.duration}`).join(', ')} мс (шаг ${STEP3}, доля ${FADE}, hold ${HOLD3})`,
+  );
+  const fadeBins = fades.map((f, i) => {
+    const to = i + 1 < fades.length ? fades[i + 1].t : Infinity;
+    const inBin = fadeHist.filter((frame) => frame.t >= f.t && frame.t < to);
+    const last = inBin[inBin.length - 1] ?? null;
+    const u = last === null ? -1 : Math.min(1, Math.max(0, (last.t - f.t - f.delay) / f.duration));
+    return { frames: inBin.length, max: inBin.length ? Math.max(...inBin.map((x) => x.alpha)) : -1, min: inBin.length ? Math.min(...inBin.map((x) => x.alpha)) : 2, last, u };
+  });
+  check(fadeBins.every((b) => b.frames >= 20), `замер плотный: кадров на шаг ${fadeBins.map((b) => b.frames).join(', ')} (замедление 0,1)`);
+  check(fadeBins.every((b) => b.max === 1), `в начале шага рамка загорается целиком: alpha ${fadeBins.map((b) => b.max).join(', ')}`);
+  check(fadeBins.every((b) => b.u >= 0.75), `последний кадр шага — не раньше 3/4 затухания: ${fadeBins.map((b) => b.u.toFixed(2)).join(', ')}`);
+  check(fadeBins.every((b) => b.last !== null && b.last.alpha <= 0.35), `к концу шага рамка гаснет с запасом: alpha на последнем кадре ${fadeBins.map((b) => (b.last ? b.last.alpha : '—')).join(', ')} ≤ 0,35 (в начале 1,0)`);
+  check(fadeBins[2].min <= 0.2, `последняя рамка догорает за паузу hold почти в ноль: alpha ${fadeBins[2].min}`);
 
   // Звук: короткий coin на каждый паттерн и один итог в конце каскада — а не один звук на t0.
   const snd1 = revealSounds(json(await val('window.__sounds()')));
@@ -468,7 +540,9 @@ try {
   const end8 = json(await val('window.__snap(0)'));
   check(end8.calls === 8 && end8.perCall.join(',') === cells8.join(','), `восемь шагов по своим клеткам: ${end8.perCall.join(',')}`);
   check(end8.drawn === 0, `после восьми шагов сетка чистая: ${end8.drawn} рамок`);
-  check(typeof duration8 === 'number' && duration8 <= 2600, `весь показ укладывается в 2,6 с: ${duration8} мс игрового времени`);
+  // Бюджет показа — тоже из reveal.ts: WIN_REVEAL_BUDGET на весь показ плюс пауза hold; +150 мс — допуск кадра замера.
+  const budget8 = REVEAL.WIN_REVEAL_BUDGET + REVEAL.WIN_REVEAL_HOLD;
+  check(typeof duration8 === 'number' && duration8 <= budget8 + 150, `весь показ укладывается в бюджет reveal.ts: ${duration8} мс при ${budget8} мс + кадр`);
   check(end8.pot === gain8 && end8.spinning === false, `после показа в окошке весь выигрыш: ${end8.pot} = ${gain8}`);
   const snd8 = revealSounds(json(await val('window.__sounds()')));
   check(snd8.map((s) => s.name).join(',') === Array(8).fill('coin').concat(final8).join(','), `восемь coin по паттернам и один ${final8}: ${snd8.map((s) => s.name).join(', ')}`);
@@ -542,7 +616,7 @@ try {
   const duration5 = await val('window.__measure()');
   const end5free = json(await val('window.__snap(0)'));
   check(end5free.calls === 8 && end5free.perCall.join(',') === cells8.join(','), `бесплатная: те же восемь шагов по своим клеткам: ${end5free.perCall.join(',')}`);
-  check(typeof duration5 === 'number' && duration5 <= 1200, `бесплатная укладывается в свой бюджет 1,1 с: ${duration5} мс игрового времени`);
+  check(typeof duration5 === 'number' && duration5 <= REVEAL.WIN_REVEAL_FREE_BUDGET + 150, `бесплатная укладывается в свой бюджет reveal.ts: ${duration5} мс при ${REVEAL.WIN_REVEAL_FREE_BUDGET} мс + кадр`);
   check(typeof duration8 === 'number' && duration5 < duration8, `бесплатная короче платной (${duration5} < ${duration8} мс) — паузы перед итогом нет`);
   check(end5free.pot === gain8 && end5free.spinning === false, `бесплатная: выигрыш в окошке целиком: ${end5free.pot} = ${gain8}`);
   check(end5free.drawn === 0, 'бесплатная: последняя рамка снята, сетка чистая');
