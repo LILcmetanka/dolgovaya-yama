@@ -523,6 +523,22 @@ try {
     'панель выбора автомата открыта и держит ввод');
   checkFits('выбор автомата', pickScan, 8);
   checkButtons('выбор автомата', pickScan);
+  // Шаг 41: строки и надписи списка — внутри стекла 460×288 на экране автомата (layout.ts: SCREEN).
+  const pickGlass = async (which) => JSON.parse(await val(`(() => {
+    const L = window.__g.${which}, S = { x: 569, y: 314, width: 460, height: 288 };
+    const l = S.x - S.width / 2, t = S.y - S.height / 2, r = S.x + S.width / 2, b = S.y + S.height / 2;
+    const rows = L.rows.filter((z) => z.visible).map((z) => z.getBounds());
+    const outside = [];
+    for (const part of L.parts) {
+      if (typeof part.text !== 'string' || part.visible === false) continue;
+      const box = part.getBounds();
+      if (box.left < l - 0.5 || box.right > r + 0.5 || box.top < t - 0.5 || box.bottom > b + 0.5) outside.push(part.text);
+    }
+    return JSON.stringify({ rows: rows.length, inside: rows.every((z) => z.left >= l - 0.5 && z.right <= r + 0.5 && z.top >= t - 0.5 && z.bottom <= b + 0.5), big: rows.every((z) => z.height >= 44), outside });
+  })()`) ?? '{}');
+  const machineGlass = await pickGlass('machinePick');
+  check(machineGlass.inside === true && machineGlass.big === true && machineGlass.outside.length === 0,
+    'выбор автомата: строки и надписи внутри стекла, кнопка не меньше 44 px (' + machineGlass.rows + ' строк)');
   await val('window.__g.machinePick.close(); window.__g.isChoosingMachine = false; 1');
   check(await val('window.__g.canAct()') === true, 'выбор автомата закрыт, ввод вернулся');
   await val('window.__g.chooseStartSymbol(); 1');
@@ -532,6 +548,9 @@ try {
     'панель выбора символа открыта и держит ввод');
   checkFits('выбор символа', symbolScan, 8);
   checkButtons('выбор символа', symbolScan);
+  const symbolGlass = await pickGlass('symbolPick');
+  check(symbolGlass.inside === true && symbolGlass.big === true && symbolGlass.outside.length === 0,
+    'выбор символа: строки и надписи внутри стекла, кнопка не меньше 44 px (' + symbolGlass.rows + ' строк)');
   await val('window.__g.symbolPick.close(); window.__g.isChoosingSymbol = false; 1');
   check(await val('window.__g.canAct()') === true, 'выбор символа закрыт, ввод вернулся');
 

@@ -60,7 +60,7 @@ import { symbolWeightOf } from './skullShare';
 import { isPaying, SPINS_PER_ROUND, SYMBOLS, weightsForRound, type SlotSymbol } from './rules';
 import type { RunSave } from './save';
 import { getVolumes, isSilent, setVolume, toggleSound, volumeShare, type VolumeKind } from './settings';
-import { GOLD_TEXT } from './theme';
+import { ACTION_ICONS, GOLD_TEXT } from './theme';
 
 // Клавиши 1–9 и 0: в игре 1–8 — места на полках; в магазине 1–3 — ряды торгового автомата, 4–5 — маленький автомат
 // (место на полке и гнездо), 6–8 — места витрины амулетов, 9 — четвёртый ряд витрины (№37), 0 — барабан.
@@ -89,7 +89,9 @@ interface ActionRow {
   id: ActionId;
   title: string;
   desc: string;
-  price: string; // готовая подпись цены: «2 🎟», «120 фишек», «риск»
+  deny?: string; // причина, почему нельзя: серой подписью у кнопки
+  price: string; // готовая подпись на плашке: число цены или «риск · 18%»
+  cost?: 'chips' | 'tickets'; // у цены — значок фишки или билета (шаг 41)
   enabled: boolean; // можно ли нажать (не хватает денег, уже было в раунде, нечего выбирать…)
   danger?: boolean; // красная строка и красное предупреждение (кража)
 }
@@ -245,7 +247,8 @@ export class GameScene extends CollectorScene {
     this.isChoosingAmulet = true;
     this.amuletPick.show(
       options.map((option) => ({
-        title: `${option.amulet.sign} ${t(option.amulet.name)}`,
+        icon: option.amulet.sign,
+        title: t(option.amulet.name),
         desc: t(option.amulet.description),
         right: t('screenPick'),
       })),
@@ -325,7 +328,8 @@ export class GameScene extends CollectorScene {
     this.isChoosingMachine = true;
     this.machinePick.show(
       MACHINES.map((machine) => ({
-        title: `${machine.sign === '' ? '◈' : machine.sign} ${t(machine.name)}`,
+        icon: machine.sign === '' ? '◈' : machine.sign,
+        title: t(machine.name),
         desc: t(machine.description),
         right: t('screenPick'),
       })),
@@ -364,8 +368,9 @@ export class GameScene extends CollectorScene {
     this.isChoosingSymbol = true;
     this.symbolPick.show(
       options.map((option) => ({
-        title: option.symbol.sign,
-        desc: `${t('symbolPickWeight', Math.round(option.weight))} · ${t('symbolPickPrice', option.symbol.price)}`,
+        icon: option.symbol.sign,
+        title: t('symbolPickWeight', Math.round(option.weight)),
+        desc: t('symbolPickPrice', option.symbol.price),
         right: t('screenPick'),
       })),
       {
@@ -707,15 +712,19 @@ export class GameScene extends CollectorScene {
   private showActionRows(): void {
     const rows = this.actionRows();
     const list: ScreenRow[] = rows.map((row) => ({
+      icon: ACTION_ICONS[row.id],
       title: row.title,
       desc: row.desc,
+      deny: row.deny,
       right: row.price,
+      cost: row.cost,
       enabled: row.enabled,
       danger: row.danger,
     }));
     this.actionPanel.show(list, {
       title: t('actionsTitle'),
       caption: t('actionsCaption'),
+      dimPayout: this.pot === 0, // на кону пусто — окошко выплаты прикрыто, пока список открыт
       onPick: (index) => {
         const row = rows[index];
         if (row) this.pickAction(row.id);
@@ -748,34 +757,41 @@ export class GameScene extends CollectorScene {
       ok: boolean,
       text: TextKey | null,
       danger = false,
+      cost?: 'chips' | 'tickets',
     ): ActionRow => {
       const why = reason(id, ok, text);
-      return { id, title, desc: why || base, price, enabled: !dev && !used(id) && ok, danger };
+      return { id, title, desc: base, deny: why || undefined, price, cost, enabled: !dev && !used(id) && ok, danger };
     };
     return [
       row(
         'exchange',
         t('actionExchange'),
         t('actionExchangeWhat'),
-        t('actionTickets', ACTION_EXCHANGE_TICKETS),
+        String(ACTION_EXCHANGE_TICKETS),
         this.tickets >= ACTION_EXCHANGE_TICKETS && grid.length > 0 && this.machineSymbols().length > 1,
         this.tickets < ACTION_EXCHANGE_TICKETS ? 'actionNoTickets' : 'actionNoGrid',
+        false,
+        'tickets',
       ),
       row(
         'lottery',
         t('actionLottery'),
         t('actionLotteryWhat'),
-        t('actionTickets', ACTION_LOTTERY_TICKETS),
+        String(ACTION_LOTTERY_TICKETS),
         this.tickets >= ACTION_LOTTERY_TICKETS,
         'actionNoTickets',
+        false,
+        'tickets',
       ),
       row(
         'service',
         t('actionService'),
         t('actionServiceWhat'),
-        t('actionChips', service),
+        String(service),
         serviceAllowed(this.actionState) && this.balance >= service,
         serviceAllowed(this.actionState) ? 'actionNoChips' : 'actionServiceActive',
+        false,
+        'chips',
       ),
       row('theft', t('actionTheft'), t('actionTheftWhat'), `${t('actionRisk')} · ${chance}%`, true, null, true),
       row(
@@ -790,9 +806,11 @@ export class GameScene extends CollectorScene {
         'debt',
         t('actionDebt'),
         t('actionDebtWhat', buy, cut),
-        t('actionChips', buy),
+        String(buy),
         this.actionState.debtCut === 0 && this.balance >= buy,
         this.actionState.debtCut > 0 ? 'actionDebtUsed' : 'actionNoChips',
+        false,
+        'chips',
       ),
     ];
   }
@@ -838,14 +856,15 @@ export class GameScene extends CollectorScene {
   ): void {
     this.actionPanel.show(
       choices.map((choice) => ({
-        title: choice.symbol.sign,
-        desc: choice.note,
+        icon: choice.symbol.sign,
+        title: choice.note,
         right,
         enabled: choice.enabled !== false,
       })),
       {
         title: t('actionsTitle'),
         caption,
+        dimPayout: this.pot === 0,
         onPick: (index) => {
           const choice = choices[index];
           if (choice && choice.enabled !== false) onPickSymbol(choice.symbol);

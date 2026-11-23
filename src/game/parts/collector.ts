@@ -12,7 +12,7 @@ import { Atm } from './atm';
 import { CENTER_X, CENTER_Y, GOAL_NOTE, GOAL_NOTE_ANGLE, NOTE, NOTE_ANGLE, SCREEN, VIEW_WIDTH } from '../layout';
 import { CHIP_GOAL } from '../gameConfig';
 import { GOOD_LUCK_TIME } from '../lastChance';
-import { addText, GAME_OVER_DEPTH, GOLD_TEXT, LED_STYLE, POPUP_DEPTH, RED_TEXT } from '../theme';
+import { addText, fitTextWidth, GAME_OVER_DEPTH, GOLD_TEXT, LED_STYLE, POPUP_DEPTH, RED_TEXT } from '../theme';
 
 // Записка светится, когда долг можно отдать раньше: клик по ней или D.
 const NOTE_GLOW_MIN = 0.3; // свечение пульсирует: гаснет до такой яркости и разгорается снова
@@ -37,9 +37,14 @@ const EXPLOSION_MAX_DISTANCE = 380;
 const EXPLOSION_MIN_TIME = 500;
 const EXPLOSION_MAX_TIME = 950;
 const EXPLOSION_FLASH_TIME = 700;
-// Экран DEATH: счёт и кнопка «ЗАНОВО» под экраном автомата.
-const DEATH_SCORE_Y = 500;
-const DEATH_BUTTON_Y = 566;
+// Экран DEATH: плита на месте окон корпуса, на ней гравированная полоска с итогами, ниже — кнопка «ЗАНОВО».
+// Так итоги и кнопка не лезут друг на друга и ни одна не накрывает окошки корпуса (шаг 42).
+const DEATH_SCORE_Y = 502; // середина полоски с итогами
+const DEATH_BUTTON_Y = 558;
+const END_PLATE = { y: 540, width: 480, height: 128, radius: 12 }; // плита: 480×128, от 476 до 604 — по панели под экраном
+const END_PLATE_FILL = 0x1b1410; // тёмная бронза
+const END_STRIP = { y: DEATH_SCORE_Y, width: 430, height: 26, radius: 6 }; // гравированная полоска внутри плиты
+const SCORE_FONT = 17;
 const BUTTON_WIDTH = 170;
 const BUTTON_HEIGHT = 60;
 const BUTTON_STEP = 200; // расстояние между центрами кнопок «ЗАНОВО» и «ДАЛЬШЕ» на экране победы
@@ -410,14 +415,15 @@ export class Collector {
     });
   }
 
-  /** Конец забега: всё темнеет, экран автомата чёрный, на нём мигает title (KABOOM). Ниже — счёт, рекорд и «ЗАНОВО». */
+  /** Конец забега: всё темнеет, экран автомата чёрный, на нём мигает title (KABOOM). Ниже — итоги и «ЗАНОВО». */
   showDeath(closedDebts: number, record: number, restart: () => void, title: string): void {
     const shade = this.scene.add.rectangle(CENTER_X, CENTER_Y, VIEW_WIDTH, 640, 0x000000, 0.6); // на весь вид у автомата
     shade.setInteractive(); // ловит клики, чтобы кнопки под затемнением не нажимались
+    const plate = this.endPlate(); // плита на месте окон корпуса: итоги и кнопка стоят на ней, а не на «×1»
     const scoreText = `${t('debtsPaid')}: ${closedDebts} · ${t('best')}: ${record}`;
-    const score = addText(this.scene, CENTER_X, DEATH_SCORE_Y, scoreText, { fontSize: '20px', color: GOLD_TEXT }).setOrigin(0.5);
+    const score = this.scoreLine(scoreText);
     const button = this.makeButton(CENTER_X, DEATH_BUTTON_Y, t('again'), restart);
-    for (const part of [shade, score]) part.setDepth(GAME_OVER_DEPTH);
+    for (const part of [shade, plate, score]) part.setDepth(GAME_OVER_DEPTH);
     for (const part of [button.shadow, button.face]) part.setDepth(BUTTON_DEPTH); // кнопка выше тени — она нажимается
     this.screenTitle(title, GAME_OVER_DEPTH);
   }
@@ -444,7 +450,7 @@ export class Collector {
     this.finishScreen(t('record'), VICTORY_TITLE_STYLE, earned, record, [this.makeButton(CENTER_X, DEATH_BUTTON_Y, t('again'), again)]);
   }
 
-  /** Общий вид экрана конца забега: затемнение, заголовок на экране автомата, набранное с рекордом и кнопки. Вернёт уборку. */
+  /** Общий вид экрана конца забега: затемнение, заголовок на экране автомата, итоги на плите и кнопки. Вернёт уборку. */
   private finishScreen(
     title: string,
     look: Phaser.Types.GameObjects.Text.TextStyle,
@@ -454,12 +460,17 @@ export class Collector {
   ): () => void {
     const shade = this.scene.add.rectangle(CENTER_X, CENTER_Y, VIEW_WIDTH, 640, 0x000000, 0.6); // на весь вид у автомата
     shade.setInteractive(); // ловит клики, чтобы кнопки под затемнением не нажимались
+    const plate = this.endPlate(); // та же плита: итоги на полоске, кнопки ниже
     const scoreText = t('victoryScore', formatChips(earned), formatChips(record));
-    const score = addText(this.scene, CENTER_X, DEATH_SCORE_Y, scoreText, { fontSize: '20px', color: GOLD_TEXT }).setOrigin(0.5);
-    const parts: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Container)[] = [shade, score];
+    const score = this.scoreLine(scoreText);
+    const parts: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text | Phaser.GameObjects.Graphics | Phaser.GameObjects.Container)[] = [
+      shade,
+      plate,
+      score,
+    ];
     for (const button of buttons) parts.push(button.shadow, button.face);
     for (const part of parts) part.setDepth(GAME_OVER_DEPTH);
-    // Кнопки — выше затемнения: оно ловит клики, но не должно забирать их у кнопок.
+    // Кнопки — выше затемнения: оно ловит клики, но не должно забирать их у кнопок. Итоги — поверх плиты (созданы после неё).
     for (const button of buttons) button.face.setDepth(BUTTON_DEPTH);
     const titleParts = this.screenTitle(title, GAME_OVER_DEPTH, look);
     // «ДАЛЬШЕ» убирает экран: твин мигания останавливаем, иначе он остался бы висеть на уничтоженной надписи.
@@ -467,6 +478,44 @@ export class Collector {
       this.scene.tweens.killTweensOf(titleParts);
       for (const part of [...parts, ...titleParts]) part.destroy();
     };
+  }
+
+  /**
+   * Плита конца забега: тёмная бронза вместо окон корпуса (множитель, окошко выплаты) и гравированная полоска
+   * с итогами. Плита лежит на панели под экраном — ничего не перекрывает и не «висит» на «×1».
+   */
+  private endPlate(): Phaser.GameObjects.Graphics {
+    const g = this.scene.add.graphics();
+    const left = CENTER_X - END_PLATE.width / 2;
+    const top = END_PLATE.y - END_PLATE.height / 2;
+    g.fillStyle(0x000000, 0.35);
+    g.fillRoundedRect(left + 3, top + 4, END_PLATE.width, END_PLATE.height, END_PLATE.radius); // тень на корпусе
+    g.fillStyle(END_PLATE_FILL, 0.97);
+    g.fillRoundedRect(left, top, END_PLATE.width, END_PLATE.height, END_PLATE.radius);
+    g.lineStyle(1.5, BUTTON_BORDER, 0.5); // бронзовая кромка, как у окантовки автомата
+    g.strokeRoundedRect(left + 0.75, top + 0.75, END_PLATE.width - 1.5, END_PLATE.height - 1.5, END_PLATE.radius);
+    g.fillStyle(0xffffff, 0.05); // светлая верхняя кромка плиты
+    g.fillRect(left + END_PLATE.radius, top + 1, END_PLATE.width - END_PLATE.radius * 2, 1);
+    const stripLeft = CENTER_X - END_STRIP.width / 2;
+    const stripTop = END_STRIP.y - END_STRIP.height / 2;
+    g.fillStyle(0x000000, 0.4); // утопленная полоска под итоги
+    g.fillRoundedRect(stripLeft, stripTop, END_STRIP.width, END_STRIP.height, END_STRIP.radius);
+    g.lineStyle(1, 0x000000, 0.55);
+    g.strokeRoundedRect(stripLeft + 0.5, stripTop + 0.5, END_STRIP.width - 1, END_STRIP.height - 1, END_STRIP.radius);
+    g.fillStyle(0xffffff, 0.04);
+    g.fillRect(stripLeft + END_STRIP.radius, stripTop + 1, END_STRIP.width - END_STRIP.radius * 2, 1);
+    return g;
+  }
+
+  /** Итоги забега на гравированной полоске: одна строка золотом, по ширине полоски. */
+  private scoreLine(text: string): Phaser.GameObjects.Text {
+    const score = addText(this.scene, CENTER_X, END_STRIP.y, text, {
+      fontSize: `${SCORE_FONT}px`,
+      color: GOLD_TEXT,
+      shadow: { color: '#000000', blur: 3, fill: true },
+    }).setOrigin(0.5);
+    fitTextWidth(score, text, END_STRIP.width - 24, SCORE_FONT, 11);
+    return score;
   }
 
   /** Кнопка: тень, корпус с золотой рамкой, блик сверху и крупная надпись. Нажимается и мышью, и пальцем. */

@@ -79,8 +79,8 @@ export const AMULETS: Amulet[] = [
     id: 'bell', sign: '🔔',
     name: { ru: 'Колокольчик', en: 'Little bell' },
     description: {
-      ru: `Каждая копия: паттерн из 🔔 даёт +${BELL_SPINS} прокрутки и +${Math.round(BELL_SKULL_STEP * 100)} п.п. к доле черепов до конца раунда (вместе не больше +${Math.round(BELL_SKULL_MAX * 100)} п.п.)`,
-      en: `Each copy: a 🔔 pattern gives +${BELL_SPINS} spins and +${Math.round(BELL_SKULL_STEP * 100)} pp to the skull share until the end of the round (at most +${Math.round(BELL_SKULL_MAX * 100)} pp in total)`,
+      ru: `Каждая копия: паттерн из 🔔 даёт +${BELL_SPINS} прокрутки и +${Math.round(BELL_SKULL_STEP * 100)} п.п. к доле черепов до конца раунда (до +${Math.round(BELL_SKULL_MAX * 100)})`,
+      en: `Each copy: a 🔔 pattern gives +${BELL_SPINS} spins and +${Math.round(BELL_SKULL_STEP * 100)} pp to the skull share until the round ends (up to +${Math.round(BELL_SKULL_MAX * 100)} pp)`,
     },
     rarity: 'common',
     maxCopies: 2,

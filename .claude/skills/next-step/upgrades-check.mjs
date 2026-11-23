@@ -216,6 +216,60 @@ try {
   check(s1.texts.includes('Возьми одно бесплатно'), 'RU: подпись «Возьми одно бесплатно» (без подсказки клавиш)');
   check(!s1.texts.some((text) => /1–3|0 или|✕ —/.test(String(text))), 'RU: подсказок про клавиши на экране улучшений нет');
   check(s1.second === false && s1.effectCount === 0, 'до выбора ничего не куплено');
+  // Шаг 41: строки и надписи целиком внутри стекла, строка-кнопка не меньше 44×44.
+  const upgGlass = JSON.parse(await val(`(() => {
+    const L = window.__g.upgradeScreen, S = ${JSON.stringify({ x: 569, y: 314, width: 460, height: 288 })};
+    const l = S.x - S.width / 2, t = S.y - S.height / 2, r = S.x + S.width / 2, b = S.y + S.height / 2;
+    const rows = L.rows.filter((z) => z.visible).map((z) => z.getBounds());
+    const outside = [];
+    for (const part of L.parts) {
+      if (typeof part.text !== 'string' || part.visible === false) continue;
+      const box = part.getBounds();
+      if (box.left < l - 0.5 || box.right > r + 0.5 || box.top < t - 0.5 || box.bottom > b + 0.5) outside.push({ text: part.text, box });
+    }
+    return JSON.stringify({
+      rows: rows.length,
+      rowsInside: rows.every((z) => z.left >= l - 0.5 && z.right <= r + 0.5 && z.top >= t - 0.5 && z.bottom <= b + 0.5),
+      rowsBig: rows.every((z) => z.height >= 44 && z.width >= 44),
+      outside: outside.slice(0, 5),
+    });
+  })()`) ?? '{}');
+  check(upgGlass.rows === 3 && upgGlass.rowsInside === true, 'строки улучшений целиком внутри стекла (' + upgGlass.rows + ')');
+  check(upgGlass.rowsBig === true, 'строка улучшения — кнопка не меньше 44×44');
+  check(upgGlass.outside.length === 0, 'ни одна надпись улучшений не вылезает за стекло' + (upgGlass.outside.length ? ': ' + JSON.stringify(upgGlass.outside) : ''));
+  // Шаг 42: ритм строк — перенос не сверх лимита, каждая надпись целиком в своей строке.
+  const cut = JSON.parse(await val(`(() => {
+    const L = window.__g.upgradeScreen;
+    const rows = L.rows.filter((z) => z.visible).map((z) => z.getBounds()).sort((a, b) => a.top - b.top);
+    const bad = [];
+    for (const part of L.parts) {
+      if (typeof part.text !== 'string' || part.visible === false) continue;
+      const lines = part.getWrappedText ? part.getWrappedText(String(part.text)).length : 0;
+      const max = part.style.maxLines || 0;
+      if (max > 0 && lines > max) bad.push('перенос ' + lines + ' > ' + max + ': ' + part.text.slice(0, 30));
+      const b = part.getBounds();
+      const row = rows.find((r) => (b.top + b.bottom) / 2 > r.top + 2 && (b.top + b.bottom) / 2 < r.bottom - 2);
+      if (row && (b.bottom > row.bottom + 0.5 || b.top < row.top - 0.5)) bad.push('вылезло из строки: ' + part.text.slice(0, 30));
+    }
+    return JSON.stringify({ rows: rows.length, heights: rows.map((r) => Math.round(r.height)), bad });
+  })()`) ?? '{}');
+  check(cut.bad.length === 0 && cut.heights.every((h) => h === 56), 'улучшения: строки по 56 px, надписи целиком в строках' + (cut.bad.length ? ': ' + JSON.stringify(cut.bad) : ''));
+  // Шаг 42: итоги — на гравированной полоске, «ЗАНОВО» — ниже; ничего не перекрывается.
+  const endLayout = JSON.parse(await val(`(() => {
+    const g = window.__g;
+    const texts = [];
+    const walk = (list) => { for (const o of list) { if (o.type === 'Text') texts.push(o); if (o.list) walk(o.list); } }; // «ЗАНОВО» лежит в контейнере кнопки
+    walk(g.children.list);
+    const score = texts.find((o) => String(o.text).includes('Долгов закрыто'));
+    const again = texts.find((o) => o.text === 'ЗАНОВО');
+    const box = (o) => { const b = o.getBounds(); return { top: Math.round(b.top), bottom: Math.round(b.bottom), left: Math.round(b.left), right: Math.round(b.right) }; };
+    return JSON.stringify({ score: score ? box(score) : null, again: again ? box(again) : null });
+  })()`) ?? '{}');
+  check(endLayout.score !== null && endLayout.again !== null, 'на экране смерти есть итоги и «ЗАНОВО»');
+  check(Boolean(endLayout.score && endLayout.again && endLayout.score.bottom + 4 <= endLayout.again.top),
+    'итоги и «ЗАНОВО» не перекрываются: итоги до ' + (endLayout.score && endLayout.score.bottom) + ', кнопка с ' + (endLayout.again && endLayout.again.top));
+  check(Boolean(endLayout.score && endLayout.score.top >= 480 && endLayout.again && endLayout.again.bottom <= 600),
+    'итоги и кнопка на плите под экраном, в поле 480…600');
   await shot('upgrades-ru-cards.png');
   // Пробел на этом экране игру не двигает: экран остаётся, забег не начинается заново.
   await key('Space');

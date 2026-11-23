@@ -225,13 +225,15 @@ const TEXTS = {
   actionServiceActive: { ru: 'уже чистится', en: 'already serviced' },
   actionTheft: { ru: 'КРАЖА', en: 'THEFT' },
   actionTheftWhat: {
-    ru: 'Вытащить кон из кассы Коллектора: провал — сразу KABOOM, успех даёт фишки. Шанс растёт с каждым раундом',
-    en: 'Take the pot from the Collector: failure is instant KABOOM, success pays chips. The chance grows every round',
+    // Шаг 42: строку чуть укоротили — описание должно влезать в две строки 12 px, как у остальных действий.
+    ru: 'Вытащить кон из кассы Коллектора: провал — сразу KABOOM, успех — фишки и рост шанса',
+    en: 'Take the pot from the Collector: failure is instant KABOOM, success pays. The odds grow each round',
   },
   actionTheftDone: { ru: 'УКРАЛ!', en: 'STOLEN!' },
   actionSale: { ru: 'ПРОДАЖА СИМВОЛА', en: 'SYMBOL SALE' },
   actionSaleWhat: {
-    ru: 'Убрать символ из автомата и получить его цену за каждую клетку — с поправкой на текущий разгон',
+    // Шаг 42: тоже короче на слово — две строки 12 px, как у остальных действий.
+    ru: 'Убрать символ из автомата и получить его цену за каждую клетку — с поправкой на разгон',
     en: 'Remove a symbol from the machine and get its price for every cell — scaled by the current multiplier',
   },
   actionSalePick: { ru: 'Что продать: символ с сетки', en: 'What to sell: a symbol on the grid' },

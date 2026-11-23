@@ -165,6 +165,21 @@ try {
   const insideScreen = await val(`(() => { const g = window.__g; const L = g.amuletPick; const r = L.rows.map((z) => z.getBounds());
     return ${JSON.stringify(screen)} && r.every((b) => b.left >= ${screen.x - screen.width / 2} && b.right <= ${screen.x + screen.width / 2} && b.top >= ${screen.y - screen.height / 2} && b.bottom <= ${screen.y + screen.height / 2}); })()`);
   check(insideScreen === true, 'список целиком на экране автомата (шаг 37)');
+  // Шаг 41: строка-кнопка не меньше 44×44, ни одна надпись не вылезает за стекло.
+  const glassAmulets = JSON.parse(await val(`(() => {
+    const L = window.__g.amuletPick, S = ${JSON.stringify(screen)};
+    const l = S.x - S.width / 2, t = S.y - S.height / 2, r = S.x + S.width / 2, b = S.y + S.height / 2;
+    const rows = L.rows.filter((z) => z.visible).map((z) => z.getBounds());
+    const outside = [];
+    for (const part of L.parts) {
+      if (typeof part.text !== 'string' || part.visible === false) continue;
+      const box = part.getBounds();
+      if (box.left < l - 0.5 || box.right > r + 0.5 || box.top < t - 0.5 || box.bottom > b + 0.5) outside.push({ text: part.text, box });
+    }
+    return JSON.stringify({ rows: rows.length, rowsBig: rows.every((z) => z.height >= 44 && z.width >= 44), outside: outside.slice(0, 5) });
+  })()`) ?? '{}');
+  check(glassAmulets.rows === 2 && glassAmulets.rowsBig === true, 'строка памяти — кнопка не меньше 44×44 (' + glassAmulets.rows + ' строки)');
+  check(glassAmulets.outside.length === 0, 'ни одна надпись памяти не вылезает за стекло' + (glassAmulets.outside.length ? ': ' + JSON.stringify(glassAmulets.outside) : ''));
   await moveAway();
   await shot('memory-ru-start.png');
 

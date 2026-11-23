@@ -576,10 +576,11 @@ export abstract class RoundScene extends MachineScene {
     const list = new ScreenList(this);
     this.skullCancelList = list;
     list.show(
-      [{ title: t('skullCancel'), desc: t('skullCancelWhat'), right: t('upgTake'), danger: true }],
+      [{ icon: '💀', title: t('skullCancel'), desc: t('skullCancelWhat'), right: t('upgTake'), danger: true }],
       {
         title: t('skullCancelTitle'),
         caption: t('skullCancelCaption'),
+        dimPayout: this.pot === 0, // кон на экране не трогаем: там ставка этого раунда
         onPick: () => this.resolveSkullCancel(true),
         onClose: () => this.resolveSkullCancel(false), // ✕ — не отменять, череп сработает как обычно
       },

@@ -148,6 +148,67 @@ try {
   const a1 = await state();
   check(a1.open === true && a1.panel === true, 'клавиша A открывает панель');
   check(a1.rows === 6, 'в панели шесть строк: ' + a1.rows);
+  // Шаг 41: строки и надписи целиком внутри стекла, строка-кнопка не меньше 44×44.
+  const listGlass = JSON.parse(await val(`(() => {
+    const L = window.__g.actionPanel, S = ${JSON.stringify(LAYOUT.SCREEN)};
+    const l = S.x - S.width / 2, t = S.y - S.height / 2, r = S.x + S.width / 2, b = S.y + S.height / 2;
+    const rows = L.rows.filter((z) => z.visible).map((z) => z.getBounds());
+    const outside = [];
+    for (const part of L.parts) {
+      if (typeof part.text !== 'string' || part.visible === false) continue;
+      const box = part.getBounds();
+      if (box.left < l - 0.5 || box.right > r + 0.5 || box.top < t - 0.5 || box.bottom > b + 0.5) outside.push({ text: part.text, box });
+    }
+    return JSON.stringify({
+      rows: rows.length,
+      rowsInside: rows.every((z) => z.left >= l - 0.5 && z.right <= r + 0.5 && z.top >= t - 0.5 && z.bottom <= b + 0.5),
+      rowsBig: rows.every((z) => z.height >= 44 && z.width >= 44),
+      outside: outside.slice(0, 5),
+    });
+  })()`) ?? '{}');
+  check(listGlass.rows === 4 && listGlass.rowsInside === true, 'строки списка целиком внутри стекла (видно ' + listGlass.rows + ')');
+  check(listGlass.rowsBig === true, 'каждая строка-кнопка не меньше 44×44');
+  check(listGlass.outside.length === 0, 'ни одна надпись не вылезает за стекло' + (listGlass.outside.length ? ': ' + JSON.stringify(listGlass.outside) : ''));
+  // Шаг 42: строка не обрезается посреди текста — каждая надпись целиком в своей строке, перенос не сверх лимита.
+  const cut = JSON.parse(await val(`(() => {
+    const L = window.__g.actionPanel;
+    const rows = L.rows.filter((z) => z.visible).map((z) => z.getBounds()).sort((a, b) => a.top - b.top);
+    const bad = [];
+    for (const part of L.parts) {
+      if (typeof part.text !== 'string' || part.visible === false) continue;
+      const lines = part.getWrappedText ? part.getWrappedText(String(part.text)).length : 0;
+      const max = part.style.maxLines || 0;
+      if (max > 0 && lines > max) bad.push('перенос ' + lines + ' > ' + max + ': ' + part.text.slice(0, 30));
+      const b = part.getBounds();
+      const row = rows.find((r) => (b.top + b.bottom) / 2 > r.top + 2 && (b.top + b.bottom) / 2 < r.bottom - 2);
+      if (row && b.bottom > row.bottom + 0.5) bad.push('вылезло ниже строки: ' + part.text.slice(0, 30));
+      if (row && b.top < row.top - 0.5) bad.push('вылезло выше строки: ' + part.text.slice(0, 30));
+    }
+    return JSON.stringify({ rows: rows.length, bad });
+  })()`) ?? '{}');
+  check(cut.bad.length === 0, 'нет обрезки посреди строки: все надписи целиком в строках (' + cut.rows + ' строк)' + (cut.bad.length ? ': ' + JSON.stringify(cut.bad) : ''));
+  // Шаг 42: недоступная строка погашена — название вполнакала, плашка неактивная, причина серой подписью у кнопки.
+  const den = JSON.parse(await val(`(() => {
+    const L = window.__g.actionPanel;
+    const title = L.parts.find((p) => p.text === 'ОБМЕН СИМВОЛА');
+    const offPlates = L.parts.filter((p) => p.type === 'Image' && p.texture && p.texture.key === 'screen-list-button-off').length;
+    const reasons = L.parts.filter((p) => typeof p.text === 'string' && p.style && p.style.fontSize === '11px' && p.style.color === '#8d8174').map((p) => p.text);
+    // Наведение на недоступную строку не подсвечивает её: слой строк перерисовывается так же, как без наведения.
+    const len = () => L.strips.commandBuffer.length;
+    L.rows.forEach((zone) => zone.emit('pointerout'));
+    const base = len();
+    L.rows[0].emit('pointerover'); // обмен: первая строка в начале раунда недоступна
+    const denied = len();
+    L.rows[0].emit('pointerout');
+    L.rows[3].emit('pointerover'); // кража доступна всегда
+    const enabled = len();
+    L.rows[3].emit('pointerout');
+    return JSON.stringify({ alpha: title ? title.alpha : null, offPlates, reasons, base, denied, enabled });
+  })()`) ?? '{}');
+  check(den.alpha !== null && den.alpha <= 0.5, 'недоступная строка: название вполнакала (alpha ' + den.alpha + ')');
+  check(den.offPlates >= 2, 'недоступные строки: плашка в неактивной палитре (' + den.offPlates + ')');
+  check(den.reasons.length >= 2 && den.reasons.every((text) => typeof text === 'string' && text.length > 3), 'у кнопки серым написана причина: ' + JSON.stringify(den.reasons));
+  check(den.denied === den.base && den.enabled > den.base, 'наведение на недоступную строку не подсвечивает (' + den.base + ' → ' + den.denied + '), а на доступную — да (' + den.enabled + ')');
   check((await val('window.__g.actionBoard.labels[0].text')) === 'ДЕЙСТВИЯ', 'табличка подписана по-русски');
   const ruTitle = await val("window.__g.actionPanel.parts.some((part) => part.text === 'ДЕЙСТВИЯ ВНЕ ПРОКРУТКИ')");
   check(ruTitle === true, 'RU: заголовок панели — ДЕЙСТВИЯ ВНЕ ПРОКРУТКИ');

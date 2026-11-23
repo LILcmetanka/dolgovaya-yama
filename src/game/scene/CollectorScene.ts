@@ -18,10 +18,11 @@ import {
 import { t } from '../lang';
 import { DISPLAY } from '../layout';
 import { RESCUE_FADE_TIME } from '../parts/atmosphere';
+import type { ScreenRow } from '../parts/screenList';
 import { MEMORY_PICKS_PACT } from '../memory';
 import { grantUpgrade, setNextRunMemory } from '../progress';
 import type { Grid } from '../rules';
-import { GOLD_TEXT, GREEN_TEXT, LAMP_OFF, LAMP_RED } from '../theme';
+import { GOLD_TEXT, GREEN_TEXT, LAMP_OFF, LAMP_RED, UPGRADE_GROUP_ICONS } from '../theme';
 import { UPGRADE_SECOND_PRICE, memoryPickCount, roundDebtTickets, upgradeOffers, type Upgrade } from '../upgrades';
 import { SaveScene } from './SaveScene';
 
@@ -599,9 +600,9 @@ export abstract class CollectorScene extends SaveScene {
     });
   }
 
-  /** Строка улучшения на экране автомата: название, описание и текстовая кнопка справа. */
-  private upgradeRow(upgrade: Upgrade, right = t('upgTake')): { title: string; desc: string; right: string } {
-    return { title: t(upgrade.name), desc: t(upgrade.desc), right };
+  /** Строка улучшения на экране автомата: значок группы, название, описание и плашка справа (шаги 41–42). */
+  private upgradeRow(upgrade: Upgrade, right = t('upgTake')): ScreenRow {
+    return { icon: UPGRADE_GROUP_ICONS[upgrade.group], title: t(upgrade.name), desc: t(upgrade.desc), right };
   }
 
   /**
@@ -627,7 +628,7 @@ export abstract class CollectorScene extends SaveScene {
         this.closeUpgrades(); // второе брать не из чего или не на что — сразу к «ЗАНОВО»
         return;
       }
-      this.upgradeScreen.show(rest.map((upgrade) => this.upgradeRow(upgrade, t('actionTickets', UPGRADE_SECOND_PRICE))), {
+      this.upgradeScreen.show(rest.map((upgrade) => ({ ...this.upgradeRow(upgrade, String(UPGRADE_SECOND_PRICE)), cost: 'tickets' as const })), {
         title: t('upgTitle'),
         caption: t('upgSecondHint', UPGRADE_SECOND_PRICE, this.tickets),
         onPick: (place) => this.pickUpgrade(place),
