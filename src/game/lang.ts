@@ -464,7 +464,7 @@ const TEXTS = {
   achIAmSpeed: { ru: 'Я скорость', en: 'I am speed' },
   achIAmSpeedWhat: { ru: 'Множитель серии ×50', en: 'Streak multiplier ×50' },
   achBloodSpill: { ru: 'Я пролью много крови', en: 'I will spill much blood' },
-  achBloodSpillWhat: { ru: '«Жадность», и до конца раунда две прокрутки', en: 'Greed amulet, two spins left in the round' },
+  achBloodSpillWhat: { ru: '«Жадность», и на старте раунда всего две прокрутки', en: 'Greed amulet, only two spins at the start of a round' },
 } satisfies Record<string, Words>;
 
 export type TextKey = keyof typeof TEXTS;

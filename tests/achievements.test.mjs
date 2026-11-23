@@ -52,11 +52,15 @@ test('«Дубликат» — ровно с двух копий одного а
   assert.ok(earnedAchievements(state({ amulets: ['cherryPit'], amuletCounts: { cherryPit: 2 } })).includes('duplicate'));
 });
 
-test('«Я пролью много крови» — только переход счётчика сверху вниз до двух', () => {
-  assert.equal(isBloodSpill(5, 2, ['greed']), true, '5 → 2 с «жадностью»');
-  assert.equal(isBloodSpill(1, 2, ['greed']), false, 'подъём 1 → 2 (сигарета) — не ачивка');
-  assert.equal(isBloodSpill(5, 2, []), false, 'без «жадности» — не ачивка');
-  assert.equal(isBloodSpill(3, 2, ['greed']), true, '3 → 2 тоже переход вниз');
+test('«Я пролью много крови» — только когда в начале раунда всего две прокрутки (DONTLIKE п.12)', () => {
+  assert.equal(isBloodSpill(2, ['greed']), true, 'на старте две прокрутки с «жадностью» — ачивка');
+  assert.equal(isBloodSpill(1, ['greed']), true, 'одна прокрутка — тоже «настолько много жадности»');
+  assert.equal(isBloodSpill(2, []), false, 'без «жадности» — не ачивка');
+  assert.equal(isBloodSpill(3, ['greed']), false, 'три прокрутки на старте — ещё не та жадность');
+  assert.equal(isBloodSpill(12, ['greed']), false, 'обычный раунд с «жадностью» — не ачивка');
+  // Остаток к концу раунда больше не считается: две прокрутки посередине — это не «в начале».
+  assert.equal(isBloodSpill(0, ['greed']), false, 'ноль прокруток — конец раунда, не старт');
+  assert.equal(isBloodSpill(Number.NaN, ['greed']), false, 'мусор — не ачивка');
 });
 
 test('«50 на 50» — выигрыш при доле ≥50% и только на платной прокрутке', () => {

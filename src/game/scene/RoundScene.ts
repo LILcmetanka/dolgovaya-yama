@@ -187,10 +187,7 @@ export abstract class RoundScene extends MachineScene {
     this.spinsThisRun += 1;
     this.forgetTakeThisSpin();
     if (this.spinsThisRun === REVEAL_NOTE_SPIN) this.openRevealNote(); // записка впервые видна не с начала
-    const spinsBefore = this.spinsLeft;
     this.spinsLeft -= 1;
-    // «Я пролью много крови»: именно переход счётчика вниз до двух, а не «сейчас два» (иначе ловился бы и подъём).
-    if (isBloodSpill(spinsBefore, this.spinsLeft, this.amuletIds())) this.unlockAchievement('bloodSpill');
     this.panel.blinkSpinLamp(this.spinsLeft);
     this.roll(false);
   }
@@ -1325,6 +1322,9 @@ export abstract class RoundScene extends MachineScene {
     // Улучшение №1 «+1 прокрутка в первом раунде» (шаг 28): только раунд 1 и после всех поправок — это подарок,
     // а не бонус, который потолок мог бы срезать.
     if (this.round === 1) this.spinsLeft += this.upgradeEffects.firstRoundSpins;
+    // «Я пролью много крови» (DONTLIKE п.12): смотрим, сколько прокруток выдано НА СТАРТЕ раунда, а не остаток.
+    // Здесь уже учтены амулеты (жадность), фаза, сделки и №1 — это и есть «в начале раунда».
+    if (isBloodSpill(this.spinsLeft, ids)) this.unlockAchievement('bloodSpill');
     this.skullFreeSpinGiven = false; // №4: в новом раунде бесплатная прокрутка за первый череп снова доступна
     // Действия шага 29: одноразовые снова доступны, обмен/лотерея/проданные символы гаснут, чистка тикает.
     this.actionState = startRoundActions(this.actionState);
@@ -1372,6 +1372,7 @@ export abstract class RoundScene extends MachineScene {
    */
   protected payEarly(): void {
     if (this.remindReroll()) return; // висит решение — долг отдаётся только после выбора
+    if (this.isDebtFree()) return; // долга нет (прощение, выкуп) — платить нечего, раунд не кончаем и билетов не даём
     if (!this.canAct() || !this.hasEnoughForDebt()) return;
     const bonus = earlyPayTickets(this.spinsLeft);
     this.panel.burnOutSpinLamps(this.spinsLeft);

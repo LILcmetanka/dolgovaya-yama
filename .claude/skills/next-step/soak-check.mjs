@@ -125,6 +125,7 @@ try {
       0: { key: '0', code: 'Digit0', keyCode: 48, text: '0' },
       1: { key: '1', code: 'Digit1', keyCode: 49, text: '1' },
       2: { key: '2', code: 'Digit2', keyCode: 50, text: '2' },
+      3: { key: '3', code: 'Digit3', keyCode: 51, text: '3' }, // третья карточка: экран улучшений — это клавиши 1–3
     };
     const spec = codes[name];
     await send('Input.dispatchKeyEvent', { type: 'keyDown', key: spec.key, code: spec.code, windowsVirtualKeyCode: spec.keyCode, nativeVirtualKeyCode: spec.keyCode, text: spec.text });

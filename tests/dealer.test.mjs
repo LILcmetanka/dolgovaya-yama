@@ -115,8 +115,16 @@ test('действующую сделку второй раз не берут: p
   const last = TAKEN + rounds('tickets-shop') - 1;
   assert.equal(D.pactLive([shop], 'tickets-shop', TAKEN), true, 'в раунде взятия — живая');
   assert.equal(D.pactLive([shop], 'tickets-shop', last), true, 'и в последнем раунде');
-  assert.equal(D.pactLive([shop], 'tickets-shop', last + 1), false, 'после срока — можно брать снова');
+  assert.equal(D.pactLive([shop], 'tickets-shop', last + 1), false, 'после срока pactLive сама по себе не держит');
   assert.equal(D.pactLive([shop], 'quiet-round', TAKEN), false, 'другая сделка не мешает');
+  // DONTLIKE п.9: в забеге взятая карта не возвращается и после срока — её помнит pacts, и Дилер её не кладёт.
+  assert.equal(D.pactAlreadyTaken([shop], 'tickets-shop'), true, 'взятая карта — «уже брали»');
+  assert.equal(D.pactAlreadyTaken([shop], 'quiet-round'), false, 'другая — нет');
+  const afterExpiry = D.pactOf('tickets-shop', TAKEN);
+  assert.equal(D.pactAlreadyTaken([afterExpiry], 'tickets-shop'), true, 'даже когда срок вышел');
+  const offered = D.offerPacts(D.PACT_OFFER_COUNT, ['tickets-shop']);
+  assert.ok(!offered.some((pact) => pact.id === 'tickets-shop'), 'в предложении исключённых нет');
+  assert.equal(offered.length, D.PACT_OFFER_COUNT, 'остальные карты добираются до трёх');
   // Даже если на кассете окажутся две записи, эффект один: магазин закрыт, но не «вдвойне».
   const twice = [shop, { id: 'tickets-shop', untilRound: last + 2 }];
   assert.equal(D.pactEffects(twice, TAKEN).shopClosed, true, 'магазин закрыт');

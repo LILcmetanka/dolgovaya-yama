@@ -13,9 +13,10 @@ import {
   HALF_STEP_TICKETS,
   JOKER_SLOT_SHELF,
   offerPacts,
+  PACT_OFFER_COUNT,
   PACT_TICKETS,
+  pactAlreadyTaken,
   pactDebt,
-  pactLive,
   pactOf,
   pactSymbols,
   pactTickets,
@@ -56,13 +57,24 @@ export abstract class DealerScene extends RoundScene {
     this.isDealerClosing = false;
   }
 
-  /** Выпал кубик: Дилер кладёт три карты-сделки. Ушёл — done(). */
+  /**
+   * Выпал кубик: Дилер кладёт три карты-сделки. Ушёл — done(). Взятые в этом забеге карты на сукно больше не ложатся
+   * (DONTLIKE п.9): и живые, и уже кончившиеся — их помнит pacts (кассета возвращает этот список вместе с забегом).
+   * Все 52 карты за забег перебраны — Дилеру нечего предложить: стол не открывается, раунд идёт дальше.
+   */
   protected startDealerGame(done: () => void): void {
     see(WHO_DEALER); // Дилер появился впервые — он на экране на стене; NEW не поднимаем: он только за новые символы барабана
     this.isDealing = true;
     this.isDealerClosing = false;
     this.dealerDone = done;
-    this.pactOffer = offerPacts(); // три карты: сколько именно — dealerGame.PACT_OFFER_COUNT
+    const taken = this.pacts.map((pact) => pact.id);
+    this.pactOffer = offerPacts(PACT_OFFER_COUNT, taken);
+    if (this.pactOffer.length === 0) {
+      // Предложить нечего — не показываем пустое сукно: сделок больше, чем карт в пуле, не бывает.
+      this.isDealing = false;
+      done();
+      return;
+    }
     this.screen.flashLamps(LAMP_PURPLE, DEALER_LAMPS_TIME);
     // №11: символы для выбора — платящие и уже вошедшие в автомат (dealerGame.pactSymbols)
     this.dealerTable.open(this.pactOffer, pactSymbols(this.round));
@@ -73,15 +85,16 @@ export abstract class DealerScene extends RoundScene {
    * Взяли сделку: она ложится в pacts до своего последнего раунда (dealerGame.pactOf) и сразу выдаёт то,
    * что выдаётся один раз — билеты, сдвиг долга или выбранный символ. Строки карты — новостью на стекле,
    * чтобы игрок помнил, на что согласился.
-   * Такую сделку, которая ещё действует, взять нельзя (dealerGame.pactLive, как отказ бота в симуляторе):
-   * дубликат не выдал бы ни бафа второй раз, ни билетов, но продлил бы срок — это был бы обман карты.
+   * Взятую в этом забеге карту не берут второй раз (dealerGame.pactAlreadyTaken, DONTLIKE п.9): дубликат не дал бы
+   * ни бафа, ни билетов, но продлил срок — это был бы обман карты. Дилер её и не предлагает.
    */
   protected acceptPact(id: PactId, symbol?: SlotSymbol, machine?: MachineId): void {
     if (!this.isDealing || this.isDealerClosing) return;
     const spec = this.pactOffer.find((pact) => pact.id === id);
     if (!spec) return;
-    if (pactLive(this.pacts, spec.id, this.round)) {
-      this.sfx.play('deny'); // стол не закрываем: игрок видит, что карта не берётся, и выбирает другую
+    if (pactAlreadyTaken(this.pacts, spec.id)) {
+      // Такая карта уже была в этом забеге (даже если срок вышел): стол не закрываем, игрок берёт другую.
+      this.sfx.play('deny');
       return;
     }
     // №11: без платящего символа из списка сделку не берут — строка «выбранный символ» была бы обманом.

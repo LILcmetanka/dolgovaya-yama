@@ -18,8 +18,8 @@ import {
   useAction,
   type ActionId,
 } from './actions';
-import type { AchievementId } from './achievements';
-import { addCopy, AMULETS, countOf, MAX_SOCKETS, symbolPayout, type AmuletId } from './amulets';
+import { isBloodSpill, type AchievementId } from './achievements';
+import { addCopy, AMULETS, countOf, MAX_SOCKETS, symbolPayout, spinsPerRound, type AmuletId } from './amulets';
 import { drawMachineBody, drawRoom } from './decor';
 import { DEV_CHIPS, DEV_TICKETS, isDevMode } from './devmode';
 import { amuletKey, itemKey, machineKey, see } from './codex';
@@ -57,7 +57,7 @@ import { CollectorScene } from './scene/CollectorScene';
 import { ITEMS, MAX_SLOTS, offerRowCount, type ItemId } from './items';
 import { isTutorialDone, markTutorialDone } from './progress';
 import { symbolWeightOf } from './skullShare';
-import { isPaying, SYMBOLS, weightsForRound, type SlotSymbol } from './rules';
+import { isPaying, SPINS_PER_ROUND, SYMBOLS, weightsForRound, type SlotSymbol } from './rules';
 import type { RunSave } from './save';
 import { getVolumes, isSilent, setVolume, toggleSound, volumeShare, type VolumeKind } from './settings';
 import { GOLD_TEXT } from './theme';
@@ -300,6 +300,12 @@ export class GameScene extends CollectorScene {
    * не видит, что улучшение сработало (DONTLIKE п.15: «не сработало» — его просто не было видно).
    */
   private beginRunPlay(): void {
+    // Память амулетов (шаг 38) взята: жадность забирает по 3 прокрутки с копии, и первый раунд обязан это учесть.
+    // resetState считает прокрутки до выбора амулетов, поэтому пересчитываем здесь — иначе «на 3 меньше в раунде»
+    // не работало бы в первом раунде забега (DONTLIKE п.12: смотрим, сколько прокруток реально выдано на старте).
+    this.spinsLeft = spinsPerRound(SPINS_PER_ROUND, this.amuletIds()) + this.upgradeEffects.firstRoundSpins;
+    this.refreshHud();
+    if (isBloodSpill(this.spinsLeft, this.amuletIds())) this.unlockAchievement('bloodSpill');
     if (this.isDebtForgiven) {
       this.screen.announceNews(t('debtForgiven'));
       this.sfx.play('news', 0.3);

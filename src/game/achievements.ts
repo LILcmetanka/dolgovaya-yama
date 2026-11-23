@@ -99,8 +99,11 @@ export const ACHIEVEMENT_FADE = 250;
 /** Пороги секретных ачивок: билетов на табло и множителя серии. */
 export const ACHIEVEMENT_TICKETS = 20;
 export const ACHIEVEMENT_SPEED = 50;
-/** «До конца раунда осталось 2 прокрутки» — для «Я пролью много крови». */
-export const ACHIEVEMENT_LAST_SPINS = 2;
+/**
+ * «В начале раунда всего 2 прокрутки» — для «Я пролью много крови» (DONTLIKE п.12): не остаток к концу,
+ * а выданное на раунд число. Жадность забирает по 3 прокрутки с копии, поэтому до двух доходит только с ней.
+ */
+export const ACHIEVEMENT_ROUND_SPINS = 2;
 /** Столько сигарет в одном раунде — «Курильщик». */
 export const CIGARETTES_FOR_ACHIEVEMENT = 3;
 /** Доля черепов, при которой выигранный паттерн даёт «50 на 50»: половина и больше. */
@@ -163,12 +166,15 @@ export const AMULET_ACHIEVEMENTS: Partial<Record<AmuletId, AchievementId>> = {
 };
 
 /**
- * «Я пролью много крови»: прокрутка спустила счётчик вниз и остановилась ровно на двух — вместе с «жадностью».
- * Считаем переход (было больше двух → стало два), а не «сейчас два»: иначе ачивка ловила бы и подъём
- * с 1 до 2 (сигарета), где никакого «конца близко» нет. Зовёт RoundScene.spin, где прокрутки убывают.
+ * «Я пролью много крови» (DONTLIKE п.12, решение автора 23.11.2026): в НАЧАЛЕ раунда у игрока всего
+ * ACHIEVEMENT_ROUND_SPINS прокруток и меньше — «настолько много жадности». Раньше ачивка ловила остаток:
+ * любой раунд, где счётчик падал до двух, — это было не то. Считаем выданное на раунд число (spinsPerRound
+ * с амулетами, фаза, сделки и улучшение №1), а не остаток: остаток меньше двух бывает и у обычного раунда.
+ * Жадность обязательна — без неё прокруток в раунде никогда не два.
  */
-export function isBloodSpill(before: number, after: number, amulets: readonly AmuletId[]): boolean {
-  return after === ACHIEVEMENT_LAST_SPINS && before > ACHIEVEMENT_LAST_SPINS && owns([...amulets], 'greed');
+export function isBloodSpill(spinsAtRoundStart: number, amulets: readonly AmuletId[]): boolean {
+  if (!Number.isFinite(spinsAtRoundStart) || spinsAtRoundStart <= 0) return false;
+  return spinsAtRoundStart <= ACHIEVEMENT_ROUND_SPINS && owns([...amulets], 'greed');
 }
 
 /**

@@ -671,10 +671,197 @@ try {
   check(afterFree.rescue === false && afterFree.goodLuck === false, '№8/п.15: GOOD LUCK и спасения при долге 0 нет');
   check(afterFree.atm === false, '№8/п.15: банкомат при долге 0 не выезжает — платить нечего (DONTLIKE п.5)');
   check(afterFree.shop === true && afterFree.round === 2 && afterFree.debt === 540, `№8/п.15: сразу магазин, второй долг 540 (раунд ${afterFree.round}, долг ${afterFree.debt})`);
+  // п.5: долг обнулился прямо в раунде (выкуп/сделка) — та же дверь: банкомата, GOOD LUCK и спасения нет,
+  // магазин открывается сразу, а «отдать долг раньше» (D) при нуле ничего не делает.
+  await val('window.__g.leaveShop(); 1');
+  await sleep(2600); // панель магазина уехала, раунд 2 пошёл
+  const zeroed = JSON.parse((await val(`(() => { const g = window.__g;
+    g.debt = 0; g.collector.markNote(0); g.balance = 100; g.spinsLeft = 5; g.tickets = 3;
+    const spinsBefore = g.spinsLeft, ticketsBefore = g.tickets;
+    g.payEarly(); // «отдать долг раньше» при нулевом долге: платить нечего
+    const early = { spins: g.spinsLeft, tickets: g.tickets, over: g.isRoundOver, rescue: g.isRescue };
+    const note = g.collector.noteDebt;
+    g.endOfSpins(false);
+    return JSON.stringify({ early, spinsBefore, ticketsBefore, note });
+  })()`)) ?? '{}');
+  check(zeroed.early.spins === zeroed.spinsBefore && zeroed.early.tickets === zeroed.ticketsBefore && zeroed.early.over === false,
+    `п.5: при долге 0 «отдать раньше» ничего не делает (прокрутки ${zeroed.spinsBefore}, билеты ${zeroed.ticketsBefore})`);
+  check(zeroed.note === 0, 'п.5: записка с долгом показывает 0');
+  await sleep(2600);
+  const zeroedAfter = JSON.parse((await val(`(() => { const g = window.__g; return JSON.stringify({
+    shop: g.isShopOpen, rescue: g.isRescue, gameOver: g.isGameOver, atm: g.collector.isAtmOut, debt: g.debt, round: g.round,
+    goodLuck: g.children.list.some((o) => typeof o.text === 'string' && o.text === 'GOOD LUCK'),
+  }); })()`)) ?? '{}');
+  check(zeroedAfter.atm === false && zeroedAfter.goodLuck === false && zeroedAfter.rescue === false && zeroedAfter.gameOver === false,
+    'п.5: долг 0 посреди раунда — банкомата, GOOD LUCK и спасения нет');
+  check(zeroedAfter.shop === true && zeroedAfter.debt > 0, `п.5: сразу магазин, следующий долг обычный (${zeroedAfter.debt})`);
   await reload();
   await passPicks();
   const sixthRun = JSON.parse((await val('(() => { const g = window.__g; return JSON.stringify({ runs: g.runsPlayed, debt: g.debt }); })()')) ?? '{}');
   check(sixthRun.runs === 6 && sixthRun.debt === 150, `№8: шестой — долг обычный 150 (забег ${sixthRun.runs}, долг ${sixthRun.debt})`);
+
+  // ---------- 25: DONTLIKE п.9 — взятое улучшение больше не предлагается ----------
+  // Берём покупки «всё, кроме двух»: экран показывает ровно оставшиеся, и по нему видно, вернулось ли взятое.
+  const twoLeft = { ...Object.fromEntries(ALL_IDS.filter((upgradeId) => upgradeId !== 'win-piggy' && upgradeId !== 'win-insurance').map((upgradeId) => [upgradeId, 1])), 'amulet-copy': 2 };
+  await setPurchases(twoLeft);
+  await reload();
+  await passPicks();
+  await setTickets(10); // вторая фаза остаётся на экране: видно, что взятое не вернулось в две оставшиеся карточки
+  await die();
+  const firstDeath = await state();
+  const takenUpgrade = firstDeath.offers[0];
+  check(firstDeath.cards === 2 && firstDeath.offers.includes('win-piggy') && firstDeath.offers.includes('win-insurance'),
+    'п.9: перед смертью на столе ровно два непокупленных улучшения: ' + JSON.stringify(firstDeath.offers));
+  await val(`window.__g.pickUpgrade(${firstDeath.offers.indexOf(takenUpgrade)}); 1`);
+  await sleep(300);
+  const afterTake = await state();
+  check(afterTake.purchases[takenUpgrade] === 1 && afterTake.cards === 1 && !afterTake.offers.includes(takenUpgrade),
+    `п.9: взятое ${takenUpgrade} сразу ушло со стола (осталось ${JSON.stringify(afterTake.offers)})`);
+  // Новый забег без перезагрузки страницы: снимок покупок читается заново в resetState.
+  await restart();
+  await setTickets(0);
+  await die();
+  const nextDeath = await state();
+  check(!nextDeath.offers.includes(takenUpgrade),
+    `п.9: в новом забеге ${takenUpgrade} не предлагается снова (${JSON.stringify(nextDeath.offers)})`);
+  // После перезагрузки страницы: покупки лежат в localStorage, а не в сцене.
+  await reload();
+  await passPicks();
+  await setTickets(0);
+  await die();
+  const afterReload = await state();
+  check(!afterReload.offers.includes(takenUpgrade),
+    `п.9: после перезагрузки ${takenUpgrade} не вернулся (${JSON.stringify(afterReload.offers)})`);
+  // После отката кассетой: плёнка возвращает забег, а не прогресс — взятое улучшение остаётся взятым.
+  await val(`(() => { const g = window.__g; g.tapeState = 'blank'; g.tapesBought = 1; g.recordTape(); g.insertTape(); return 1; })()`);
+  await sleep(8000);
+  await passPicks();
+  await setTickets(0);
+  await die();
+  const afterTape = await state();
+  check(afterTape.purchases[takenUpgrade] === 1 && !afterTape.offers.includes(takenUpgrade),
+    `п.9: после отката кассетой ${takenUpgrade} по-прежнему не предлагается (${JSON.stringify(afterTape.offers)})`);
+  // «Ещё копия» (repeat: 2, №27): ровно два предложения, третьего нет.
+  const copyLeft = { ...Object.fromEntries(ALL_IDS.filter((upgradeId) => upgradeId !== 'amulet-copy').map((upgradeId) => [upgradeId, 1])) };
+  await setPurchases(copyLeft);
+  await reload();
+  await passPicks();
+  await setTickets(0);
+  await die();
+  const copy1 = await state();
+  check(JSON.stringify(copy1.offers) === JSON.stringify(['amulet-copy']), 'п.9 №27: осталась одна карта — «Ещё копия»: ' + JSON.stringify(copy1.offers));
+  await key('1');
+  const copy1After = await state();
+  check(copy1After.purchases['amulet-copy'] === 1, 'п.9 №27: первая копия взята');
+  await restart();
+  await setTickets(0);
+  await die();
+  const copy2 = await state();
+  check(JSON.stringify(copy2.offers) === JSON.stringify(['amulet-copy']), 'п.9 №27: второй раз карта ещё предлагается: ' + JSON.stringify(copy2.offers));
+  await key('1');
+  await restart();
+  await setTickets(0);
+  await die();
+  const copy3 = await state();
+  check(copy3.open === false && copy3.cards === 0, 'п.9 №27: третьего раза нет — экрана улучшений больше нет');
+
+  // ---------- 26: DONTLIKE п.9 — взятая связка Дилера больше не ложится на сукно ----------
+  await setPurchases({});
+  await reload();
+  await passPicks();
+  const dealerVisit = async () => {
+    await val('window.__g.round = window.__g.round || 3; window.__g.startDealerGame(() => { window.__dealerDone = (window.__dealerDone || 0) + 1; }); 1');
+    await sleep(800);
+    return JSON.parse((await val(`JSON.stringify((window.__g.pactOffer || []).map((pact) => ({ id: pact.id, needsSymbol: Boolean(pact.needsSymbol), needsMachine: Boolean(pact.needsMachine) })))`)) ?? '[]');
+  };
+  const visit1 = await dealerVisit();
+  check(visit1.length === 3, 'п.9: первое сукно — три карты: ' + JSON.stringify(visit1.map((pact) => pact.id)));
+  const takenPacts = [];
+  for (let visit = 0; visit < 3; visit++) {
+    const offers = visit === 0 ? visit1 : await dealerVisit();
+    // Карту с выбором символа/автомата без выбора не берут — её и не трогаем: нам нужны простые карты.
+    const pick = offers.find((pact) => !pact.needsSymbol && !pact.needsMachine && !takenPacts.includes(pact.id));
+    if (!pick) break;
+    await val(`window.__g.acceptPact('${pick.id}'); 1`);
+    await sleep(1500);
+    if (await val(`window.__g.pacts.some((pact) => pact.id === '${pick.id}')`)) takenPacts.push(pick.id);
+  }
+  check(takenPacts.length === 3 && takenPacts.every((id, index, list) => list.indexOf(id) === index),
+    'п.9: с трёх визитов взяты три разные связки: ' + JSON.stringify(takenPacts));
+  check((await val(`window.__g.pacts.length`)) === 3, 'п.9: все три записаны в забег');
+  const laterVisits = [];
+  for (let visit = 0; visit < 25; visit++) {
+    await val('window.__g.round += 2; 1'); // сроки карт давно вышли — они всё равно не должны вернуться
+    laterVisits.push((await dealerVisit()).map((pact) => pact.id));
+    await val('window.__g.refusePacts(); 1');
+    await sleep(900);
+  }
+  const repeated = laterVisits.flat().filter((id) => takenPacts.includes(id));
+  check(repeated.length === 0,
+    `п.9: за 25 визитов после срока ни одна из взятых не вернулась (${JSON.stringify(takenPacts)}, повторов ${repeated.length})`);
+  check(laterVisits.every((offers) => offers.length === 3), 'п.9: на каждом сукне по-прежнему три разные карты');
+  // Кассета: запись забега несёт pacts — после отката взятые связки тоже не возвращаются на сукно.
+  await val(`(() => { const g = window.__g; g.tapeState = 'blank'; g.tapesBought = 1; g.recordTape(); g.insertTape(); return 1; })()`);
+  await sleep(8000);
+  await passPicks();
+  const restoredPacts = JSON.parse(await val(`JSON.stringify((window.__g.pacts || []).map((pact) => pact.id))`));
+  const afterTapeOffers = (await dealerVisit()).map((pact) => pact.id);
+  check(takenPacts.every((id) => restoredPacts.includes(id)), `п.9: кассета вернула связки в список забега (${JSON.stringify(restoredPacts)})`);
+  check(!afterTapeOffers.some((id) => takenPacts.includes(id)), `п.9: после кассеты взятые на сукно не легли (${JSON.stringify(afterTapeOffers)})`);
+
+  // ---------- 27: DONTLIKE п.13 — полка на 2, 3 и 4 предмета стоит ровно ----------
+  await setPurchases({ 'item-slot': 1 });
+  await reload();
+  await passPicks();
+  const shelfBox = JSON.parse((await val(`(() => {
+    const g = window.__g;
+    return JSON.stringify({
+      top: g.itemShelf.items[0].y,
+      x: g.itemShelf.items[0].x,
+      step: g.itemShelf.items[1].y - g.itemShelf.items[0].y,
+      doorX: g.itemShelf.items[4].x,
+    });
+  })()`)) ?? '{}');
+  check(shelfBox.x === 159 && shelfBox.step === 76, `п.13: гнёзда полки — x ${shelfBox.x}, шаг ${shelfBox.step} (ровно 76)`);
+  check(shelfBox.doorX === 79, `п.13: вторая полка левее на 80 (x ${shelfBox.doorX}) — между полками видна стена`);
+  const shelfCount = async (count, ids) => {
+    await val(`(() => { const g = window.__g; g.slots = ${count}; g.shelf = new Array(${count}).fill(null);
+      g.itemShelf.setOpenCount(${count}); g.itemShelf.items.forEach((o) => o.setVisible(false)); return 1; })()`);
+    for (const itemId of ids) { await val(`window.__g.devGiveItem('${itemId}'); 1`); await sleep(700); }
+    return JSON.parse((await val(`(() => { const g = window.__g;
+      return JSON.stringify(g.itemShelf.items.slice(0, ${count}).map((o, slot) => { const b = o.getBounds(); return { slot, y: o.y, w: b.width, h: b.height }; }));
+    })()`)) ?? '[]');
+  };
+  const NICHE = 54;
+  for (const [count, ids] of [[2, ['shield', 'garlic']], [3, ['shield', 'garlic', 'triple']], [4, ['shield', 'garlic', 'triple', 'cherries']]]) {
+    const shelf = await shelfCount(count, ids);
+    const uniform = shelf.every((item, index) => Math.abs(item.y - (248 + index * 76)) < 0.01);
+    const inside = shelf.every((item) => item.w <= NICHE + 0.01 && item.h <= NICHE + 0.01);
+    check(shelf.length === count && uniform, `п.13: ${count} предмета — ровный шаг 76 (${shelf.map((item) => item.y).join(', ')})`);
+    check(inside, `п.13: ${count} предмета — предмет и пульс в нише ${NICHE} (макс ${Math.max(...shelf.map((item) => Math.max(item.w, item.h))).toFixed(1)})`);
+  }
+  await shot('step39-shelf-4.png');
+
+  // ---------- 28: DONTLIKE п.12 — «Я пролью много крови» на старте раунда, а не остаток ----------
+  await setPurchases({});
+  await reload();
+  await passPicks();
+  const blood = JSON.parse((await val(`(() => { const g = window.__g;
+    // Жадность ×4 — потолок копий поднимает №27; 12 − 3×4 = 0 → в раунде одна прокрутка.
+    g.sockets = 6; g.amulets = []; g.amuletCounts = {};
+    g.grantStartAmulet('greed'); g.amuletCounts.greed = 4;
+    g.round = 2; g.pacts = []; g.startRound();
+    const greedySpins = g.spinsLeft;
+    const greedyAch = JSON.parse(localStorage.getItem('${PROGRESS_KEY}') ?? '{}').achievements ?? [];
+    // Без жадности обычный раунд — снова 12: проверка условия на остаток сюда не вернётся.
+    g.amulets = []; g.amuletCounts = {};
+    g.round = 3; g.startRound();
+    const plainSpins = g.spinsLeft;
+    return JSON.stringify({ greedySpins, greedyAch, plainSpins });
+  })()`)) ?? '{}');
+  check(blood.greedySpins <= 2 && blood.greedySpins >= 1, `п.12: с жадностью ×4 на старте раунда ${blood.greedySpins} прокрутка`);
+  check(blood.greedyAch.includes('bloodSpill'), `п.12: ачивка «Я пролью много крови» выдана на старте раунда (${JSON.stringify(blood.greedyAch)})`);
+  check(blood.plainSpins >= 12, `п.12: без жадности в раунде снова обычные прокрутки (${blood.plainSpins})`);
 
   console.log(`итог ${ok} из ${all}`);
   ws.close();

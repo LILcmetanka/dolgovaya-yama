@@ -115,7 +115,8 @@ for (let game = 0; game < 5000; game++) {
   let pacts = [];
   for (let screen = 0; screen < ROUNDS; screen++) {
     if (Math.random() < DICE_CHANCE) {
-      const choice = pick(D.offerPacts(), pacts, round);
+      // DONTLIKE п.9: взятые в забеге карты Дилер больше не предлагает — и живые, и кончившиеся.
+      const choice = pick(D.offerPacts(D.PACT_OFFER_COUNT, pacts.map((pact) => pact.id)), pacts, round);
       if (choice) {
         const pact = take(choice, round);
         if (pact) pacts.push(pact);
@@ -156,7 +157,7 @@ console.log('Пример ленты (что выпало — что взяли 
 let round = 1;
 let tape = [];
 for (let i = 0; i < 12; i++) {
-  const offers = D.offerPacts();
+  const offers = D.offerPacts(D.PACT_OFFER_COUNT, tape.map((pact) => pact.id));
   const choice = pick(offers, tape, round);
   if (choice) {
     const pact = take(choice, round);

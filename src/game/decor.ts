@@ -13,6 +13,7 @@ import {
   MULTIPLIER_WINDOW,
   PAYOUT_WINDOW,
   SCREEN,
+  SHELF_FRAME,
   SHOP_PANEL,
   SKULL_SCREEN,
   SOCKET_RADIUS,
@@ -834,10 +835,12 @@ export function createShelfTextures(scene: Phaser.Scene, size: number): void {
     g.fillRoundedRect(0, 0, size, size, 5); // стальная рамка отсека
     g.fillStyle(0x6b7280);
     g.fillRect(4, 1, size - 8, 3); // светлый край рамки сверху
+    // Ниша 54×54 (рамка 6): предмет на полке и его пульс влезают в неё целиком и не заходят на рамку (DONTLIKE п.13).
+    const niche = size - 2 * SHELF_FRAME; // size — сторона клетки (SHELF_CELL): 66 − 12 = 54
     g.fillStyle(0x0d0f12);
-    g.fillRect(7, 7, size - 14, size - 16); // отсек
+    g.fillRect(SHELF_FRAME, SHELF_FRAME, niche, niche);
     g.fillStyle(0x4b5563);
-    g.fillRect(4, size - 10, size - 8, 6); // стальная полочка внизу отсека
+    g.fillRect(4, size - 4, size - 8, 3); // стальная губа по низу рамки — нишу не занимает
     g.fillStyle(0x9ca3af);
     for (const [x, y] of [[4, 4], [size - 4, 4], [4, size - 4], [size - 4, size - 4]]) g.fillCircle(x, y, 1.6); // болты по углам
     bake(g, SHELF_CELL_TEXTURE, size + 4, size + 5);

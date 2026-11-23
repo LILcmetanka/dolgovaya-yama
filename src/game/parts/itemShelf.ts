@@ -12,12 +12,15 @@ import {
   type SlotEffectId,
 } from '../items';
 import { t } from '../lang';
-import { EFFECTS_STEP, EFFECTS_TOP_Y, EFFECT_SLOT, EFFECTS_X, ITEM_SIZE, SHELF_CELL, shelfX, shelfY } from '../layout';
+import { EFFECTS_STEP, EFFECTS_TOP_Y, EFFECT_SLOT, EFFECTS_X, ITEM_SIZE, SHELF_CELL, SHELF_NICHE, shelfX, shelfY } from '../layout';
 import { addText, LED_STYLE, POPUP_DEPTH, pulse } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
 // Размеры.
-const ITEM_ON_SHELF_SCALE = 0.9; // предмет в клетке чуть меньше ниши
+// Предмет на полке — от ниши, а не от клетки: 48 в нише 54 (по 3 поля), пульс ×1,1 = 52,8 — всё внутри ниши,
+// на стальную рамку и на стену не заходит (DONTLIKE п.13: «на полке 4 предмета — всё съезжает»).
+const ITEM_ON_SHELF_SIZE = 48;
+const ITEM_ON_SHELF_SCALE = ITEM_ON_SHELF_SIZE / ITEM_SIZE;
 const EFFECT_SCALE = 0.55; // включённый предмет у экрана: ниша гнезда 34 px, значок 31 px — не заходит на бронзовую рамку
 // Анимации, мс.
 const FLY_TIME = 450; // предмет летит из лотка на полку или с полки к экрану
@@ -34,7 +37,9 @@ const DIGIT_COLOR = '#fbbf24'; // как цифры табло
 const DIGIT_LOCKED_COLOR = '#4ade80'; // встало на место — зелёная
 const SHAKE_TIME = 50; // один рывок тряски «нельзя»
 const SPEND_TIME = 400; // включённый предмет сработал: летит к месту и тает
-const NEW_ITEM_SCALE = 1.15; // купленный предмет «дышит» (увеличивается во столько раз), пока его не нажмут: видно, что он нажимается
+const NEW_ITEM_SCALE = 1.1; // купленный предмет «дышит» (увеличивается во столько раз), пока его не нажмут: видно, что он нажимается
+// Потолок пульса — по нише: даже если NEW_ITEM_SCALE поднимут, предмет не вылезет на рамку клетки.
+const BREATH_SCALE = Math.min(NEW_ITEM_SCALE, SHELF_NICHE / ITEM_ON_SHELF_SIZE);
 const NEW_ITEM_BREATH = 550; // один вдох, мс
 const RESCUE_DIM_ALPHA = 0.35; // в раунде спасения предметы заморожены: притушены, но остаются на месте
 
@@ -256,7 +261,7 @@ export class ItemShelf {
     this.breathing.add(slot);
     this.scene.tweens.add({
       targets: target,
-      scale: ITEM_ON_SHELF_SCALE * NEW_ITEM_SCALE,
+      scale: ITEM_ON_SHELF_SCALE * BREATH_SCALE,
       duration: NEW_ITEM_BREATH,
       ease: 'Sine.easeInOut',
       yoyo: true,
