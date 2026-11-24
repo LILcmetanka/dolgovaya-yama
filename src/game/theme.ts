@@ -12,6 +12,9 @@ export const FONT = 'system-ui, "Segoe UI Emoji", "Apple Color Emoji", "Noto Col
 
 /** Огни и лампочки. */
 export const LAMP_OFF = 0x431407; // выключенная лампочка
+/** Тон комнаты вокруг игры: им красятся поля вокруг холста, строка состояния телефона и значок «на главный экран».
+ *  Тёмно-коричневый, как нижняя грань кнопок в SCREEN_UI, — не чёрный провал и не синие поля браузера. */
+export const ROOM_COLOR = 0x241a0b;
 export const LAMP_GOLD = 0xfde047;
 export const LAMP_RED = 0xef4444;
 export const LAMP_GREEN = 0x4ade80;

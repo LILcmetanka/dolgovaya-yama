@@ -7,8 +7,12 @@
  *
  * Что проверяет: холст 16:9 на всё окно боком (844×390) и стоя (390×844), определитель телефона
  * (hover: none + pointer: coarse), значки ⚙ и «во весь экран» только на телефоне, «поверни телефон»,
- * касания (⚙ — пауза, рычаг — прокрутка с одного касания, переключение языка, долгое нажатие — подсказка) и что под тёмным
- * экраном «поверни телефон» игра не нажимается. Порт 8767 — свой, dev-сервер на 5173 не трогаем.
+ * касания (⚙ — пауза, рычаг — прокрутка с одного касания, переключение языка, долгое нажатие — подсказка) и что под
+ * экраном «поверни телефон» (DOM-экран #rotate, шаг 44) игра не нажимается. Порт 8767 — свой, dev-сервер на 5173 не трогаем.
+ *
+ * Шаг 44 (мобильная готовность): мета-теги и манифест, touch-action, двойной тап не приближает, безопасная зона
+ * (координаты угловых значков и отступы экрана поворота), звук разблокируется первым касанием, 10 секунд игры
+ * держат не меньше 40 кадров в секунду, ошибок в консоли нет.
  *
  * Долги проверок (шаг 35): замаха нет по факту (разбор src/game/**, а не undefined === undefined); числа шарика рычага
  * участвуют в проверке; раскладка банкомата, полки предметов, стекла «ПЕРЕКРУТИТЬ?»/«ПОДМЕНА?», выхода магазина,
@@ -153,8 +157,10 @@ const langText = (key) => {
 const fillCount = (text, count) => text.replace('{0}', String(count));
 const MIN_TOUCH = 44; // минимум для нажимаемой плашки в единицах раскладки — как PAGE_ZONE и CLOSE_HIT в игре
 
+// --use-angle=vulkan (шаг 44): без него headless Chrome рисует холст 1920×1080 программно и не держит 60 кадров
+// даже на пустой сцене; с ним кадры считает видеокарта, как на настоящем телефоне.
 const srv = spawn('python3', ['-m', 'http.server', '8767', '--directory', SP + '/dist', '--bind', '127.0.0.1'], { stdio: 'ignore' });
-const chrome = spawn('google-chrome-stable', ['--headless=new', '--remote-debugging-port=9334', '--window-size=1280,720', '--user-data-dir=' + SP + '/prof-phone', '--no-sandbox', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=gl', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { stdio: 'ignore' });
+const chrome = spawn('google-chrome-stable', ['--headless=new', '--remote-debugging-port=9334', '--window-size=1280,720', '--user-data-dir=' + SP + '/prof-phone', '--no-sandbox', '--ignore-gpu-blocklist', '--enable-gpu', '--use-angle=vulkan', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try {
   let tabs;
@@ -162,7 +168,15 @@ try {
   const ws = new WebSocket(tabs.find((t) => t.type === 'page').webSocketDebuggerUrl);
   await new Promise((r) => (ws.onopen = r));
   let id = 0; const pend = new Map();
-  ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && pend.has(m.id)) pend.get(m.id)(m); };
+  /** Ошибки консоли и упавшие запросы за весь прогон: в конце — одна проверка «консоль чистая». */
+  const consoleErrors = [];
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.id && pend.has(m.id)) pend.get(m.id)(m);
+    if (m.method === 'Runtime.exceptionThrown') consoleErrors.push('исключение: ' + (m.params.exceptionDetails.exception?.description ?? m.params.exceptionDetails.text));
+    if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') consoleErrors.push('console.error: ' + m.params.args.map((a) => a.value ?? a.description ?? '').join(' '));
+    if (m.method === 'Log.entryAdded' && m.params.entry.level === 'error') consoleErrors.push('сеть: ' + m.params.entry.text + ' ' + (m.params.entry.url ?? ''));
+  };
   const send = (method, params = {}) => new Promise((r) => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
   const ev = async (expr) => (await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })).result;
   const val = async (expr) => (await ev(expr)).result.value;
@@ -170,7 +184,12 @@ try {
   let ok = 0, all = 0;
   const check = (cond, what) => { all++; if (cond) ok++; console.log((cond ? 'OK   ' : 'FAIL ') + what); };
 
-  await send('Runtime.enable'); await send('Page.enable');
+  /** Экран «поверни телефон» — обычный элемент страницы (#rotate), а не надпись в холсте (шаг 44). */
+  const rotateVisible = async () => await val(`(() => { const el = document.getElementById('rotate'); return !!el && getComputedStyle(el).display !== 'none'; })()`);
+  /** Угловые значки (⚙, 🔇, полный экран) — их координаты в единицах раскладки. */
+  const cornerButtons = async () => JSON.parse(await val(`JSON.stringify(window.__g.corner.buttons.map((b) => ({ x: b.object.x, y: b.object.y })))`));
+
+  await send('Runtime.enable'); await send('Page.enable'); await send('Log.enable');
 
   /** Телефон: метрики, касания, CSS-запросы «нет мыши, указатель — палец». */
   const phone = async (width, height, orientation) => {
@@ -215,18 +234,96 @@ try {
   await sleep(4000);
 
   check(await val('typeof window.__g') === 'object', 'hook: сцена в window.__g');
+
+  // ---------- Мобильная обвязка: мета-теги, манифест, запреты браузеру (шаг 44) ----------
+  /** Всё, что стоит в <head> и в вычисленных стилях: телефон не должен показывать браузерные артефакты. */
+  const shell = JSON.parse(await val(`(() => {
+    const meta = (name) => document.querySelector('meta[name="' + name + '"]')?.content ?? '';
+    const link = (rel) => document.querySelector('link[rel="' + rel + '"]')?.getAttribute('href') ?? '';
+    return JSON.stringify({
+      viewport: meta('viewport'), theme: meta('theme-color'), capable: meta('apple-mobile-web-app-capable'),
+      status: meta('apple-mobile-web-app-status-bar-style'), appTitle: meta('apple-mobile-web-app-title'),
+      description: meta('description'), manifest: link('manifest'), touchIcon: link('apple-touch-icon'),
+      touchActionCanvas: getComputedStyle(document.querySelector('canvas')).touchAction,
+      touchActionApp: getComputedStyle(document.getElementById('app')).touchAction,
+      overscroll: getComputedStyle(document.body).overscrollBehavior,
+      background: getComputedStyle(document.body).backgroundColor,
+      safe: ['--safe-top', '--safe-right', '--safe-bottom', '--safe-left']
+        .map((name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()),
+    });
+  })()`));
+  check(shell.viewport.includes('width=device-width') && shell.viewport.includes('initial-scale=1.0')
+    && shell.viewport.includes('viewport-fit=cover') && shell.viewport.includes('user-scalable=no'),
+    'viewport: width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no — «' + shell.viewport + '»');
+  check(shell.theme === '#241a0b', 'theme-color — тон игры #241a0b (сейчас ' + shell.theme + ')');
+  check(shell.capable === 'yes' && shell.status === 'black-translucent' && shell.appTitle === 'Долговая яма',
+    '«на главный экран» на iPhone: capable=yes, статус black-translucent, название «Долговая яма»');
+  check(shell.description.length > 20, 'описание страницы: «' + shell.description + '»');
+  check(shell.manifest.includes('manifest.webmanifest') && shell.touchIcon.endsWith('.png'),
+    'манифест и PNG-значок для iOS подключены: ' + shell.manifest + ', ' + shell.touchIcon);
+  check(shell.touchActionCanvas === 'none' && shell.touchActionApp === 'none',
+    'touch-action: none на холсте и #app (двойной тап не приближает)');
+  check(shell.overscroll === 'none', 'страница не «оттягивается» за край (overscroll-behavior: none)');
+  check(shell.background === 'rgb(36, 26, 11)', 'поле вокруг игры — тон комнаты: ' + shell.background);
+  check(shell.safe.every((value) => value === '0px'), 'безопасная зона в обычном окне нулевая: ' + shell.safe.join(' '));
+
+  /** Манифест и значки — из собранного dist: в нём лежит то, что скачает телефон. */
+  const manifest = JSON.parse(readFileSync(SP + '/dist/manifest.webmanifest', 'utf8'));
+  const iconSizes = (manifest.icons ?? []).map((icon) => icon.sizes);
+  check(manifest.name === 'Долговая яма' && manifest.short_name === 'Долговая яма' && manifest.start_url === '.',
+    'манифест: имя, короткое имя, start_url «.»');
+  check(manifest.display === 'fullscreen' && manifest.orientation === 'landscape'
+    && manifest.background_color === '#241a0b' && manifest.theme_color === '#241a0b',
+    'манифест: полный экран, ландшафт, фон и рамка ' + manifest.theme_color);
+  check(iconSizes.includes('192x192') && iconSizes.includes('512x512'),
+    'манифест: значки 192 и 512 (сейчас ' + iconSizes.join(', ') + ')');
+  const icons = await Promise.all(['192', '512'].map(async (size) => {
+    const response = await fetch('http://127.0.0.1:8767/icons/icon-' + size + '.png');
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return {
+      size: Number(size), status: response.status,
+      png: bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47,
+      width: (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19],
+    };
+  }));
+  check(icons.every((icon) => icon.status === 200 && icon.png && icon.width === icon.size),
+    'значки отдаются как PNG нужного размера: ' + icons.map((icon) => icon.width + '×' + icon.width + '/' + icon.status).join(', '));
   // Долг 1 (шаг 35): замаха нет по исходникам. «undefined === undefined» больше не считается проверкой.
   check(chargeHits.length === 0, 'замаха нет в src/game: ни charge, ни CHARGE_ANCHOR, ни levers.ts'
     + (chargeHits.length ? ': ' + JSON.stringify(chargeHits.slice(0, 5)) : ' (' + sourceFiles(GAME_SRC_DIR).filter((f) => f.endsWith('.ts')).length + ' файлов)'));
   check(await val('window.__g.reveal === null'), 'тьма обучения снята (обучение пройдено)');
+
+  // ---------- Звук: первый тап разблокирует Web Audio (шаг 44) ----------
+  check(await val('window.__g.sfx.ctx === null') === true, 'до касаний звук ещё не создан — браузер ждёт жеста');
+  const silentSpot = await pagePoint(1132, 5); // пустой угол комнаты: касание ничего не нажимает
+  await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: silentSpot.x, y: silentSpot.y, radiusX: 6, radiusY: 6, force: 1, id: 1 }] });
+  await sleep(300);
+  await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await sleep(400);
+  const soundUp = JSON.parse(await val(`JSON.stringify({ state: window.__g.sfx.ctx ? window.__g.sfx.ctx.state : null })`));
+  check(soundUp.state === 'running', 'первый тап разблокировал звук: AudioContext ' + soundUp.state);
+
+  // ---------- Двойной тап не приближает страницу (шаг 44) ----------
+  const viewBefore = JSON.parse(await val(`JSON.stringify({ scale: visualViewport ? visualViewport.scale : 1, width: innerWidth, x: scrollX, y: scrollY })`));
+  if (silentSpot.x) {
+    for (let i = 0; i < 2; i++) {
+      await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: silentSpot.x, y: silentSpot.y, radiusX: 6, radiusY: 6, force: 1, id: 1 }] });
+      await sleep(40);
+      await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await sleep(70);
+    }
+  }
+  await sleep(400);
+  const viewAfter = JSON.parse(await val(`JSON.stringify({ scale: visualViewport ? visualViewport.scale : 1, width: innerWidth, x: scrollX, y: scrollY })`));
+  check(viewAfter.scale === viewBefore.scale && viewAfter.width === viewBefore.width && viewAfter.x === 0 && viewAfter.y === 0,
+    'два быстрых тапа не меняют масштаб и не прокручивают страницу: ' + viewBefore.scale + ' → ' + viewAfter.scale + ', окно ' + viewAfter.width);
   const rect = JSON.parse(await val('JSON.stringify(window.__g.game.canvas.getBoundingClientRect())'));
   const fits = Math.abs(rect.height - 390) < 1 && Math.abs(rect.width - 390 * 16 / 9) < 1.5 && Math.abs(rect.top) < 1;
   check(fits, `холст 16:9 на всё окно: ${Math.round(rect.width)}×${Math.round(rect.height)} при окне 844×390, поля по ${Math.round(rect.left)} px`);
   check(await val(`window.matchMedia('(hover: none) and (pointer: coarse)').matches`), 'телефон определён: (hover: none) and (pointer: coarse)');
   check(await val(`window.__g.textures.exists('gear')`), 'значок ⚙ создан (только телефон)');
   check(await val(`window.__g.textures.exists('fullscreen')`), 'значок «во весь экран» создан (только телефон)');
-  const hint = await val(`window.__g.children.list.some((o) => o.text === '📱' && o.visible)`);
-  check(hint === false, 'боком: «поверни телефон» не висит');
+  check(await rotateVisible() === false, 'боком: экран «поверни телефон» (#rotate) не висит');
   await shot('p-landscape.png');
 
   // Касание ⚙ (26, 618) — пауза с настройками.
@@ -270,10 +367,45 @@ try {
   await sleep(3000);
   await shot('p-after-spin.png');
 
+  // ---------- Производительность: средний FPS за 10 секунд игры (шаг 44) ----------
+  // Прокруток не подкидываем: каждая рисует свою лампочку (panel.addSpinLamps), и сотня лишних — уже не игра.
+  const fpsSample = val(`new Promise((resolve) => {
+    const loop = window.__g.game.loop;
+    const start = loop.frame, at = performance.now();
+    setTimeout(() => {
+      const seconds = (performance.now() - at) / 1000;
+      resolve(JSON.stringify({ fps: (loop.frame - start) / seconds, actual: loop.actualFps, seconds }));
+    }, 10000);
+  })`);
+  for (let i = 0; i < 10; i++) { await pressSpace(); await sleep(950); }
+  const perf = JSON.parse(await fpsSample);
+  console.log('производительность 844×390:', JSON.stringify(perf));
+  check(perf.fps >= 40, `FPS за ${perf.seconds.toFixed(1)} с игры: ${perf.fps.toFixed(1)} (счётчик движка ${perf.actual.toFixed(1)}), порог 40`);
+  for (let i = 0; i < 40 && await val('window.__g.isSpinning'); i++) await sleep(200);
+
   // ---------- Телефон стоит ----------
   await phone(390, 844, 'portraitPrimary');
   await sleep(1200);
-  check(await val(`window.__g.children.list.some((o) => o.text === '📱' && o.visible)`), 'стоя: «поверни телефон» виден');
+  check(await rotateVisible() === true, 'стоя: экран «поверни телефон» виден');
+  // Экран поворота — в стиле игры: тёмный фон, янтарная надпись LED-шрифтом, значок телефона; касание до игры не идёт.
+  const rotateLook = JSON.parse(await val(`(() => {
+    const el = document.getElementById('rotate');
+    const style = getComputedStyle(el);
+    const title = el.querySelector('.rotate-title');
+    const icon = el.querySelector('.rotate-icon');
+    const titleStyle = title ? getComputedStyle(title) : null;
+    return JSON.stringify({
+      background: style.backgroundImage, padding: style.padding,
+      title: title ? title.textContent : '', color: titleStyle ? titleStyle.color : '',
+      font: titleStyle ? titleStyle.fontFamily : '', icon: !!icon && icon.getBoundingClientRect().width > 40,
+      width: innerWidth, height: innerHeight,
+      covers: el.getBoundingClientRect().width >= innerWidth - 1 && el.getBoundingClientRect().height >= innerHeight - 1,
+    });
+  })()`));
+  check(rotateLook.covers, 'экран поворота закрывает всё окно: ' + rotateLook.width + '×' + rotateLook.height);
+  check(rotateLook.title === 'ПОВЕРНИ ТЕЛЕФОН' && rotateLook.color === 'rgb(251, 191, 36)' && /mono/.test(rotateLook.font),
+    'надпись «' + rotateLook.title + '» янтарная LED-шрифтом: ' + rotateLook.color + ', ' + rotateLook.font);
+  check(rotateLook.icon, 'значок телефона нарисован (SVG, не эмодзи браузера)');
   const rectUp = JSON.parse(await val('JSON.stringify(window.__g.game.canvas.getBoundingClientRect())'));
   const fitsUp = Math.abs(rectUp.width - 390) < 1 && Math.abs(rectUp.height - 390 * 9 / 16) < 1.5;
   check(fitsUp, `стоя холст 16:9: ${Math.round(rectUp.width)}×${Math.round(rectUp.height)} при окне 390×844`);
@@ -285,7 +417,7 @@ try {
   // ---------- Обратно боком ----------
   await phone(844, 390, 'landscapePrimary');
   await sleep(1200);
-  check(await val(`window.__g.children.list.some((o) => o.text === '📱' && o.visible)`) === false, 'повернул обратно: «поверни телефон» погас');
+  check(await rotateVisible() === false, 'повернул обратно: экран «поверни телефон» погас');
   await shot('p-back.png');
 
   // ---------- Подсказка долгим нажатием (телефон) ----------
@@ -439,6 +571,7 @@ try {
   // ---------- Магазин: выход «К СЛОТ-МАШИНЕ» вместо ручки (долг 3) ----------
   await val('window.__g.balance = 100000; window.__g.tickets = 5; window.__g.openShop(); 1');
   await sleep(2600);
+  await shot('p-shop.png');
   const shopFits = await scanParts('[window.__g.shop.layer]', 0);
   checkFits('магазин на телефоне', shopFits, 20);
   const exit = JSON.parse(await val(`(() => {
@@ -458,6 +591,7 @@ try {
   // ---------- «Ачивки» с панелью подробностей (долг 3) ----------
   await val('window.__g.isAtMonitor = true; window.__g.monitor.open(); window.__g.monitor.showTab("achievements"); 1');
   await sleep(800);
+  await shot('p-list.png');
   const tabletAch = await scanParts('[window.__g.monitor.overlay, window.__g.monitor.content]');
   checkFits('планшет «Ачивки» на телефоне', tabletAch, 12);
   checkButtons('планшет «Ачивки»', tabletAch);
@@ -565,6 +699,7 @@ try {
   await val(`(() => { const g = window.__g; g.debt = 1000; g.balance = 0; g.round = 1; g.startRescue(); return 1; })()`);
   await sleep(150);
   const splashEn = await readSplash();
+  await shot('p-rescue-intro.png');
   check(splashEn.text === langText('rescueAlert1').en && splashEn.intro === true,
     'заставка спасения: первая строка «' + splashEn.text + '», ввод закрыт');
   check(!!splashEn.title && !!splashEn.screen && splashEn.title.left >= splashEn.screen.left - 0.5 && splashEn.title.right <= splashEn.screen.right + 0.5
@@ -599,7 +734,7 @@ try {
   // раскладку, а нажатия — после возврата боком: так проверка не делает вид, что стоя можно играть.
   await phone(390, 844, 'portraitPrimary');
   await sleep(1200);
-  check(await val(`window.__g.children.list.some((o) => o.text === '📱' && o.visible)`), 'стоя: «поверни телефон» снова виден');
+  check(await rotateVisible() === true, 'стоя: экран «поверни телефон» снова виден');
   await val('window.__g.toggleActions(); 1');
   await sleep(500);
   const actionsUp = await scanParts('window.__g.actionPanel.parts');
@@ -625,7 +760,7 @@ try {
   // ---------- Обратно боком: те же панели закрываются касанием, ввод не застревает ----------
   await phone(844, 390, 'landscapePrimary');
   await sleep(1200);
-  check(await val(`window.__g.children.list.some((o) => o.text === '📱' && o.visible)`) === false, 'боком: «поверни телефон» погас, ввод снова живой');
+  check(await rotateVisible() === false, 'боком: экран «поверни телефон» погас, ввод снова живой');
   const exitBack = JSON.parse(await val(`(() => {
     const g = window.__g, z = g.shop.layer.list.filter((o) => o.type === 'Zone' && o.input && o.input.enabled)
       .sort((a, b) => b.width * b.height - a.width * a.height)[0];
@@ -698,6 +833,52 @@ try {
   check(atmState.chipsOnScreen === 0 && atmState.probe === 1,
     'на экране ни одной фишки, а подложенная находится (контроль ' + atmState.probe + ')');
   await shot('p-atm-debt.png');
+
+  // ---------- Безопасная зона: «челка» и домашняя полоска (шаг 44) ----------
+  const cornersBefore = await cornerButtons();
+  await val(`(() => {
+    const html = document.documentElement;
+    html.style.setProperty('--safe-left', '120px');
+    html.style.setProperty('--safe-bottom', '40px');
+    window.dispatchEvent(new Event('resize'));
+    window.__g.scale.refresh();
+    return 1;
+  })()`);
+  await sleep(300);
+  const cornersAfter = await cornerButtons();
+  const rotatePadding = await val(`getComputedStyle(document.getElementById('rotate')).paddingLeft`);
+  const shifted = cornersBefore.length > 0 && cornersAfter.length === cornersBefore.length
+    && cornersAfter.every((button, index) => button.x > cornersBefore[index].x + 30 && button.y < cornersBefore[index].y - 20);
+  check(shifted, 'безопасная зона сдвигает угловые значки: ⚙ ' + Math.round(cornersBefore[0]?.x) + '×' + Math.round(cornersBefore[0]?.y)
+    + ' → ' + Math.round(cornersAfter[0]?.x) + '×' + Math.round(cornersAfter[0]?.y) + ' (отступ снизу и слева учтён)');
+  check(Number.parseFloat(rotatePadding) >= 136, 'отступ экрана поворота учитывает «челку»: padding-left ' + rotatePadding);
+  await val(`(() => {
+    const html = document.documentElement;
+    html.style.removeProperty('--safe-left');
+    html.style.removeProperty('--safe-bottom');
+    window.dispatchEvent(new Event('resize'));
+    window.__g.scale.refresh();
+    return 1;
+  })()`);
+  await sleep(200);
+  const cornersReset = await cornerButtons();
+  check(cornersBefore.length > 0 && cornersReset.every((button, index) => Math.abs(button.x - cornersBefore[index].x) < 0.5
+    && Math.abs(button.y - cornersBefore[index].y) < 0.5), 'без «челки» значки вернулись на место');
+
+  // ---------- Полный экран (шаг 44) ----------
+  const fullscreenOn = (await send('Runtime.evaluate', {
+    expression: 'document.documentElement.requestFullscreen().then(() => true).catch(() => false)',
+    awaitPromise: true, returnByValue: true, userGesture: true,
+  })).result.result.value;
+  await sleep(700);
+  check(fullscreenOn === true && await val('document.fullscreenElement !== null') === true, 'полный экран включается из страницы');
+  await shot('p-fullscreen.png');
+  await send('Runtime.evaluate', { expression: 'document.exitFullscreen().catch(() => undefined)', awaitPromise: true, returnByValue: true });
+  await sleep(600);
+
+  // ---------- Консоль за весь прогон ----------
+  check(consoleErrors.length === 0, 'ошибок в консоли и упавших запросов нет'
+    + (consoleErrors.length ? ': ' + JSON.stringify(consoleErrors.slice(0, 4)) : ''));
 
   console.log(`\nитог: ${ok} из ${all}`);
 

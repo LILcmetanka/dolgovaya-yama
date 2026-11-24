@@ -46,7 +46,6 @@ import { MachinePanel } from './parts/panel';
 import { PauseScreen } from './parts/pauseScreen';
 import { PayoutWindow } from './parts/payoutWindow';
 import { Reveal } from './parts/reveal';
-import { addRotateHint } from './parts/rotateHint';
 import { SettingsPanel } from './parts/settingsPanel';
 import { Shop } from './parts/shop';
 import { SlotScreen } from './parts/slotScreen';
@@ -189,7 +188,6 @@ export class GameScene extends CollectorScene {
     this.corner = new CornerButtons(this, () => this.togglePause(), () => this.toggleMute());
     this.pauseScreen = new PauseScreen(this, () => this.resumeGame());
     this.settingsPanel = new SettingsPanel(this, (kind, level) => this.changeVolume(kind, level), (language) => this.chooseLanguage(language));
-    addRotateHint(this);
     // Первый забег — в кромешной тьме: видны только автомат и рычаг в пятнах света (после обучения тьмы нет).
     this.reveal = isTutorialDone() ? null : new Reveal(this, BODY, NOTE, LEVER_GLOW);
     // Пока тьма не погасла, подсказок нет: они выдали бы то, что в ней спрятано.
@@ -401,14 +399,13 @@ export class GameScene extends CollectorScene {
   }
 
   /**
-   * Звук: включается на первый клик, касание или клавишу — так требуют браузеры. Пальцем звук разрешён только
-   * на отпускание (касание началось — ещё нельзя), мышью — уже на нажатие.
-   * Музыка тикает. Громкость — из настроек (они живут дольше сцены и помнят выбор и после «заново», и после перезагрузки).
+   * Звук: включается на первый клик, касание или клавишу — так требуют браузеры. У касания браузер выдаёт
+   * разрешение на отпускание пальца (touchend), поэтому звук создаётся на pointerup; pointerdown — для браузеров,
+   * которые разрешают уже на касании. Музыка тикает. Громкость — из настроек (они живут дольше сцены и помнят
+   * выбор и после «заново», и после перезагрузки).
    */
   private setupSound(): void {
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (!pointer.wasTouch) this.sfx.unlock();
-    });
+    this.input.on('pointerdown', () => this.sfx.unlock());
     this.input.on('pointerup', () => this.sfx.unlock());
     this.input.keyboard?.on('keydown', () => this.sfx.unlock());
     this.time.addEvent({ delay: MUSIC_TICK, loop: true, callback: () => this.sfx.tickMusic() });
