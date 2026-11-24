@@ -77,7 +77,7 @@ import {
 import { effectPosition } from '../parts/itemShelf';
 import { ScreenList } from '../parts/screenList';
 import { BLUE_TEXT, GOLD_TEXT, LAMP_BLUE, LAMP_GOLD, LAMP_GREEN, LAMP_RED, PURPLE_TEXT, RED_TEXT } from '../theme';
-import { MachineScene } from './MachineScene';
+import { TutorialScene } from './TutorialScene';
 
 const COLLECT_DELAY = 1300; // после последней прокрутки: пусть фишки долетят до табло, потом расплата, мс
 const MACHINE_NEWS_DELAY = 1500; // новость о смене автомата: после «ФАЗЫ 2» на стекле — оно держит одну новость, мс
@@ -90,10 +90,10 @@ const NEW_ROUND_LAMPS_TIME = 1000; // новый раунд — зелёным
 const DEBT_LAMPS_TIME = 1500; // фишек на табло стало хватать на долг — зелёным
 const TICKET_BORDER = 0xf59e0b; // рамки на клетках с билетами, когда их три
 const SPIDER_BORDER = 0xa855f7; // рамки на пауках, когда они съели часть кона
-const REVEAL_NOTE_SPIN = 3; // после третьей прокрутки из тьмы проступает долг (первый забег)
 const MIN_ROUND_SPINS = 1; // сделка «−1 прокрутка» не может оставить раунд без прокруток вовсе
 // Улучшение №50 (28г): череп можно отменить — решение показывается списком на экране автомата (шаг 37).
-const SKULL_CANCEL_TIME = 1600; // столько висит список: не нажали — череп срабатывает как обычно, мс
+// Список висит, пока игрок не решит: строка «ОТМЕНИТЬ ЧЕРЕП» или ✕ «не отменять» (DONTLIKE п.4: 1,6 секунды
+// не хватало даже прочитать). Раунд ждёт — как и любое обязательное решение списком.
 // Прошлый попап шага гаснет к следующему; POPUP_TIME не трогаем — он для прочих надписей.
 const WIN_POPUP_FADE_MS = 90;
 
@@ -117,15 +117,13 @@ function conflictsWith(id: ItemId, effects: ItemEffects): boolean {
  * Выпал кубик — сделки Дилера (слой DealerScene), прокрутки кончились — расплата (слой CollectorScene).
  * Короны, клевер и джекпот — слой BonusScene; бесплатные прокрутки за короны крутит этот слой (spinFree).
  * Автомат (классический, жадный, тихий) меняет веса символов и выплаты — его выбирают в магазине (machines.ts),
- * заржавевший столбец и смена автомата — слой MachineScene.
+ * заржавевший столбец и смена автомата — слой MachineScene, обучение текстами — слой TutorialScene.
  */
-export abstract class RoundScene extends MachineScene {
+export abstract class RoundScene extends TutorialScene {
   /** Коллектор приходит за долгом — расплата; isPaidEarly — долг отдают раньше, банкомат сразу забирает. Её делает слой CollectorScene. */
   protected abstract callCollector(isPaidEarly: boolean): void;
   /** Выпал кубик — Дилер предлагает сделки (dealerGame); ушёл — done(). Её делает слой DealerScene. */
   protected abstract startDealerGame(done: () => void): void;
-  private spinsThisRun = 0; // сколько раз крутил за забег — на третьей прокрутке из тьмы проступает записка
-  // Сетка, которая ждёт решения по перемешке или подмене (шаг 63б): итог ещё не посчитан. null — решения нет.
   private pendingReroll: { grid: Grid; weightOf: WeightOf; multiplier: number; id: RerollId } | null = null;
   /** Раунд закрыт ранней оплатой: Коллектор забирает долг сам (и после «ДАЛЬШЕ» с экрана победы — тоже). */
   protected isPaidEarly = false;
@@ -150,7 +148,6 @@ export abstract class RoundScene extends MachineScene {
   private skullFreeSpinGiven = false;
   // Улучшение №50 (28г): череп выпал, отмена ещё доступна — итог ждёт нажатия строки на экране или конца таймера.
   private pendingSkull: { grid: Grid; result: SpinResult; isBloody: boolean } | null = null;
-  private skullCancelTimer: Phaser.Time.TimerEvent | null = null;
   private skullCancelList: ScreenList | null = null;
   protected skullCancelBox: Phaser.GameObjects.GameObject[] | null = null; // что нарисовано: сценарий проверки читает этот набор
   // Отложенная новость о смене автомата: её гасит новость действия (иначе «УКРАЛ!» через 1,5 с менялась бы
@@ -160,10 +157,9 @@ export abstract class RoundScene extends MachineScene {
   // символы и выкуп долга. Живёт до конца раунда, в кассету не пишется.
   protected actionState: ActionState = freshActions();
 
-  /** Новый забег: прокруток ещё не было, решения по перемешке не висит, сделок Дилера нет. */
+  /** Новый забег: решения по перемешке не висит, сделок Дилера нет. */
   protected resetState(): void {
     super.resetState();
-    this.spinsThisRun = 0;
     this.pendingReroll = null;
     this.isPaidEarly = false;
     this.tookThisSpin = false;
@@ -184,14 +180,13 @@ export abstract class RoundScene extends MachineScene {
 
   // ---------- Прокрутка ----------
 
-  /** Прокрутка: одно нажатие рычага (или Пробел, Enter) — одна прокрутка. Нельзя, пока canAct() против. */
+  /** Прокрутка: одно нажатие рычага (или Пробел, Enter) — одна прокрутка. Нельзя, пока canAct() или обучение против. */
   protected spin(): void {
     if (this.remindReroll()) return; // висит решение — сначала столбец или клетка, крутить раньше нельзя
+    if (!this.tutorialCanSpin()) return; // бит «Забери кон»: рычаг молчит, ввод открыт только для take()
     if (!this.canAct()) return;
     this.dropPendingMachineNews(); // прокрутка началась: её результат важнее отложенной новости о смене автомата
-    this.spinsThisRun += 1;
     this.forgetTakeThisSpin();
-    if (this.spinsThisRun === REVEAL_NOTE_SPIN) this.openRevealNote(); // записка впервые видна не с начала
     this.spinsLeft -= 1;
     this.panel.blinkSpinLamp(this.spinsLeft);
     this.roll(false);
@@ -200,6 +195,11 @@ export abstract class RoundScene extends MachineScene {
   /** Бесплатная прокрутка за короны: идёт сама, лампочки прокруток не гаснут — гаснет корона в их ряду. Она чистая: без черепов, кубика, пауков, замков и крови. */
   private spinFree(): void {
     if (this.isGameOver) return; // победа или KABOOM: забег кончен, бесплатные прокрутки за экраном не крутятся
+    // Бит «Забери кон»: бесплатная прокрутка поменяла бы кон под руками и сбила бы бит — вернёмся к ней после него.
+    if (!this.tutorialCanSpin()) {
+      this.time.delayedCall(FREE_SPIN_PAUSE, () => this.spinFree());
+      return;
+    }
     this.freeSpins -= 1;
     // Это тоже новая прокрутка: второе «забрать» (сделка №15) из прошлой не переживает чужие авто-прокрутки.
     this.forgetTakeThisSpin();
@@ -232,13 +232,17 @@ export abstract class RoundScene extends MachineScene {
     const weightOf = (symbol: SlotSymbol): number => this.symbolWeight(symbol, base, isFree);
     // Результат известен сразу (после клевера — с паттерном), анимация только показывает его.
     // Клевер на сетку и ржавый столбец работают всегда: спокойного режима больше нет.
-    let grid = this.rollGrid(weightOf, true, true);
-    // Улучшения №32/33 (шаг 28в): первая сетка забега — с джокером и выбранным символом. Один раз за забег.
-    if (!this.startGridGiven) {
-      grid = startGridOf(grid, this.upgradeEffects, this.startSymbolId);
-      this.startGridGiven = true;
+    // Обучение (TutorialScene) подкладывает свою сетку — с ней правки стартовой сетки и джокера не нужны.
+    const scripted = this.tutorialTakeGrid(isFree);
+    let grid = scripted ?? this.rollGrid(weightOf, true, true);
+    if (!scripted) {
+      // Улучшения №32/33 (шаг 28в): первая сетка забега — с джокером и выбранным символом. Один раз за забег.
+      if (!this.startGridGiven) {
+        grid = startGridOf(grid, this.upgradeEffects, this.startSymbolId);
+        this.startGridGiven = true;
+      }
+      grid = pactJokerCenter(grid, pactEffects(this.pacts, this.round)); // сделка №39: джокер в центре каждой сетки
     }
-    grid = pactJokerCenter(grid, pactEffects(this.pacts, this.round)); // сделка №39: джокер в центре каждой сетки
     this.screen.spin(grid, weightOf, () => this.finishSpin(grid, weightOf, multiplier, isFree));
   }
 
@@ -400,6 +404,7 @@ export abstract class RoundScene extends MachineScene {
    * (раньше — сразу после addToPot, теперь — после последней рамки).
    */
   private finishSpinOutcome(grid: Grid, result: SpinResult): void {
+    this.tutorialSpinEnded(); // обучение: бит, который ждал прокрутки, пройден
     this.collectBonuses(grid, result);
     this.rustAfterSpin(grid); // ржавый автомат: столбец может заржаветь к следующей прокрутке
     // Ачивки этой прокрутки проверяем до того, как гаснут риск, молот и фарт: они работали на неё, и «Неа»,
@@ -570,8 +575,8 @@ export abstract class RoundScene extends MachineScene {
   }
 
   /**
-   * Плашка «ОТМЕНИТЬ ЧЕРЕП» теперь — строка списка на экране автомата (шаг 37), висит SKULL_CANCEL_TIME.
-   * Нажали — череп отменяется, не нажали — срабатывает как обычно (resolveSkullCancel(false)). Пока список висит,
+   * Плашка «ОТМЕНИТЬ ЧЕРЕП» теперь — строка списка на экране автомата (шаг 37). Список висит, пока игрок не решит:
+   * строка — череп отменяется, ✕ — срабатывает как обычно (resolveSkullCancel(false)). Пока список висит,
    * ввод закрыт: прокрутка ещё не осела, второй рычаг нажать нельзя.
    */
   private offerSkullCancel(grid: Grid, result: SpinResult, isBloody: boolean): void {
@@ -585,13 +590,11 @@ export abstract class RoundScene extends MachineScene {
       {
         title: t('skullCancelTitle'),
         caption: t('skullCancelCaption'),
-        dimPayout: this.pot === 0, // кон на экране не трогаем: там ставка этого раунда
         onPick: () => this.resolveSkullCancel(true),
         onClose: () => this.resolveSkullCancel(false), // ✕ — не отменять, череп сработает как обычно
       },
     );
     this.skullCancelBox = list.parts;
-    this.skullCancelTimer = this.time.delayedCall(SKULL_CANCEL_TIME, () => this.resolveSkullCancel(false));
     this.refreshHud();
   }
 
@@ -624,10 +627,8 @@ export abstract class RoundScene extends MachineScene {
     this.finishSpinOutcome(pending.grid, pending.result);
   }
 
-  /** Убрать список и его таймер: решение снято (нажали, время вышло или забег начинается заново). */
+  /** Убрать список: решение снято (нажали или забег начинается заново). */
   private clearSkullCancel(): void {
-    this.skullCancelTimer?.remove();
-    this.skullCancelTimer = null;
     this.skullCancelList?.close();
     this.skullCancelList = null;
     this.skullCancelBox = null;
@@ -962,6 +963,7 @@ export abstract class RoundScene extends MachineScene {
       this.payout.press();
       this.sfx.play('take');
       this.payPot();
+      this.tutorialPotTaken(); // обучение: бит «забрать» пройден
       this.refreshHud();
       return;
     }

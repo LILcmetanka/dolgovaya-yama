@@ -10,7 +10,7 @@ import { formatChips, t } from '../lang';
 import { PHASES, type Phase } from '../phases';
 import type { MachineId } from '../machines';
 import type { Pattern } from '../patterns';
-import { beginRun, grantAchievement, hasPattern, markPatternOpen, markTutorialDone, nextRunMemory, openedPatterns, purchasedUpgrades, runNumber } from '../progress';
+import { beginRun, grantAchievement, hasPattern, isActionsUnlocked, markDarknessDone, markPatternOpen, markTutorialDone, nextRunMemory, openedPatterns, purchasedUpgrades, runNumber } from '../progress';
 import { debtShortfall, multiplierForStreak, SPINS_PER_ROUND, startDebt } from '../rules';
 import { skullShareOf, type WeightContext } from '../skullShare';
 import type { RunSave, TapeState } from '../save';
@@ -98,7 +98,8 @@ function saveChipRecord(record: number): void {
 /**
  * Сцена игры собрана слоями — каждый слой в своём файле добавляет свою часть игры:
  * BaseScene (состояние забега и табло) → PhaseScene (фазы) → BonusScene (короны, клевер, джекпот) →
- * MachineScene (автомат: ржавчина, смена в начале раунда) → RoundScene (прокрутка, кон, предметы) → DealerScene (сделки Дилера) →
+ * MachineScene (автомат: ржавчина, смена в начале раунда) → TutorialScene (обучение текстами первого забега) →
+ * RoundScene (прокрутка, кон, предметы) → DealerScene (сделки Дилера) →
  * ShopScene (магазин) → SaveScene (кассета: записать забег и откатиться) → CollectorScene (расплата и спасение) →
  * GameScene (создаёт части и разбирает клавиши).
  *
@@ -358,7 +359,9 @@ export abstract class BaseScene extends Phaser.Scene {
     this.collector.showProgress(this.debt, this.balance, this.pot);
     this.cassette.showUsable(this.canRecord() || this.canRewind());
     this.monitor.setEnabled(this.canAct() || this.isAtMonitor || this.isRerolling); // планшет — и во время обязательного выбора: он игру не двигает
-    this.actionBoard.setAvailable(this.canUseActions()); // табличка действий гаснет, когда действовать нельзя (шаг 29)
+    // До первой смерти на кнопке действий пустое стекло, после — надпись; гаснет она, когда действовать нельзя.
+    const unlocked = isActionsUnlocked();
+    this.actionBoard.setState(this.canUseActions(), unlocked); // пустой экран до смерти, надпись — после
     // Отложенная новость про ТЕСТ: как только стекло снова на виду (магазин уехал, планшет закрыт, пауза снята), её показываем.
     this.flushDevNotice();
     const tension = this.tension();
@@ -666,9 +669,18 @@ export abstract class BaseScene extends Phaser.Scene {
     return this.tapeState === 'blank' && this.canAct();
   }
 
-  /** Можно ли откатиться: есть запись и сейчас между прокрутками (в спасении и у Коллектора — уже нельзя). */
+  /** Можно ли откатиться: есть запись и сейчас между прокрутками (в спасении — по отдельному правилу сцены). */
   protected canRewind(): boolean {
-    return this.tapeState === 'recorded' && !this.isRewinding && !this.isGameOver && !this.isVictoryPending && this.canAct();
+    const canActNow = this.canAct() || this.canRewindDuringRescue();
+    return this.tapeState === 'recorded' && !this.isRewinding && !this.isGameOver && !this.isVictoryPending && canActNow;
+  }
+
+  /**
+   * Можно ли откатиться в раунде спасения. База — нельзя (canUseActions в спасении закрыт); раунд спасения
+   * разрешает это отдельно: кассета должна работать и в последнем шансе (DONTLIKE п.14).
+   */
+  protected canRewindDuringRescue(): boolean {
+    return false;
   }
 
   /**
@@ -679,11 +691,6 @@ export abstract class BaseScene extends Phaser.Scene {
     resetCodex(); // новый забег: встреченное забыто
     // Недопоказанные ачивки едут в новую сцену: прогресс уже записан, окно и новость должны дойти до игрока.
     this.scene.restart({ achievements: this.pendingAchievements() });
-  }
-
-  /** Из тьмы первого забега проступает записка с долгом (третья прокрутка). */
-  protected openRevealNote(): void {
-    this.reveal?.openNote();
   }
 
   /**
@@ -707,15 +714,24 @@ export abstract class BaseScene extends Phaser.Scene {
     this.screen.setPatterns(this.patternSet);
   }
 
-  /** Коллектор пришёл за долгом — обучение пройдено: тьма гаснет и больше не вернётся. */
-  protected finishTutorial(): void {
+  /**
+   * Тьма первого забега гаснет совсем: обучение текстами идёт дальше уже поверх обычного забега
+   * (подсказки, планшет и цель под ней открываются).
+   */
+  protected finishDarkness(): void {
+    markDarknessDone(); // сразу: сцена может перезапуститься посреди фейда
     const reveal = this.reveal;
     if (!reveal) return;
-    markTutorialDone(); // сразу: сцена может перезапуститься посреди фейда
     // Пока тьма не погасла, она ещё на экране: ссылку не отпускаем (подсказки под ней запрещены).
     reveal.finish(() => {
       this.reveal = null;
     });
+  }
+
+  /** Коллектор пришёл за долгом — обучение пройдено: тьма гаснет и больше не вернётся. */
+  protected finishTutorial(): void {
+    markTutorialDone(); // сразу: сцена может перезапуститься посреди фейда
+    this.finishDarkness();
   }
 
   /** Счёт — сколько долгов закрыто. */

@@ -57,7 +57,6 @@ const PAY_FLY_TIME = 400;
 const PAY_STAGGER = 60;
 const DROP_TIME = 320; // покупка падает в плашку выдачи, когда оплата долетела
 const SHAKE_TIME = 50; // один рывок тряски «не хватает»
-const POP_TIME = 200; // забрали из плашки: значок подпрыгивает и тает
 
 /**
  * Маленький автомат на панели магазина, слева от торгового: тот же корпус, только меньше, и стоит с торговым
@@ -74,8 +73,6 @@ export class MiniShop {
   private readonly priceTexts: Phaser.GameObjects.Text[] = []; // …и «× 20»
   private readonly prices: (number | null)[] = [null, null]; // цена ряда; null — ряд не продаётся
   private readonly bin: Phaser.GameObjects.Graphics; // плашка выдачи: её проём, крышка и окантовка
-  private readonly binZone: Phaser.GameObjects.Zone; // клик по плашке забирает покупку
-  private taken: Phaser.GameObjects.Image | null = null; // что лежит в плашке: последняя покупка
   private isOpen = false; // панель встала — товар на витрине и покупки возможны
 
   /** buy(row) — кликнули по ряду; layer — слой магазина, куда кладётся автомат и его товар. */
@@ -91,6 +88,7 @@ export class MiniShop {
     // Дверцы нет: ничто не закрывает витрину, товар читается сразу.
     for (let row = 0; row < ROWS; row++) {
       const good = scene.add.image(MINI_SHOP_GOOD_X, MINI_SHOP_ROW_Y[row], this.textureFor(row)).setScale(GOOD_SCALES[row]);
+      good.setY(MINI_SHOP_SHELF_Y[row] - good.displayHeight / 2); // низ товара лежит на полке, а не висит над ней
       good.setInteractive({ useHandCursor: true });
       attachHint(good, hint, () => this.hintFor(row), () => this.press(row, buy));
       this.goods.push(good);
@@ -106,11 +104,8 @@ export class MiniShop {
       this.priceTexts.push(priceText);
       this.layer.add([priceIcon, priceText]);
     }
-    const binParts = this.buildBin();
-    this.bin = binParts.bin;
-    this.binZone = binParts.zone;
-    this.layer.add([this.bin, this.binZone]);
-    attachHint(this.binZone, hint, () => [t('miniBin'), t('miniBinHow')]); // что это за проём — по наведению
+    this.bin = this.buildBin();
+    this.layer.add(this.bin);
     this.clear();
   }
 
@@ -162,10 +157,10 @@ export class MiniShop {
 
   /**
    * Плашка выдачи внизу лицевой части (DONTLIKE п.8): хромированная окантовка, тёмный проём и откидная крышка —
-   * тот же лоток, что у торгового автомата. Отдельная зона нажатия: у Graphics своего размера для попадания нет.
-   * Клик по плашке забирает покупку — значок подпрыгивает и тает (deny-тряска и покупка сюда не относятся).
+   * тот же лоток, что у торгового автомата. Клика нет (DONTLIKE п.12): «забрать» покупку было бессмысленным,
+   * значок в проёме — просто индикатор, пока его не сменит следующая покупка.
    */
-  private buildBin(): { bin: Phaser.GameObjects.Graphics; zone: Phaser.GameObjects.Zone } {
+  private buildBin(): Phaser.GameObjects.Graphics {
     const { x, y, width, height } = MINI_SHOP_BIN;
     const left = x - width / 2;
     const top = y - height / 2;
@@ -180,9 +175,7 @@ export class MiniShop {
     g.fillRect(left + 4, top + 3, width - 8, Math.max(3, height * BIN_LID_SHARE - 3)); // крышка
     g.fillStyle(CHROME_LIGHT);
     g.fillRect(left + 4, top + height - 3, width - 8, 1); // блик по нижней кромке проёма
-    const zone = this.scene.add.zone(x, y, width + 2 * BIN_RIM, height + 2 * BIN_RIM).setInteractive({ useHandCursor: true });
-    zone.on('pointerdown', () => this.takeFromBin());
-    return { bin: g, zone };
+    return g;
   }
 
   /** Стекло витрины: та же плёнка с бликом, что у торгового автомата, — товар читается за стеклом. */
@@ -217,7 +210,6 @@ export class MiniShop {
   /** Панель поехала: товар и ценники прошлого захода убираются сразу, чтобы на съезде не мелькал старый магазин. */
   clear(): void {
     this.isOpen = false;
-    this.dropTaken();
     for (let row = 0; row < ROWS; row++) {
       this.prices[row] = null;
       this.showRow(row);
@@ -302,43 +294,9 @@ export class MiniShop {
       ease: 'Quad.easeIn',
       onComplete: () => {
         bought.destroy();
-        this.putTaken(row);
-        landed();
+        landed(); // покупка сразу встаёт на место: в плашке она больше не лежит
       },
     });
-  }
-
-  /** Покупка легла в плашку выдачи: её значок лежит в проёме, клик по плашке её забирает. */
-  private putTaken(row: number): void {
-    this.dropTaken();
-    this.taken = this.scene.add.image(MINI_SHOP_BIN.x, MINI_SHOP_BIN.y, this.textureFor(row)).setScale(GOOD_SCALES[row] * 0.6).setDepth(POPUP_DEPTH);
-    this.taken.setInteractive({ useHandCursor: true });
-    this.taken.on('pointerdown', () => this.takeFromBin());
-  }
-
-  /** Забрали из плашки: значок подпрыгивает и тает. Пусто — клик ничего не делает. */
-  private takeFromBin(): void {
-    const taken = this.taken;
-    if (!taken) return;
-    this.taken = null;
-    taken.disableInteractive();
-    this.scene.tweens.add({
-      targets: taken,
-      y: taken.y - 18,
-      scale: taken.scaleX * 1.2,
-      alpha: 0,
-      duration: POP_TIME,
-      ease: 'Quad.easeOut',
-      onComplete: () => taken.destroy(),
-    });
-  }
-
-  /** Плашка пустеет сразу: покупка прошлого ряда не должна висеть в новой витрине. */
-  private dropTaken(): void {
-    if (!this.taken) return;
-    this.scene.tweens.killTweensOf(this.taken);
-    this.taken.destroy();
-    this.taken = null;
   }
 
   /** Не хватает: ценник ряда трясётся. */

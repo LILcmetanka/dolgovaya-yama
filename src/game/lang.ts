@@ -135,7 +135,7 @@ const TEXTS = {
   upgAmuletDeathWhat: { ru: 'На старте забега из прошлого берут не один амулет, а два — оба бесплатно', en: 'At the start of a run you take two amulets from the last run instead of one — both free' },
   // №31–40 третьей партии (28в): сетка и магазин. Числа описаний — те же, что в константах upgrades.ts.
   upgGridSkull: { ru: 'Реже черепа', en: 'Fewer skulls' },
-  upgGridSkullWhat: { ru: 'Доля черепов ниже на 1 п.п. — складывается со сделками и колокольчиком', en: 'The skull share is 1 pp lower — stacks with deals and the little bell' },
+  upgGridSkullWhat: { ru: 'Доля черепов ниже на 1 % — складывается со сделками и колокольчиком', en: 'The skull share is 1% lower — stacks with deals and the little bell' },
   upgGridJoker: { ru: 'Джокер на старте', en: 'Joker start' },
   upgGridJokerWhat: { ru: 'На первой сетке забега есть джокер 🃏', en: 'The first grid of a run has a joker 🃏' },
   upgGridSymbol: { ru: 'Свой первый символ', en: 'Your first symbol' },
@@ -218,8 +218,8 @@ const TEXTS = {
   actionLotterySpinsDown: { ru: 'ЛОТЕРЕЯ: −1 ПРОКРУТКА', en: 'LOTTERY: −1 SPIN' },
   actionService: { ru: 'ОБСЛУЖИВАНИЕ АВТОМАТА', en: 'MACHINE SERVICING' },
   actionServiceWhat: {
-    ru: 'Черепа реже на 4 п.п. два раунда: этот и следующий (доля долга, но не меньше 30 фишек)',
-    en: 'Skulls 4 pp rarer for two rounds: this one and the next (a share of the debt, at least 30 chips)',
+    ru: 'Черепа реже на 4% два раунда: этот и следующий (доля долга, но не меньше 30 фишек)',
+    en: 'Skulls 4% rarer for two rounds: this one and the next (a share of the debt, at least 30 chips)',
   },
   actionServiceDone: { ru: 'АВТОМАТ ОБСЛУЖЕН', en: 'MACHINE SERVICED' },
   actionServiceActive: { ru: 'уже чистится', en: 'already serviced' },
@@ -237,7 +237,7 @@ const TEXTS = {
     en: 'Remove a symbol from the machine and get its price for every cell — scaled by the current multiplier',
   },
   actionSalePick: { ru: 'Что продать: символ с сетки', en: 'What to sell: a symbol on the grid' },
-  // №8 (шаг 38): формула словами — цена символа × клетки × множитель серии (не выше потолка ACTION_SALE_MULT_CAP).
+  // №8 (шаг 38): формула словами — цена символа × клетки × множитель серии (без потолка).
   actionSaleNote: { ru: 'цена {0} × {1} кл. × {2} = {3}', en: 'pays {0} × {1} cells × {2} = {3}' },
   actionSaleDone: { ru: 'СИМВОЛ ПРОДАН', en: 'SYMBOL SOLD' },
   actionDebt: { ru: 'ДОЛГОВАЯ БИРЖА', en: 'DEBT EXCHANGE' },
@@ -326,8 +326,6 @@ const TEXTS = {
   socket: { ru: 'Гнездо', en: 'Socket' },
   socketWhat: { ru: 'Ещё одно место для амулета', en: 'One more place for an amulet' },
   // Маленький автомат в магазине (DONTLIKE п.8): дверцы нет, товар и цены видны сразу; внизу — плашка выдачи.
-  miniBin: { ru: 'Плашка выдачи', en: 'Pickup tray' },
-  miniBinHow: { ru: 'Сюда падает покупка — клик забирает её', en: 'Purchases drop here — click to take one' },
   ticket: { ru: 'Билет', en: 'Ticket' }, // без эмодзи 🎟: билет в игре — одна красная картинка (decor.ts)
   ticketWhat: { ru: 'На амулеты и гнёзда', en: 'Buys amulets and sockets' },
   // Билет за фишки — четвёртый ряд торгового автомата (шаг 13): цена — доля фишек на руках, и она растёт с покупками.
@@ -465,19 +463,69 @@ const TEXTS = {
   achIAmSpeedWhat: { ru: 'Множитель серии ×50', en: 'Streak multiplier ×50' },
   achBloodSpill: { ru: 'Я пролью много крови', en: 'I will spill much blood' },
   achBloodSpillWhat: { ru: '«Жадность», и на старте раунда всего две прокрутки', en: 'Greed amulet, only two spins at the start of a round' },
+  // ---------- Обучение текстами (шаг «обучение») ----------
+  // Интро: 13 битов Диллера в первом забеге, а строк в них — 20.
+  tutPull: { ru: 'Привет, нажми на рычаг', en: 'Hi, pull the lever' },
+  tutAgain: { ru: 'Попробуй ещё раз', en: 'Try again' },
+  tutTake: { ru: 'Забери кон из автомата', en: 'Take the pot from the machine' },
+  tutLever: { ru: 'Жми рычаг', en: 'Pull the lever' },
+  tutDebt: { ru: 'Это твой долг', en: 'This is your debt' },
+  tutPayByRound: { ru: 'отдай его до конца раунда', en: 'pay it by the end of the round' },
+  tutSkullsBurn: { ru: 'Черепа сжигают кон и множитель', en: 'Skulls burn the pot and the multiplier' },
+  tutTv: { ru: 'Телевизор', en: 'The TV' },
+  tutTvInfo: { ru: 'Тут много информации', en: 'There is a lot of information here' },
+  tutGoalNotMillion: { ru: 'Твоя цель не 1.000.000', en: 'Your goal is not 1,000,000' },
+  tutGoal: { ru: 'Твоя цель', en: 'Your goal' },
+  tutSurvive: { ru: 'ВЫЖИТЬ', en: 'SURVIVE' },
+  tutItemPlaces: { ru: 'Это места под предметы', en: 'These are the item slots' },
+  tutBuyInShop: { ru: 'покупай в магазине', en: 'buy them in the shop' },
+  tutUseWisely: { ru: 'используй обдуманно', en: 'use them wisely' },
+  // {1} — форма слова «гнездо» по числу (socketWord): «2 гнезда», «5 гнёзд». В EN множественное число простое, форма не нужна.
+  tutSlots: { ru: 'Видишь сверху {0} {1} под амулеты?', en: 'See the {0} sockets at the top?' },
+  tutAmulets: { ru: 'Это амулеты', en: 'Those are amulets' },
+  tutBestHere: { ru: 'Лучшее что есть тут', en: 'The best thing here' },
+  tutBuyTickets: { ru: 'Покупай за билеты', en: 'Buy them with tickets' },
+  tutAmuletsUntilDeath: { ru: 'Они работают, пока ты не умрёшь', en: 'They last until you die' },
+  // Смерть: первое объяснение раунда спасения — полная заставка «ПОСЛЕДНИЙ ШАНС».
+  tutRescueLaugh: { ru: 'Хахахаха', en: 'Hahahaha' },
+  tutRescueHere: { ru: 'Ты тоже попал сюда', en: 'You ended up here too' },
+  tutRescueLook: { ru: 'Смотри', en: 'Look' },
+  tutRescuePattern: { ru: 'Собери любой паттерн, чтобы выжить', en: 'Land any pattern to survive' },
+  tutRescueFreeze: { ru: 'Ты можешь заморозить столбец', en: 'You can freeze a column' },
+  tutRescueWontHelp: { ru: 'Но это вряд ли тебе поможет', en: 'But it probably will not help' },
+  tutRescueLuck: { ru: 'УДАЧИ', en: 'GOOD LUCK' },
+  // Победа в спасении: Диллер недоволен.
+  tutWinLucky: { ru: 'Тебе повезло', en: 'You got lucky' },
+  tutWinNextTime: { ru: 'В следующий раз ты умрёшь', en: 'Next time you die' },
+  tutWinRemember: { ru: 'Помни', en: 'Remember' },
+  // Первая смерть: выбор улучшения.
+  tutDeathWhat: { ru: 'Что?', en: 'What?' },
+  tutDeathSurprised: { ru: 'Удивлён?', en: 'Surprised?' },
+  tutDeathAlive: { ru: 'Да, ты не умер', en: 'Yes, you did not die' },
+  tutDeathPick: { ru: 'Выбери улучшение на следующий забег', en: 'Pick an upgrade for the next run' },
+  tutDeathSomeday: { ru: 'Возможно, когда-нибудь', en: 'Maybe someday' },
+  tutDeathGoal: { ru: 'Ты сможешь дойти до цели', en: 'You can reach the goal' },
+  tutDeathLuck: { ru: 'Удачи', en: 'Good luck' },
+  // Действия между прокрутками: первое появление полки действий.
+  tutActionsOh: { ru: 'Ах да, забыл сказать', en: 'Oh right, I forgot to say' },
+  tutActionsAffect: { ru: 'Тут ты можешь влиять на все аспекты забега', en: 'Here you can affect every aspect of the run' },
+  tutActionsCareful: { ru: 'Аккуратней с ней', en: 'Be careful with it' },
+  tutActionsOnce: { ru: 'Ты можешь использовать всего 1 раз за раунд', en: 'You can use it only once per round' },
+  tutActionsUseful: { ru: 'Это очень полезно', en: 'It is very useful' },
+  tutActionsThink: { ru: 'Думай перед тем, как что-либо делать', en: 'Think before you do anything' },
 } satisfies Record<string, Words>;
 
 export type TextKey = keyof typeof TEXTS;
 
-/** Язык при запуске: выбранный раньше, иначе — по языку браузера. Хранилище недоступно — по браузеру. */
+/** Язык при запуске: выбранный раньше, иначе русский — игра изначально русская (DONTLIKE п.1). */
 function startLang(): Lang {
   try {
     const saved = localStorage.getItem(LANG_KEY);
     if (saved === 'ru' || saved === 'en') return saved;
   } catch {
-    // localStorage запрещён — язык по браузеру
+    // localStorage запрещён — русский по умолчанию
   }
-  return navigator.language.toLowerCase().startsWith('ru') ? 'ru' : 'en';
+  return 'ru';
 }
 
 let current: Lang = startLang();
@@ -504,6 +552,18 @@ export function toggleLang(): void {
 export function t(text: TextKey | Words, ...values: (string | number)[]): string {
   const words = typeof text === 'string' ? TEXTS[text] : text;
   return values.reduce<string>((line, value, index) => line.replace(`{${index}}`, String(value)), words[current]);
+}
+
+/**
+ * Форма слова «гнездо» по числу для счётных строк (tutSlots): 1 гнездо, 2 гнезда, 5 гнёзд.
+ * 11–14 — всегда «гнёзд»: одиннадцать гнёзд, хотя последняя цифра и единица.
+ */
+export function socketWord(count: number): string {
+  const tens = count % 100;
+  const ones = count % 10;
+  if (ones === 1 && tens !== 11) return 'гнездо';
+  if (ones >= 2 && ones <= 4 && (tens < 12 || tens > 14)) return 'гнезда';
+  return 'гнёзд';
 }
 
 /**

@@ -56,6 +56,7 @@ const BUTTON_BORDER = 0xfbbf24;
 // Анимации, мс.
 const NOTE_FLIP_TIME = 140; // половина переворота записки
 const BLACKOUT_TIME = 700; // экран гаснет и загорается снова
+const SCREEN_LAMP_INSET = 9; // чёрный экран смерти не доходит до лампочек рамки на столько px
 const TITLE_BLINK_TIME = 500; // DEATH и KABOOM мигают
 const GOOD_LUCK_FADE_TIME = 400; // заголовок на экране автомата гаснет — экран снова горит
 
@@ -92,6 +93,12 @@ export class Collector {
   private sequenceLines: readonly string[] = [];
   private sequenceIndex = 0;
   private sequenceDone: (() => void) | null = null;
+  // Настройки заставки: сколько строка держится и на каком слое её рисовать. Их задаёт showScreenSequence,
+  // смена языка (relabelScreenSequence) их сохраняет.
+  private sequenceHold = SCREEN_LINE_HOLD;
+  private sequenceDepth = SCREEN_TITLE_DEPTH;
+  // Что делать по «ЗАНОВО» на экране смерти: кнопка показывается, только когда улучшать нечего (DONTLIKE п.7).
+  private deathRestart: (() => void) | null = null;
 
   /**
    * pay — что делать, когда кликнули по банкомату (Enter сцена ловит сама);
@@ -299,8 +306,11 @@ export class Collector {
    * Короткая заставка на экране автомата: строки идут по очереди — чёрный экран, мигающая LED-надпись (тот же вид,
    * что у KABOOM), строка держится и гаснет, встаёт следующая. После последней гаснет и экран, потом done().
    * Длинная строка ужимается по ширине экрана. Пока заставка идёт, ввод держит закрытым сцена (раунд спасения, шаг 32).
+   * options: hold — сколько строка держится (по умолчанию SCREEN_LINE_HOLD), depth — слой всей заставки.
    */
-  showScreenSequence(lines: readonly string[], done?: () => void): void {
+  showScreenSequence(lines: readonly string[], done?: () => void, options?: { hold?: number; depth?: number }): void {
+    this.sequenceHold = options?.hold ?? SCREEN_LINE_HOLD;
+    this.sequenceDepth = options?.depth ?? SCREEN_TITLE_DEPTH;
     this.startSequence(lines, done ?? null, 0);
   }
 
@@ -323,7 +333,7 @@ export class Collector {
     const screen = this.scene.add
       .rectangle(SCREEN.x, SCREEN.y, SCREEN.width, SCREEN.height, 0x000000)
       .setRounded(16)
-      .setDepth(SCREEN_TITLE_DEPTH);
+      .setDepth(this.sequenceDepth);
     this.screenSequence = [screen];
     let index = this.sequenceIndex;
     const next = (): void => {
@@ -354,10 +364,10 @@ export class Collector {
         wordWrap: { width: SCREEN_LINE_MAX_WIDTH },
       })
         .setOrigin(0.5)
-        .setDepth(SCREEN_TITLE_DEPTH);
+        .setDepth(this.sequenceDepth);
       this.screenSequence = [screen, title];
       const blink = this.scene.tweens.add({ targets: title, alpha: 0.3, duration: TITLE_BLINK_TIME, yoyo: true, repeat: -1 });
-      this.sequenceTimers.push(this.scene.time.delayedCall(SCREEN_LINE_HOLD, () => {
+      this.sequenceTimers.push(this.scene.time.delayedCall(this.sequenceHold, () => {
         if (token !== this.sequenceToken) return;
         blink.remove();
         this.scene.tweens.add({
@@ -396,7 +406,8 @@ export class Collector {
     depth: number,
     look: Phaser.Types.GameObjects.Text.TextStyle = SCREEN_TITLE_STYLE,
   ): (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] {
-    const screen = this.scene.add.rectangle(SCREEN.x, SCREEN.y, SCREEN.width, SCREEN.height, 0x000000).setRounded(16);
+    // Чуть меньше окна экрана: лампочки по его краю остаются видны — чёрный экран не выглядит накладкой поверх них (DONTLIKE п.6).
+    const screen = this.scene.add.rectangle(SCREEN.x, SCREEN.y, SCREEN.width - SCREEN_LAMP_INSET * 2, SCREEN.height - SCREEN_LAMP_INSET * 2, 0x000000).setRounded(12);
     const title = addText(this.scene, SCREEN.x, SCREEN.y, text, look).setOrigin(0.5);
     for (const part of [screen, title]) part.setDepth(depth);
     this.scene.tweens.add({ targets: title, alpha: 0.3, duration: TITLE_BLINK_TIME, yoyo: true, repeat: -1 }); // мигает
@@ -415,17 +426,23 @@ export class Collector {
     });
   }
 
-  /** Конец забега: всё темнеет, экран автомата чёрный, на нём мигает title (KABOOM). Ниже — итоги и «ЗАНОВО». */
-  showDeath(closedDebts: number, record: number, restart: () => void, title: string): void {
+  /** Конец забега: всё темнеет, на экране автомата мигает KABOOM. Больше на экране ничего: ни плиты с итогами,
+   *  ни «ЗАНОВО» — дальше ведёт выбор улучшения (DONTLIKE п.1). Кнопка появляется только если улучшать нечего. */
+  showDeath(restart: () => void, title: string): void {
+    this.deathRestart = restart;
     const shade = this.scene.add.rectangle(CENTER_X, CENTER_Y, VIEW_WIDTH, 640, 0x000000, 0.6); // на весь вид у автомата
     shade.setInteractive(); // ловит клики, чтобы кнопки под затемнением не нажимались
-    const plate = this.endPlate(); // плита на месте окон корпуса: итоги и кнопка стоят на ней, а не на «×1»
-    const scoreText = `${t('debtsPaid')}: ${closedDebts} · ${t('best')}: ${record}`;
-    const score = this.scoreLine(scoreText);
-    const button = this.makeButton(CENTER_X, DEATH_BUTTON_Y, t('again'), restart);
-    for (const part of [shade, plate, score]) part.setDepth(GAME_OVER_DEPTH);
-    for (const part of [button.shadow, button.face]) part.setDepth(BUTTON_DEPTH); // кнопка выше тени — она нажимается
+    for (const part of [shade]) part.setDepth(GAME_OVER_DEPTH);
     this.screenTitle(title, GAME_OVER_DEPTH);
+  }
+
+  /** Показать «ЗАНОВО» на экране смерти: улучшать больше нечего, иначе новый забег начать нечем. */
+  showRestartButton(): void {
+    const restart = this.deathRestart;
+    if (!restart) return;
+    this.deathRestart = null;
+    const button = this.makeButton(CENTER_X, DEATH_BUTTON_Y, t('again'), restart);
+    for (const part of [button.shadow, button.face]) part.setDepth(BUTTON_DEPTH); // кнопка выше тени — она нажимается
   }
 
   /**

@@ -31,7 +31,7 @@ import {
 } from './layout';
 import { patternSize, type Pattern } from './patterns';
 import { GRID_COLUMNS, GRID_ROWS, isSkull, isTicket, type SlotSymbol } from './rules';
-import { FONT, LAMP_OFF, TEXTURE_SCALE } from './theme';
+import { FONT, LAMP_DEPTH, LAMP_OFF, TEXTURE_SCALE } from './theme';
 
 /**
  * Украшения «Долговой ямы»: корпус автомата, рычаг, записка, лампочки, фишки,
@@ -305,12 +305,34 @@ function drawInset(g: Phaser.GameObjects.Graphics, box: Box, fill: number, borde
   g.fillRoundedRect(left + 6, top + 4, box.width - 12, box.height * 0.3, 6);
 }
 
-/** Окно экрана: хромированная рамка и почти чёрное стекло под сеткой. */
+/** Окно экрана: хромированная рамка с заклёпками по углам и почти чёрное стекло под сеткой. */
 function drawScreenFrame(g: Phaser.GameObjects.Graphics, screen: Box): void {
   const { left, top } = topLeft(screen);
   const frame = 8; // ширина хромированной рамки
-  g.fillStyle(CHROME);
-  g.fillRoundedRect(left - frame, top - frame, screen.width + 2 * frame, screen.height + 2 * frame, 22);
+  const outerX = left - frame;
+  const outerY = top - frame;
+  const outerW = screen.width + 2 * frame;
+  const outerH = screen.height + 2 * frame;
+  // Сталь как у панели списка: тёмный контур, средняя заливка, светлая верхняя кромка и тень по низу.
+  g.fillStyle(0x2b3138);
+  g.fillRoundedRect(outerX - 1, outerY - 1, outerW + 2, outerH + 2, 23);
+  g.fillStyle(0x7c8794);
+  g.fillRoundedRect(outerX, outerY, outerW, outerH, 22);
+  // Заклёпки по углам: тёмное гнездо, стальной грибок и светлый блик — как на окантовке списка.
+  const inset = 11;
+  for (const [x, y] of [
+    [outerX + inset, outerY + inset],
+    [outerX + outerW - inset, outerY + inset],
+    [outerX + inset, outerY + outerH - inset],
+    [outerX + outerW - inset, outerY + outerH - inset],
+  ]) {
+    g.fillStyle(0x2b3138);
+    g.fillCircle(x, y, 3.4);
+    g.fillStyle(0xb8c2cf);
+    g.fillCircle(x - 0.5, y - 0.5, 2.4);
+    g.fillStyle(0xe8eef5);
+    g.fillCircle(x - 1, y - 1, 1.1);
+  }
   g.fillStyle(SCREEN_GLASS);
   g.fillRoundedRect(left, top, screen.width, screen.height, 16);
 }
@@ -641,8 +663,8 @@ export function createTakeButtonTextures(scene: Phaser.Scene): void {
 export function createLamps(scene: Phaser.Scene, x: number, y: number, width: number, height: number): Phaser.GameObjects.Arc[] {
   const xs: number[] = [];
   for (let lampX = x - width / 2 + 24; lampX <= x + width / 2 - 24; lampX += 26) xs.push(lampX);
-  const top = xs.map((lampX) => scene.add.circle(lampX, y - height / 2, 5, LAMP_OFF));
-  const bottom = [...xs].reverse().map((lampX) => scene.add.circle(lampX, y + height / 2, 5, LAMP_OFF));
+  const top = xs.map((lampX) => scene.add.circle(lampX, y - height / 2, 5, LAMP_OFF).setDepth(LAMP_DEPTH));
+  const bottom = [...xs].reverse().map((lampX) => scene.add.circle(lampX, y + height / 2, 5, LAMP_OFF).setDepth(LAMP_DEPTH));
   return [...top, ...bottom];
 }
 
@@ -1175,10 +1197,15 @@ interface VendingRowLayout {
 function drawVendingSpirals(g: Phaser.GameObjects.Graphics, glass: Box, rows: number, row: VendingRowLayout): void {
   const glassTop = glass.y - glass.height / 2;
   const rowHeight = glass.height / rows;
+  // Спираль ужимается вместе с рядом: при пяти рядах (56 px) прежняя 14 px липла к рамке стекла (DONTLIKE п.6).
+  const coilH = Math.min(14, rowHeight * 0.2);
+  const coilW = coilH * 0.72;
+  const lift = coilH / 2 + 2;
+  const step = Math.min(12, coilW + 2);
   g.lineStyle(2, 0x64748b);
   for (let index = 0; index < rows; index++) {
     const shelfY = glassTop + rowHeight * (index + 1) - 8;
-    for (let x = row.goodX - 24; x <= row.goodX + 24; x += 12) g.strokeEllipse(x, shelfY - 6, 10, 14);
+    for (let x = row.goodX - 24; x <= row.goodX + 24; x += step) g.strokeEllipse(x, shelfY - lift, coilW, coilH);
   }
 }
 
@@ -1254,7 +1281,7 @@ function drawVendingMachine(
     g.fillStyle(0x334155);
     g.fillRect(glassLeft + 6, shelfY, glass.width - 12, 4);
     g.fillStyle(0x020617);
-    g.fillRoundedRect(row.priceX - 16, rowTop + rowHeight / 2 - 13, glassLeft + glass.width - row.priceX + 8, 26, 5); // табличка ценника
+    g.fillRoundedRect(row.priceX - 16, rowTop + rowHeight / 2 - 13, glassLeft + glass.width - 2 - (row.priceX - 16), Math.min(26, rowHeight - 8), 5); // табличка ценника — целиком внутри стекла
   }
 
   // Панель справа от витрины: щель для фишек и кнопки.
@@ -1683,9 +1710,9 @@ export function createCrackTexture(scene: Phaser.Scene): void {
 export function createDealerFelt(scene: Phaser.Scene, felt: Box): void {
   if (scene.textures.exists(DEALER_FELT_TEXTURE)) return;
   const g = scene.add.graphics();
-  g.fillStyle(0x2e1065);
-  g.fillRoundedRect(0, 0, felt.width, felt.height, 16); // фиолетовое сукно
-  g.lineStyle(3, 0xa855f7);
+  g.fillStyle(0x081a24);
+  g.fillRoundedRect(0, 0, felt.width, felt.height, 16); // тёмное стекло — как у меню и экрана слотов (DONTLIKE)
+  g.lineStyle(3, 0x475569);
   g.strokeRoundedRect(8, 8, felt.width - 16, felt.height - 16, 12);
   bake(g, DEALER_FELT_TEXTURE, felt.width, felt.height);
 }

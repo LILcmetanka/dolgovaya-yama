@@ -63,6 +63,10 @@ export function effectPosition(id: SlotEffectId, effects: ItemEffects): { x: num
  */
 export class ItemShelf {
   private readonly scene: Phaser.Scene;
+  // Вся полка одной группой: спрятать её целиком — одна строка (setHidden). Летящие картинки (putItem, takeItem,
+  // spend) остаются вне группы: они летают по всему виду и рисуются поверх.
+  private readonly group: Phaser.GameObjects.Container;
+  private shelfHidden = false; // полка спрятана: обучение ещё не дошло до «Это места под предметы»
   private readonly items: Phaser.GameObjects.Image[] = []; // предмет в клетке; пустая клетка — картинка скрыта
   private readonly doors: Phaser.GameObjects.Container[] = []; // стальные дверцы с кодом на закрытых отсеках; открытый — скрыта
   private readonly digits: Phaser.GameObjects.Text[][] = []; // цифры кода на дверце каждого отсека
@@ -92,6 +96,7 @@ export class ItemShelf {
     this.scene = scene;
     this.canDiscard = canDiscard;
     this.usable = usable;
+    this.group = scene.add.container(0, 0); // в (0, 0) без масштаба: клетки остаются на своих местах
     createItemTextures(scene, ITEMS, ITEM_SIZE);
     createShelfTextures(scene, SHELF_CELL);
     createEffectSlotTexture(scene, EFFECT_SLOT);
@@ -99,22 +104,26 @@ export class ItemShelf {
     for (let slot = 0; slot < MAX_SLOTS; slot++) {
       const x = shelfX(slot);
       const y = shelfY(slot);
-      scene.add.image(x + 2, y + 2, SHELF_CELL_TEXTURE); // текстура с тенью — чуть больше клетки
+      this.group.add(scene.add.image(x + 2, y + 2, SHELF_CELL_TEXTURE)); // текстура с тенью — чуть больше клетки
       const item = scene.add.image(x, y, itemTexture(ITEMS[0])).setScale(ITEM_ON_SHELF_SCALE).setVisible(false);
       item.setInteractive({ useHandCursor: true });
       attachHint(item, hint, () => this.hintFor(slot), () => use(slot));
       this.items.push(item);
+      this.group.add(item);
       this.shelfItems.push(null);
       const door = this.buildDoor(x, y, slot);
       door.setVisible(slot >= slots);
       attachHint(door, hint, () => [t('closedSlot'), t('closedSlotHow')]);
       this.doors.push(door);
+      this.group.add(door);
     }
 
     // Пустые гнёзда столбика у экрана: места видно всегда, даже когда ни один предмет не включён (DONTLIKE хоч. 11).
     for (let index = 0; index < EFFECT_SLOTS; index++) {
       const { x, y } = effectSpot(index);
-      this.effectSpots.push(scene.add.image(x, y, EFFECT_SLOT_TEXTURE));
+      const spot = scene.add.image(x, y, EFFECT_SLOT_TEXTURE);
+      this.effectSpots.push(spot);
+      this.group.add(spot);
     }
 
     // Иконки — на каждый предмет столбика: showEffects расставит первые EFFECT_SLOTS активных, остальные спрятаны.
@@ -127,7 +136,25 @@ export class ItemShelf {
       this.effectIcons.set(id, icon);
       const count = addText(scene, x + 14, y + 12, '', { fontSize: '13px', fontStyle: 'bold', stroke: '#000000', strokeThickness: 3 });
       this.effectCounts.set(id, count.setOrigin(0.5));
+      this.group.add([icon, count]);
     }
+  }
+
+  /**
+   * Спрятать/показать полку целиком: клетки, предметы, дверцы с кодом и цифрами, гнёзда у экрана, значки
+   * включённых предметов и их числа. Скрытая полка не ловит клики: Phaser не пускает ввод в невидимый контейнер
+   * (InputManager.inputCandidate смотрит на родителей), так что сквозь неё предмет не включить. Видимость самих
+   * частей не меняется — открылась полка, открылось и всё, что на ней уже было.
+   */
+  setHidden(hidden: boolean): void {
+    if (hidden === this.shelfHidden) return; // состояние уже такое — лишние вызовы ничего не делают
+    this.shelfHidden = hidden;
+    this.group.setVisible(!hidden);
+  }
+
+  /** Полка сейчас спрятана (идёт обучение до бита «Это места под предметы»). */
+  get isHidden(): boolean {
+    return this.shelfHidden;
   }
 
   /** Клик по значку: снимаем, только если сцена разрешает сейчас, — иначе значок не трогаем. */

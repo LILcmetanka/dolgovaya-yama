@@ -11,7 +11,7 @@ import { DEBT_ROUND_TO, debtForRound, isPaying, isUnlocked, JOKER, skullShare, s
  * Шаг 10 — ещё три: №4 «тише черепа / потолок серии», №14 «мягкий череп / −1 прокрутка», №17 «выигрыш +25% / черепа навсегда».
  * Шаг 11 — пять: №2 «−20% цен / долг +8%», №5 «страховка 100% / каждая копия вдвое дороже»,
  * №7 «вес джекпота +50% / вес чёрных паттернов +1», №11 «выбранный символ +2 веса / остальным −0,5», №12 «долг −10% / +20%».
- * Шаг 11, партия Б — ещё пять: №8 «смена автомата отложена / черепа +2 п.п. навсегда»,
+ * Шаг 11, партия Б — ещё пять: №8 «смена автомата отложена / черепа +2 % навсегда»,
  * №10 «первый череп не жжёт кон / кон не идёт в цель»,
  * №13 «бесплатный амулет / −2 места в столбике», №15 «забрать дважды / второе забирание дешевле на 20%».
  * №9 «ещё один запас прощения» удалена целиком 22.11.2026 (шаг 33, решение автора); прощение провала
@@ -153,14 +153,14 @@ export const SKULL_CALM_ROUNDS = 1;
 export const SOFT_SKULL_ROUNDS = 1;
 /** «Шаг множителя серии вдвое»: было ×1, ×2, ×3… стало ×1, ×3, ×5… */
 export const PACT_STEP_FACTOR = 2;
-/** «В следующем раунде доля черепов выше» на 9 п.п. (подобрано симулятором, шаг 9). */
+/** «В следующем раунде доля черепов выше» на 9 % (подобрано симулятором, шаг 9). */
 export const QUIET_SKULL_DELTA = 0.09;
 /** Поправка доли не должна довести её до 100 %: дальше сетка была бы из одних черепов. */
 export const SKULL_SHARE_MAX = 0.9;
 /** И не увести в ноль: вес черепа на нуле — это «нет черепов», а сделка обещала только «тише». */
 export const SKULL_SHARE_MIN = 0.01;
 // ---------- Связки шага 10 ----------
-/** №4 «Тише черепа»: доля черепов ниже на 3 п.п., пока сделка жива. */
+/** №4 «Тише черепа»: доля черепов ниже на 3 %, пока сделка жива. */
 export const SKULL_CALM_DELTA = -0.03;
 /** №4: множитель серии не поднимается выше ×3 (серия выше двух ступеней ничего не даёт). */
 export const PACT_CAP = 3;
@@ -168,7 +168,7 @@ export const PACT_CAP = 3;
 export const SOFT_SKULL_SPINS = -1;
 /** №17 «Цена вверх»: выигрыш паттернов +25 % — число автора из DONTLIKE.md, симулятором не подкручивается. */
 export const PRICE_UP_WIN = 1.25;
-/** …и доля черепов +0,5 п.п. до конца забега. */
+/** …и доля черепов +0,5 % до конца забега. */
 export const PRICE_UP_SKULL_DELTA = 0.005;
 // ---------- Связки шага 11 ----------
 /**
@@ -198,7 +198,7 @@ export const DEBT_CUT_ROUNDS = 1;
 // ---------- Связки шага 11, партия Б ----------
 /** №8 «смена автомата отложена на 4 раунда»: столько раундов сделки автомат не меняется сам. */
 export const NO_SWAP_ROUNDS = 4;
-/** №8 «черепа +2 п.п. навсегда»: доля черепов выше до конца забега (срок сделки — PACT_LAST_ROUNDS). */
+/** №8 «черепа +2 % навсегда»: доля черепов выше до конца забега (срок сделки — PACT_LAST_ROUNDS). */
 export const MACHINE_DELAY_SKULL_DELTA = 0.02;
 /** №10: столько раундов первый череп не жжёт кон (и собранное за раунд не идёт в цель). */
 export const SAFE_BANK_ROUNDS = 1;
@@ -216,7 +216,7 @@ export const DOUBLE_TAKE_ROUNDS = 3;
 // ---------- Связки шага 30: DONTLIKE.md §2 (одобрены все, кроме №3, 4, 8, 13, 16, 29) ----------
 // Карты, у которых эффект живёт на раунд, складываются в PactEffects. Разовые выдачи (билет, долг, предмет,
 // амулет, гнездо, автомат) сцена и симулятор делают в момент взятия — у них числа тоже отсюда.
-/** №1: +1 прокрутка в раунде, черепа чаще на 1 п.п. */
+/** №1: +1 прокрутка в раунде, черепа чаще на 1 % */
 export const SPIN_PLUS_SPINS = 1;
 export const SPIN_PLUS_SKULL_DELTA = 0.01;
 export const SPIN_PLUS_ROUNDS = 3;
@@ -228,7 +228,7 @@ export const SPIN_CAP_ROUNDS = 3;
 export const EMPTY_SPIN_SPINS = 1;
 export const EMPTY_SPIN_DEBT_MUL = 1.1;
 export const EMPTY_SPIN_ROUNDS = 3;
-/** №6: черепа реже на 3 п.п. два раунда, выигрыш −10%. */
+/** №6: черепа реже на 3 % два раунда, выигрыш −10%. */
 export const CALM_WIN_SKULL_DELTA = -0.03;
 export const CALM_WIN_MUL = 0.9;
 export const CALM_WIN_ROUNDS = 2;
@@ -292,7 +292,7 @@ export const FREE_ITEM_ROUNDS = 3;
 export const ITEM_CHEAP_MUL = 0.8;
 export const ITEM_CHEAP_OFFER = -1;
 export const ITEM_CHEAP_ROUNDS = 3;
-/** №28: +2 места на полке, черепа чаще на 2 п.п. */
+/** №28: +2 места на полке, черепа чаще на 2 % */
 export const TWO_SLOTS_BONUS = 2;
 export const TWO_SLOTS_SKULL_DELTA = 0.02;
 export const TWO_SLOTS_ROUNDS = 3;
@@ -317,7 +317,7 @@ export const MACHINE_PICK_ROUNDS = 3;
 /** №39: джокер в центре каждой сетки, выигрыш −10%. */
 export const JOKER_CENTER_WIN = 0.9;
 export const JOKER_CENTER_ROUNDS = 3;
-/** №40: кровавая прокрутка гарантирована раз в раунд, черепа чаще на 2 п.п. */
+/** №40: кровавая прокрутка гарантирована раз в раунд, черепа чаще на 2 % */
 export const BLOOD_FIRST_SKULL_DELTA = 0.02;
 export const BLOOD_FIRST_ROUNDS = 3;
 /** №43: отсрочка на раунд, долг +25%. */
@@ -337,7 +337,7 @@ export const TAKE_STREAK_ROUNDS = 3;
 
 /**
  * Число в тексте карты: целые без дробной части, дробные — с одним знаком (0,5 / 0.5).
- * Сначала округляем до десятых: 0,09 · 100 в JS — это 9.000000000000002, и без округления карта сказала бы «+9.0 п.п.».
+ * Сначала округляем до десятых: 0,09 · 100 в JS — это 9.000000000000002, и без округления карта сказала бы «+9.0 %».
  */
 function cardNum(value: number, isEn: boolean): string {
   const tenths = Math.round(value * 10) / 10;
@@ -365,8 +365,8 @@ export const PACTS: readonly PactSpec[] = [
     rounds: QUIET_ROUND_ROUNDS,
     bonus: { ru: 'до конца раунда нет черепов', en: 'no skulls until the round ends' },
     cost: {
-      ru: `в следующем черепа +${cardNum(QUIET_SKULL_DELTA * 100, false)} п.п.`,
-      en: `next round skulls +${cardNum(QUIET_SKULL_DELTA * 100, true)} pp`,
+      ru: `в следующем черепа +${cardNum(QUIET_SKULL_DELTA * 100, false)} %`,
+      en: `next round skulls +${cardNum(QUIET_SKULL_DELTA * 100, true)}%`,
     },
   },
   {
@@ -379,8 +379,8 @@ export const PACTS: readonly PactSpec[] = [
     id: 'skull-calm',
     rounds: SKULL_CALM_ROUNDS,
     bonus: {
-      ru: `черепов на ${cardNum(-SKULL_CALM_DELTA * 100, false)} п.п. меньше`,
-      en: `skulls ${cardNum(-SKULL_CALM_DELTA * 100, true)} pp rarer`,
+      ru: `черепов на ${cardNum(-SKULL_CALM_DELTA * 100, false)} % меньше`,
+      en: `skulls ${cardNum(-SKULL_CALM_DELTA * 100, true)}% rarer`,
     },
     cost: { ru: `серия не выше ×${PACT_CAP}`, en: `streak capped at ×${PACT_CAP}` },
   },
@@ -401,8 +401,8 @@ export const PACTS: readonly PactSpec[] = [
       en: `pattern wins +${cardNum((PRICE_UP_WIN - 1) * 100, true)}%`,
     },
     cost: {
-      ru: `черепа +${cardNum(PRICE_UP_SKULL_DELTA * 100, false)} п.п. навсегда`,
-      en: `skulls +${cardNum(PRICE_UP_SKULL_DELTA * 100, true)} pp forever`,
+      ru: `черепа +${cardNum(PRICE_UP_SKULL_DELTA * 100, false)} % навсегда`,
+      en: `skulls +${cardNum(PRICE_UP_SKULL_DELTA * 100, true)}% forever`,
     },
   },
   {
@@ -474,8 +474,8 @@ export const PACTS: readonly PactSpec[] = [
       en: `the machine holds ${NO_SWAP_ROUNDS} rounds`,
     },
     cost: {
-      ru: `черепа +${cardNum(MACHINE_DELAY_SKULL_DELTA * 100, false)} п.п. навсегда`,
-      en: `skulls +${cardNum(MACHINE_DELAY_SKULL_DELTA * 100, true)} pp forever`,
+      ru: `черепа +${cardNum(MACHINE_DELAY_SKULL_DELTA * 100, false)} % навсегда`,
+      en: `skulls +${cardNum(MACHINE_DELAY_SKULL_DELTA * 100, true)}% forever`,
     },
   },
   {
@@ -1078,7 +1078,7 @@ export function pactEffects(pacts: readonly Pact[], round: number): PactEffects 
         break;
       case 'skull-growth': {
         // Сделка считает раунды от взятия: первые три доля стоит на месте (как в раунде взятия),
-        // на пятом раунде рост вдвое — одна лишняя ступень роста (GAME_CONFIG.skullShareGrowth = 1 п.п.).
+        // на пятом раунде рост вдвое — одна лишняя ступень роста (GAME_CONFIG.skullShareGrowth = 1 %).
         const elapsed = Math.max(0, round - firstRoundOf(pact));
         if (elapsed <= 2) effects.skullShareDelta += skullShare(firstRoundOf(pact)) - skullShare(round);
         else if (elapsed === SKULL_GROWTH_ROUNDS - 1) effects.skullShareDelta += skullShare(round) - skullShare(round - 1);

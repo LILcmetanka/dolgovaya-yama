@@ -11,8 +11,18 @@ import { achievementsOf, isAchievementId, type AchievementId } from './achieveme
 import { isDevMode } from './devmode';
 import { isUpgradeId, upgradeById, type PurchasedUpgrades, type UpgradeId } from './upgrades';
 
+/** Дорожки обучения текстами: у каждой своя память шагов. */
+export type TutorialTrack = 'intro' | 'death' | 'rescueWin' | 'actions';
+
+/** Все дорожки: по этому списку читаем и сливаем шаги (чужие ключи сохранения отбрасываются). */
+const TUTORIAL_TRACKS: readonly TutorialTrack[] = ['intro', 'death', 'rescueWin', 'actions'];
+
 export interface Progress {
-  tutorialDone: boolean; // первый забег с тьмой пройден — больше её не показываем
+  tutorialDone: boolean; // мастер-флаг «обучение пропущено целиком»: текстов больше не будет. Ставится только в двух местах — конец дорожки действий (TutorialScene.tutorialActionsIntro) и finishTutorial()
+  darknessDone: boolean; // тьма первого забега погашена (подсказки текстами идут поверх обычного забега)
+  tutorial: Partial<Record<TutorialTrack, number>>; // сколько шагов каждой дорожки пройдено
+  rescueIntroSeen: boolean; // полная заставка первого спасения показана: дальше только короткое «ПОСЛЕДНИЙ ШАНС»
+  actionsUnlocked: boolean; // действия между прокрутками открылись: первая смерть позади
   patterns: string[]; // какие паттерны уже выпадали: на стекле видно только их (кассета возвращает набор с записи)
   achievements: string[]; // какие ачивки получены: копятся навсегда, «Заново» и конец забега их не сбрасывают
   runAmulets: AmuletId[]; // амулеты последнего законченного забега: из них игрок выбирает память на старте (шаг 38)
@@ -23,14 +33,14 @@ export interface Progress {
 
 const PROGRESS_KEY = 'dolgovaya-yama-progress'; // ключ прогресса в localStorage
 // Новый игрок: тьма в первом забеге, стекло пустое, ачивок, памяти и улучшений нет. Памяти нет — и списка амулетов нет.
-const DEFAULT_PROGRESS: Progress = { tutorialDone: false, patterns: [], achievements: [], runAmulets: [], runAmuletPicks: MEMORY_PICKS_BASE, upgrades: {}, runs: 0 };
+const DEFAULT_PROGRESS: Progress = { tutorialDone: false, darknessDone: false, tutorial: {}, rescueIntroSeen: false, actionsUnlocked: false, patterns: [], achievements: [], runAmulets: [], runAmuletPicks: MEMORY_PICKS_BASE, upgrades: {}, runs: 0 };
 
 /**
- * Свежий прогресс нового игрока. Копия, а не общий DEFAULT_PROGRESS: у него внутри массивы и объект улучшений,
- * поверхностная копия оставила бы те же ссылки, и grantUpgrade писал бы в константу.
+ * Свежий прогресс нового игрока. Копия, а не общий DEFAULT_PROGRESS: у него внутри массивы, объект улучшений
+ * и шагов обучения, поверхностная копия оставила бы те же ссылки, и grantUpgrade писал бы в константу.
  */
 function freshProgress(): Progress {
-  return { ...DEFAULT_PROGRESS, patterns: [], achievements: [], upgrades: {} };
+  return { ...DEFAULT_PROGRESS, patterns: [], achievements: [], upgrades: {}, tutorial: {} };
 }
 
 /**
@@ -86,13 +96,32 @@ function picksOf(value: unknown): number {
 }
 
 /**
+ * Шаги дорожек обучения из сохранения: только известные ключи, только целые ≥ 1, иначе 0.
+ * Чужие ключи молча отбрасываются — как и остальное чужое в сохранении.
+ */
+function tutorialOf(value: unknown): Partial<Record<TutorialTrack, number>> {
+  const result: Partial<Record<TutorialTrack, number>> = {};
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return result;
+  const saved = value as Record<string, unknown>;
+  for (const track of TUTORIAL_TRACKS) {
+    const step = saved[track];
+    result[track] = typeof step === 'number' && Number.isInteger(step) && step >= 1 ? step : 0;
+  }
+  return result;
+}
+
+/**
  * Разобрать сохранение в Progress. Чужое и битое молча отбрасывается по полям: старые ключи игры без новых полей
  * читаются как «так и не было». Общая дверь у загрузки и у слияния перед записью.
  */
 function parseProgress(saved: unknown): Progress {
   if (typeof saved !== 'object' || saved === null) return freshProgress();
-  const { tutorialDone, patterns, achievements, runAmulets, runAmuletPicks, memoryAmulet, upgrades, runs } = saved as {
+  const { tutorialDone, darknessDone, tutorial, rescueIntroSeen, actionsUnlocked, patterns, achievements, runAmulets, runAmuletPicks, memoryAmulet, upgrades, runs } = saved as {
     tutorialDone?: unknown;
+    darknessDone?: unknown;
+    tutorial?: unknown;
+    rescueIntroSeen?: unknown;
+    actionsUnlocked?: unknown;
     patterns?: unknown;
     achievements?: unknown;
     runAmulets?: unknown;
@@ -104,8 +133,15 @@ function parseProgress(saved: unknown): Progress {
   // Старая память (одно поле memoryAmulet до шага 38) читается как список из одного амулета: игрок не теряет выбор.
   const legacy = isAmuletId(memoryAmulet) ? [memoryAmulet] : [];
   const amulets = amuletIdsOf(runAmulets);
+  // Мастер-флаг обучения: им раньше закрывали тьму, поэтому старые сохранения читают его и как darknessDone.
+  const done = typeof tutorialDone === 'boolean' ? tutorialDone : DEFAULT_PROGRESS.tutorialDone;
   return {
-    tutorialDone: typeof tutorialDone === 'boolean' ? tutorialDone : DEFAULT_PROGRESS.tutorialDone,
+    tutorialDone: done,
+    darknessDone: typeof darknessDone === 'boolean' ? darknessDone : done,
+    tutorial: tutorialOf(tutorial),
+    rescueIntroSeen: typeof rescueIntroSeen === 'boolean' ? rescueIntroSeen : DEFAULT_PROGRESS.rescueIntroSeen,
+    // Нет поля — старый игрок: у него уже были забеги, действия ему открыты.
+    actionsUnlocked: typeof actionsUnlocked === 'boolean' ? actionsUnlocked : runsOf(runs) > 0,
     patterns: patternsOf(patterns),
     achievements: achievementsOf(achievements),
     runAmulets: amulets.length > 0 ? amulets : legacy,
@@ -113,7 +149,7 @@ function parseProgress(saved: unknown): Progress {
     // Улучшения появились шагом 28: старая запись без них читается как «ничего не куплено».
     upgrades: upgradesOf(upgrades),
     // Счётчик забегов — тоже шаг 28; мусор в нём считается нулём (тогда прощения долга просто не будет).
-    runs: typeof runs === 'number' && Number.isFinite(runs) && runs > 0 ? Math.floor(runs) : 0,
+    runs: runsOf(runs),
   };
 }
 
@@ -149,10 +185,20 @@ let memoryWritten = false;
   }
 }
 
+/** Шаги обучения двух вкладок: по каждому ключу остаётся больший — пройденное не откатывается. */
+function mergeTutorial(
+  mine: Partial<Record<TutorialTrack, number>>,
+  stored: Partial<Record<TutorialTrack, number>>,
+): Partial<Record<TutorialTrack, number>> {
+  const result: Partial<Record<TutorialTrack, number>> = {};
+  for (const track of TUTORIAL_TRACKS) result[track] = Math.max(mine[track] ?? 0, stored[track] ?? 0);
+  return result;
+}
+
 /**
  * Слить прогресс этой вкладки с тем, что уже в хранилище: вкладка со старым снимком не должна затирать чужие
  * достижения целиком. Правило по полям — так, чтобы ничего не терялось:
- *   • обучение — «пройдено», если пройдено хоть где;
+ *   • обучение — «пройдено», если пройдено хоть где; тьма — так же через «или», шаги дорожек — максимум по ключу;
  *   • паттерны и ачивки — объединение: открытое навсегда не откатывается;
  *   • улучшения — по каждому id большая из двух покупок (потолок один, upgrades.upgradesOf его и держит);
  *   • номер забега — большее число: счётчик забегов не идёт назад;
@@ -172,6 +218,10 @@ function mergeProgress(mine: Progress, stored: Progress): Progress {
   const mineMemory = memoryWritten || mine.runAmulets.length > 0;
   return {
     tutorialDone: mine.tutorialDone || stored.tutorialDone,
+    darknessDone: mine.darknessDone || stored.darknessDone,
+    tutorial: mergeTutorial(mine.tutorial, stored.tutorial),
+    rescueIntroSeen: mine.rescueIntroSeen || stored.rescueIntroSeen,
+    actionsUnlocked: mine.actionsUnlocked || stored.actionsUnlocked,
     patterns,
     achievements,
     runAmulets: mineMemory ? mine.runAmulets : stored.runAmulets,
@@ -221,6 +271,60 @@ export function isTutorialDone(): boolean {
 /** Запомнить, что обучение пройдено: в следующих забегах тьмы нет. */
 export function markTutorialDone(): void {
   progress.tutorialDone = true;
+  saveProgress();
+}
+
+/** Тьма первого забега уже погашена. */
+export function isDarknessDone(): boolean {
+  return progress.darknessDone;
+}
+
+/** Запомнить, что тьму первого забега погасили. */
+export function markDarknessDone(): void {
+  if (progress.darknessDone) return;
+  progress.darknessDone = true;
+  saveProgress();
+}
+
+/** Сколько шагов дорожки пройдено: 0 — не начинали. */
+export function tutorialStep(track: TutorialTrack): number {
+  return progress.tutorial[track] ?? 0;
+}
+
+/** Запомнить шаг дорожки: целое ≥ 0, мусор — 0. Пройденное не откатывается: меньше текущего не пишется. */
+export function setTutorialStep(track: TutorialTrack, step: number): void {
+  const next = Number.isFinite(step) ? Math.max(0, Math.floor(step)) : 0;
+  if (next <= (progress.tutorial[track] ?? 0)) return; // назад дорожка не идёт
+  progress.tutorial[track] = next;
+  saveProgress();
+}
+
+/** Сколько забегов начато: целое ≥ 0, мусор — ноль. */
+function runsOf(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+/** Действия между прокрутками открыты (первая смерть позади). */
+export function isActionsUnlocked(): boolean {
+  return progress.actionsUnlocked;
+}
+
+/** Открыть действия: зовётся первой смертью забега. */
+export function unlockActions(): void {
+  if (progress.actionsUnlocked) return;
+  progress.actionsUnlocked = true;
+  saveProgress();
+}
+
+/** Полная заставка последнего шанса уже показывалась: второй раз — только короткое «ПОСЛЕДНИЙ ШАНС». */
+export function isRescueIntroSeen(): boolean {
+  return progress.rescueIntroSeen;
+}
+
+/** Запомнить, что полная заставка спасения показана (живёт в localStorage, а не в сессии страницы). */
+export function markRescueIntroSeen(): void {
+  if (progress.rescueIntroSeen) return;
+  progress.rescueIntroSeen = true;
   saveProgress();
 }
 

@@ -25,13 +25,13 @@ export const ACTION_LOTTERY_TICKETS = 1;
  *  Шаг 38 (DONTLIKE п.3): 10% и 15 фишек оказались слишком дешёвыми — теперь 20% и минимум 30 (решение СОЛО). */
 export const ACTION_SERVICE_SHARE = 0.2;
 export const ACTION_SERVICE_MIN = 30;
-/** №5: на сколько раундов чистка (текущий и следующий) и на сколько п.п. ниже доля черепов. */
+/** №5: на сколько раундов чистка (текущий и следующий) и на сколько % ниже доля черепов. */
 export const ACTION_SERVICE_ROUNDS = 2;
 export const ACTION_SERVICE_SKULL_DELTA = -0.04;
 /**
  * №6 «Кража»: шанс успеха начинается с малого и растёт с каждым раундом — до потолка (шаг 38, DONTLIKE п.14:
  * наоборот, 55% с падением, позволяло фармить улучшения в первом раунде). Провал по-прежнему сразу KABOOM.
- * Решение СОЛО 23.11.2026: 25% + 5 п.п. за раунд, потолок 60%.
+ * Решение СОЛО 23.11.2026: 25% + 5 % за раунд, потолок 60%.
  */
 export const ACTION_THEFT_CHANCE_START = 0.25;
 export const ACTION_THEFT_CHANCE_STEP = 0.05;
@@ -41,13 +41,8 @@ export const ACTION_THEFT_REWARD_SHARE = 0.25;
 export const ACTION_THEFT_REWARD_MIN = 40;
 /** №8 «Продажа символа»: сколько фишек даёт одна клетка проданного символа (цена символа × клетки). */
 export const ACTION_SALE_CELL_MULT = 1;
-/**
- * №8 (шаг 38, DONTLIKE п.4): цена растёт вместе с текущим разгоном серии — цена символа × клетки × множитель.
- * Потолок множителя в цене: без него поздний разгон превращал продажу в печатный станок (при долге 65 000
- * продажа давала 40–60 фишек — мизер, а на ×20 стала бы тысячами). 10 — столько же, сколько у множителя
- * в начале третьего десятка серии; дальше цена держится, а не летит.
- */
-export const ACTION_SALE_MULT_CAP = 10;
+// №8 (шаг 38, DONTLIKE п.4): цена растёт вместе с текущим разгоном серии — цена символа × клетки × множитель,
+// без потолка (DONTLIKE п.5: у игрока был ×89, а цена считалась как ×10).
 /** №10 «Долговая биржа»: платишь долю следующего долга сейчас — он уменьшается на другую (бо́льшую) долю. */
 export const ACTION_DEBT_PAY_SHARE = 0.14;
 export const ACTION_DEBT_PAY_MIN = 10;
@@ -199,14 +194,21 @@ export function symbolCells(grid: Grid | null, symbolId: string): number {
 }
 
 /**
+ * №8: множитель, который входит в цену продажи, — текущий разгон серии. Потолка нет (DONTLIKE п.5: у игрока был
+ * ×89, а цена считалась как ×10). Меньше 1 и мусор считаются единицей.
+ */
+export function saleMultiplier(multiplier = 1): number {
+  return Number.isFinite(multiplier) && multiplier > 1 ? multiplier : 1;
+}
+
+/**
  * №8: сколько фишек даёт продажа символа с cells клетками на сетке при текущем множителе серии multiplier.
- * Формула: цена символа × клетки × множитель (потолок — ACTION_SALE_MULT_CAP). Множитель меньше 1 и мусор
+ * Формула: цена символа × клетки × множитель (без потолка). Множитель меньше 1 и мусор
  * считаются единицей: продажа не может стоить меньше «цены за клетку», иначе игрок получил бы штраф за разгон.
  */
 export function salePrice(symbol: SlotSymbol, cells: number, multiplier = 1): number {
   if (!(symbol.price > 0) || !(cells > 0)) return 0;
-  const mul = Number.isFinite(multiplier) && multiplier > 1 ? Math.min(ACTION_SALE_MULT_CAP, multiplier) : 1;
-  return Math.round(symbol.price * cells * ACTION_SALE_CELL_MULT * mul);
+  return Math.round(symbol.price * cells * ACTION_SALE_CELL_MULT * saleMultiplier(multiplier));
 }
 
 /**

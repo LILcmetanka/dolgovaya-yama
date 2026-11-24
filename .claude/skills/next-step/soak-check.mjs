@@ -118,6 +118,15 @@ try {
   let ok = 0, all = 0;
   const check = (cond, what) => { all++; if (cond) ok++; console.log((cond ? 'OK   ' : 'FAIL ') + what); };
   const json = (text) => JSON.parse(text ?? 'null');
+  /** Ждём, пока выражение на странице станет истинным: перезапуск сцены идёт следующим кадром, а не мгновенно. */
+  const waitFor = async (expr, limit = 20000) => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < limit) {
+      if (await val(expr)) return true;
+      await sleep(150);
+    }
+    return false;
+  };
   /** Настоящая клавиша браузера: так проверяется ввод, а не метод сцены. */
   const key = async (name) => {
     const codes = {
@@ -292,13 +301,29 @@ try {
   await shot('soak-2-second-upgrade.png');
   const secondPick = Math.max(0, visibleIndex(afterFirst.offers));
   const secondOffer = afterFirst.offers[secondPick];
+  // Выбор второго улучшения сразу закрывает экран и перезапускает сцену: кнопки «ЗАНОВО» больше нет
+  // (DONTLIKE п.7). Билеты нового забега уже стартовые, поэтому цену ловим в момент перезапуска —
+  // тот же тик, где счётчик и списан. Разницу сверяем, а не абсолют.
+  await val(`(() => {
+    const g = window.__g;
+    window.__soakTicketsAtRestart = null;
+    const orig = g.restartGame.bind(g);
+    g.restartGame = function (...args) { window.__soakTicketsAtRestart = g.tickets; return orig(...args); };
+    return 1;
+  })()`);
   await clickCard(secondPick);
+  const ticketsAtRestart = await val('window.__soakTicketsAtRestart');
+  check(typeof ticketsAtRestart === 'number' && afterFirst.tickets - ticketsAtRestart === UPGRADES.UPGRADE_SECOND_PRICE,
+    `второе улучшение стоило ровно ${UPGRADES.UPGRADE_SECOND_PRICE} билетов: ${afterFirst.tickets} → ${ticketsAtRestart} в момент перезапуска`);
+  const progressSecond = json(await val(`localStorage.getItem('${PROGRESS_KEY}')`));
+  check(progressSecond && progressSecond.upgrades && progressSecond.upgrades[secondOffer] === 1, `клик купил «${secondOffer}»`);
+  check(progressSecond && Object.keys(progressSecond.upgrades).length === 2, 'в прогрессе две покупки: ' + Object.keys((progressSecond && progressSecond.upgrades) ?? {}).join(', '));
+  const restarted = await waitFor(`(() => { const g = window.__g; return !!g && g.runsPlayed === ${runsBefore + 1} && !g.upgradeScreen.isOpen && g.isGameOver === false; })()`, 25000);
+  check(restarted, `выбор второго улучшения сам начал новый забег: счётчик забегов ${runsBefore} → ${runsBefore + 1}`);
+  await val('try { delete window.__g.restartGame; } catch (e) {} 1'); // вернуть метод класса на место
   const afterSecond = await state();
-  check(afterSecond.purchases[secondOffer] === 1, `клик купил «${secondOffer}»`);
-  check(afterSecond.tickets === afterFirst.tickets - UPGRADES.UPGRADE_SECOND_PRICE,
-    `второе улучшение стоило ровно ${UPGRADES.UPGRADE_SECOND_PRICE} билетов: ${afterFirst.tickets} → ${afterSecond.tickets}`);
+  check(afterSecond.purchases[secondOffer] === 1, `новый забег прочитал покупку «${secondOffer}» из прогресса`);
   check(afterSecond.upgOpen === false && afterSecond.cards === 0, 'экран улучшений закрыт — дальше витрина памяти');
-  check(Object.keys(afterSecond.purchases).length === 2, 'в прогрессе две покупки: ' + Object.keys(afterSecond.purchases).join(', '));
 
   // ---------- 3. Память амулетов: смерть записала амулеты забега, витрины на экране смерти нет ----------
   console.log('--- 3. память амулетов записана смертью');
@@ -306,21 +331,25 @@ try {
   const expectedMemory = MEMORY.memoryOptions(['bell', 'boost']).map((option) => option.amulet.id);
   check(JSON.stringify(memory.memory) === JSON.stringify(expectedMemory),
     'смерть записала амулеты забега в прогресс: ' + JSON.stringify(memory.memory));
-  check(memory.pickOpen === false, 'на экране смерти списка памяти нет — он будет на старте забега (шаг 38)');
+  // Список памяти появляется на старте забега, а не на экране смерти: там он был закрыт (снимок dead выше).
+  check(dead.pickOpen === false && afterFirst.pickOpen === false, 'на экране смерти списка памяти нет — он будет на старте забега (шаг 38)');
   await shot('soak-3-memory.png');
 
   // ---------- 4. Новый забег: покупки действуют, амулет из памяти в гнезде ----------
-  console.log('--- 4. новый забег с улучшениями и памятью');
+  console.log('--- 4. новый забег с улучшениями и памятью (начался сам после выбора улучшения)');
   const errorsBeforeRestart = consoleErrors.length;
-  await val('window.__g.restartGame(); 1');
-  await sleep(4500);
-  if (await val('window.__g.isChoosingMachine')) { await val('window.__g.machinePick.press(0); 1'); await sleep(300); }
+  // Машина и память амулетов — выборы старта нового забега: нажимаем, как игрок.
+  for (let i = 0; i < 60; i++) {
+    if (await val('window.__g.isChoosingMachine')) { await val('window.__g.machinePick.press(0); 1'); await sleep(350); break; }
+    if (await val('window.__g.amuletPick.isOpen')) break;
+    await sleep(250);
+  }
   // Память амулетов (шаг 38): список на старте, берём первый — 🔔.
   const pickState = JSON.parse((await val('(() => { const g = window.__g; return JSON.stringify({ open: g.amuletPick.isOpen, rows: g.amuletPick.rows.length, picks: g.startAmuletPicks }); })()')) ?? '{}');
   check(pickState.open === true && pickState.rows === 2, `память на старте: список из ${pickState.rows} амулетов прошлого забега`);
   await val('window.__g.amuletPick.press(0); 1');
-  await sleep(400);
-  if (await val('window.__g.isChoosingSymbol')) { await val('window.__g.symbolPick.press(0); 1'); await sleep(300); }
+  await sleep(450);
+  if (await val('window.__g.isChoosingSymbol')) { await val('window.__g.symbolPick.press(0); 1'); await sleep(350); }
   const next = await state();
   const purchases = next.purchases;
   const effects = UPGRADES.upgradeEffects(purchases);

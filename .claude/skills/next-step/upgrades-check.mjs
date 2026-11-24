@@ -265,11 +265,9 @@ try {
     const box = (o) => { const b = o.getBounds(); return { top: Math.round(b.top), bottom: Math.round(b.bottom), left: Math.round(b.left), right: Math.round(b.right) }; };
     return JSON.stringify({ score: score ? box(score) : null, again: again ? box(again) : null });
   })()`) ?? '{}');
-  check(endLayout.score !== null && endLayout.again !== null, 'на экране смерти есть итоги и «ЗАНОВО»');
-  check(Boolean(endLayout.score && endLayout.again && endLayout.score.bottom + 4 <= endLayout.again.top),
-    'итоги и «ЗАНОВО» не перекрываются: итоги до ' + (endLayout.score && endLayout.score.bottom) + ', кнопка с ' + (endLayout.again && endLayout.again.top));
-  check(Boolean(endLayout.score && endLayout.score.top >= 480 && endLayout.again && endLayout.again.bottom <= 600),
-    'итоги и кнопка на плите под экраном, в поле 480…600');
+  // DONTLIKE п.1: на экране смерти — только автомат с выбором улучшений, ни итогов, ни «ЗАНОВО».
+  check(endLayout.score === null && endLayout.again === null, 'на экране смерти нет ни итогов, ни «ЗАНОВО»');
+  check((await val('window.__g.upgradeScreen.isOpen')) === true, 'и сразу открыт выбор улучшений на экране автомата');
   await shot('upgrades-ru-cards.png');
   // Пробел на этом экране игру не двигает: экран остаётся, забег не начинается заново.
   await key('Space');
@@ -289,8 +287,10 @@ try {
   await clickCard(1);
   const s3 = await state();
   check(s3.purchases[secondOffer] === 1, `клик купил ${secondOffer}`);
-  check(s3.tickets === 4 && s3.tickets === s2.tickets - 6, 'второе улучшение стоило ровно 6 билетов (10 → 4)');
-  check(s3.open === false && s3.cards === 0, 'после второго выбора экран закрыт — дальше обычное «ЗАНОВО»');
+  // Билеты списываются до рестарта; после него сцена уже новая — проверяем по числу покупок и новому забегу.
+  check(s3.purchases[firstOffer] === 1 && s3.purchases[secondOffer] === 1, 'обе карточки записаны в прогресс');
+  check(s3.open === false && s3.cards === 0, 'после второго выбора экран закрыт');
+  check(s3.gameOver === false, 'и сразу начался новый забег — без кнопки «ЗАНОВО»');
   await shot('upgrades-ru-after.png');
 
   // ---------- 6: покупки действуют со следующего забега ----------
@@ -327,7 +327,7 @@ try {
   await key('1');
   const tailAfter = await state();
   check(tailAfter.open === false, 'билетов меньше 6 — после бесплатного экран закрылся');
-  check(tailAfter.tickets === 3, 'билеты не тронуты (3)');
+  check(tailAfter.gameOver === false, 'после бесплатного начался новый забег (билеты на второе не потрачены)');
 
   // ---------- 8: куплено всё — экрана нет ----------
   await restart();
@@ -610,29 +610,24 @@ try {
   check(machine.goods.every(Boolean) && machine.prices.every((p) => p.visible && p.text.length > 0),
     `п.8: товар и цены видны сразу, без клика (${machine.prices.map((p) => p.text).join(', ')})`);
   check(machine.goodsTexture === 'shop-slot', `п.6: место на полке — значок с плюсом, а не пустая клетка (${machine.goodsTexture})`);
-  check(machine.bin === true && machine.binZone === true, 'п.8: внизу автомата есть плашка выдачи — и по ней можно кликнуть');
-  // Покупка уходит в плашку, клик по плашке её забирает.
+  check(machine.bin === true && machine.binZone === false, 'п.8: внизу автомата есть плашка выдачи, но клика по ней нет');
+  // Покупка не появляется в плашке: сразу встаёт на место, забирать нечего (DONTLIKE: «убери вообще»).
+  const slotsBefore = await val('window.__g.slots');
   await val('window.__g.balance = 100000; window.__g.refreshShop(); window.__g.buySlot(); 1');
-  await sleep(1700); // оплата 4×60 + 400 мс и падение 320 мс
-  const inBin = await val('Boolean(window.__g.miniShop.taken)');
-  await clickAt(await pagePoint('g.miniShop.binZone.getBounds()'));
-  await sleep(400);
-  const binEmpty = await val('window.__g.miniShop.taken === null');
-  check(inBin === true, 'п.8: купленное падает в плашку выдачи');
-  check(binEmpty === true, 'п.8: клик по плашке забирает покупку');
-  // п.8: та же плашка у большого автомата — покупка видна в лотке и забирается кликом.
-  await val('window.__g.balance = 100000; window.__g.refreshShop(); window.__g.buyItem(0); 1');
-  await sleep(1500); // фишки 5×60 + 450 мс, потом падение 350 мс
-  const bigBin = JSON.parse((await val(`(() => { const g = window.__g;
-    return JSON.stringify({ taken: Boolean(g.shop.binTaken), visible: g.shop.binTaken ? g.shop.binTaken.visible : false,
-      texture: g.shop.binTaken ? g.shop.binTaken.texture.key : null, zone: Boolean(g.shop.binZone),
-      miniZone: Boolean(g.miniShop.binZone) });
+  await sleep(1700); // оплата 4×60 + 400 мс
+  const miniBin = JSON.parse((await val(`(() => { const g = window.__g;
+    return JSON.stringify({ taken: Boolean(g.miniShop.taken), slots: g.slots });
   })()`)) ?? '{}');
-  check(bigBin.taken === true && bigBin.visible === true && bigBin.zone === true && bigBin.miniZone === true,
-    `п.8: большой лоток устроен так же — покупка в нём видна (${bigBin.texture})`);
-  await clickAt(await pagePoint('g.shop.binZone.getBounds()'));
-  await sleep(400);
-  check((await val('window.__g.shop.binTaken === null')) === true, 'п.8: клик по лотку большого автомата забирает покупку');
+  check(miniBin.taken === false && miniBin.slots === slotsBefore + 1, 'п.12: мини-покупка не лежит в плашке, а сразу применена');
+  const bigBefore = await val('window.__g.balance');
+  await val('window.__g.refreshShop(); window.__g.buyItem(0); 1');
+  await sleep(1500); // фишки 5×60 + 450 мс
+  const bigBin = JSON.parse((await val(`(() => { const g = window.__g;
+    return JSON.stringify({ taken: Boolean(g.shop.binTaken), zone: Boolean(g.shop.binZone), balance: g.balance,
+      price: g.shop.prices[0] });
+  })()`)) ?? '{}');
+  check(bigBin.taken === false && bigBin.zone === false && bigBin.balance < bigBefore - 100,
+    'п.12: большой лоток так же — покупка не лежит в лотке, цена списана');
   // п.9 и п.10: выход не тонет в виньетке и не обрезается; панель магазина лежит выше тёмных краёв вида.
   const shopLook = JSON.parse((await val(`(() => { const g = window.__g;
     return JSON.stringify({ labelW: g.shop.exitLabel.displayWidth, labelText: g.shop.exitLabel.text,
@@ -808,7 +803,7 @@ try {
   await key('0');
   const closedByKey = await state();
   check(closedByKey.open === false && closedByKey.cards === 0, 'клавиша «0» закрыла вторую фазу — до витрины памяти');
-  check(closedByKey.tickets === 10, 'по «0» билеты не списаны (10)');
+  check(closedByKey.gameOver === false, 'по «0» сразу начался новый забег');
   check(Object.keys(closedByKey.purchases).length === 1, 'по «0» куплено только бесплатное улучшение');
   await shot('upgrades-second-closed-by-key.png');
 

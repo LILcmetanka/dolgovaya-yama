@@ -51,7 +51,7 @@ export const BELL_SPINS = 2; // колокольчик: столько прок�
 // Колокольчик греет черепа: каждое срабатывание (паттерн из 🔔) до конца раунда делает долю черепов больше на
 // BELL_SKULL_STEP за копию — так цепочка бесплатных прокруток сама себя ограничивает. Потолок — BELL_SKULL_MAX за раунд.
 export const BELL_SKULL_STEP = 0.01; // 1 процентный пункт за срабатывание за копию
-export const BELL_SKULL_MAX = 0.3; // больше 30 п.п. за раунд колокольчик не добавляет
+export const BELL_SKULL_MAX = 0.3; // больше 30 % за раунд колокольчик не добавляет
 export const PIGGY_COINS = 2; // копилка: прокрутка без выигрыша кладёт на кон столько × множитель (в степени копий)
 export const INSURANCE_SHARE = 0.75; // страховка: такая доля сгоревшего кона всё равно уходит на табло (один раз за копию за раунд)
 /** Сделка №5 «страховка возвращает 100%»: каждая следующая копия страховки вдвое дороже предыдущей. */
@@ -79,8 +79,8 @@ export const AMULETS: Amulet[] = [
     id: 'bell', sign: '🔔',
     name: { ru: 'Колокольчик', en: 'Little bell' },
     description: {
-      ru: `Каждая копия: паттерн из 🔔 даёт +${BELL_SPINS} прокрутки и +${Math.round(BELL_SKULL_STEP * 100)} п.п. к доле черепов до конца раунда (до +${Math.round(BELL_SKULL_MAX * 100)})`,
-      en: `Each copy: a 🔔 pattern gives +${BELL_SPINS} spins and +${Math.round(BELL_SKULL_STEP * 100)} pp to the skull share until the round ends (up to +${Math.round(BELL_SKULL_MAX * 100)} pp)`,
+      ru: `Каждая копия: паттерн из 🔔 даёт +${BELL_SPINS} прокрутки и +${Math.round(BELL_SKULL_STEP * 100)} % к доле черепов до конца раунда (до +${Math.round(BELL_SKULL_MAX * 100)})`,
+      en: `Each copy: a 🔔 pattern gives +${BELL_SPINS} spins and +${Math.round(BELL_SKULL_STEP * 100)}% to the skull share until the round ends (up to +${Math.round(BELL_SKULL_MAX * 100)}%)`,
     },
     rarity: 'common',
     maxCopies: 2,
@@ -407,7 +407,7 @@ export function vestShields(owned: AmuletId[]): number {
 
 /**
  * Проценты: сколько фишек добавить к остатку на табло после расплаты (INTEREST_SHARE за копию).
- * bonus — улучшение №13 (шаг 28): +5 п.п. к доле, только пока «Проценты» есть — без амулета выплаты нет.
+ * bonus — улучшение №13 (шаг 28): +5 % к доле, только пока «Проценты» есть — без амулета выплаты нет.
  */
 export function interestCoins(balance: number, owned: AmuletId[], bonus = 0): number {
   const copies = copiesOf(owned, 'interest');

@@ -2,14 +2,17 @@
  * Проверка раунда спасения (шаги 27 и 31, сообщения вместо полосы — шаг 32) на живой сборке в headless Chrome.
  * Запуск: node .claude/skills/next-step/rescue-check.mjs <scratchpad>, где <scratchpad>/dist — сборка с хуком
  * window.__g (см. hookbuild.sh: «bash .claude/skills/next-step/hookbuild.sh <scratchpad> .»).
- * Снимки — в /tmp/opencode/step32, профиль Chrome — в scratchpad.
+ * Снимки — в /tmp/opencode/step32, профиль Chrome — в scratchpad (новый на каждый прогон: полная заставка
+ * показывается один раз за всё время игры и живёт в прогрессе, со старым профилем первого раза уже не увидеть).
  * Порты — свои: http 8773, отладка Chrome 9340 (8772/9339 у last-chance-check, 8771/9338 и другие — у прочих).
  *
  * Что проверяет (шаг 32 — сообщения вместо плашки):
  *  1) вход в спасение: isRescue, 5 прокруток, плашки-окна нет вовсе (ни rescueBar, ни прямоугольника 222×82,
  *     ни старых строк «СПАСЕНИЕ»/«ОСТАЛОСЬ ПРОКРУТОК»);
  *  2) заставка на экране автомата идёт тремя сообщениями по порядку: «ВНИМАНИЕ!» → «АКТИВИРОВАН ПОСЛЕДНИЙ ШАНС»
- *     → «СОБЕРИ ЛЮБОЙ ПАТТЕРН ЧТОБЫ ВЫЖИТЬ»; пока она идёт, крутить нельзя, после — можно;
+ *     → «СОБЕРИ ЛЮБОЙ ПАТТЕРН ЧТОБЫ ВЫЖИТЬ» — но только в первый раз за всё время игры (флаг rescueIntroSeen
+ *     в прогрессе). После перезагрузки и на второй яме — строго одно короткое «ПОСЛЕДНИЙ ШАНС»;
+ *     пока заставка идёт, крутить нельзя, после — можно;
  *  3) красный режим: огни автомата красные, плёнка и свечение по краям, амулеты и предметы притушены;
  *  4) прокрутка: счётчик уменьшается, на стекле подсказка «ЗАМОРОЗЬ СТОЛБЕЦ · ОСТАЛОСЬ N» (внутри сообщения,
  *     отдельной строки счётчика нет), после неё открыт выбор столбца;
@@ -37,11 +40,12 @@ if (!SP) {
 const SHOTS = '/tmp/opencode/step32';
 mkdirSync(SHOTS, { recursive: true });
 const srv = spawn('python3', ['-m', 'http.server', '8773', '--directory', SP + '/dist', '--bind', '127.0.0.1'], { stdio: 'ignore' });
+const PROFILE = SP + '/prof-rescue-' + Date.now(); // свежий профиль: полная заставка спасения — один раз за игру
 const chrome = spawn(
   'google-chrome-stable',
   [
     '--headless=new', '--remote-debugging-port=9340', '--window-size=1280,720',
-    '--user-data-dir=' + SP + '/prof-rescue', '--no-sandbox', '--ignore-gpu-blocklist', '--enable-gpu',
+    '--user-data-dir=' + PROFILE, '--no-sandbox', '--ignore-gpu-blocklist', '--enable-gpu',
     '--use-angle=gl', '--autoplay-policy=no-user-gesture-required', 'about:blank',
   ],
   { stdio: 'ignore' },
@@ -50,6 +54,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const RU_ALERTS = ['ВНИМАНИЕ!', 'АКТИВИРОВАН ПОСЛЕДНИЙ ШАНС', 'СОБЕРИ ЛЮБОЙ ПАТТЕРН ЧТОБЫ ВЫЖИТЬ'];
 const EN_ALERTS = ['WARNING!', 'LAST CHANCE ACTIVATED', 'LAND ANY PATTERN TO SURVIVE'];
+// Вторая и следующие ямы: строго одна строка (rescueLastChanceShort из lang.ts).
+const RU_SHORT = 'ПОСЛЕДНИЙ ШАНС';
+const EN_SHORT = 'LAST CHANCE';
 
 /** Пустая сетка, но замороженные столбцы остаются как были: проверяем, что прокрутка их не тронула. */
 const BLANK_KEEP_FROZEN = `(() => {
@@ -170,6 +177,36 @@ try {
     await sleep(250);
   };
   /**
+   * Строки заставки спасения, пока она идёт: тексты по порядку, кегль, переносы и рамки (по ним проверяется,
+   * что текст целиком в экране автомата). seed — состояние, уже снятое вручную (первая строка живого входа),
+   * чтобы она не потерялась между замерами.
+   */
+  const readIntro = async (seed = null) => {
+    const seen = [];
+    const fonts = new Set();
+    const wraps = [];
+    const boxes = [];
+    const add = (s) => {
+      if (!s || !s.sequenceTitle || seen.includes(s.sequenceTitle)) return;
+      seen.push(s.sequenceTitle);
+      fonts.add(s.sequenceFont);
+      wraps.push(s.sequenceWrapped);
+      boxes.push(s.sequenceBox);
+    };
+    add(seed);
+    for (let i = 0; i < 120; i++) {
+      const s = await state();
+      add(s);
+      if (!s.intro) break;
+      await sleep(80);
+    }
+    seen.fonts = [...fonts]; // свойства массива в JSON-сравнение не попадают, проверки читают их отдельно
+    seen.wraps = wraps;
+    seen.boxes = boxes;
+    await sleep(150); // экран заставки погас
+    return seen;
+  };
+  /**
    * Открыть спасение напрямую: живой путь через Коллектора и GOOD LUCK длинный, правила те же.
    * Заставка идёт ~4 с; ждём, пока ввод откроется, и заодно собираем строки заставки по порядку.
    */
@@ -180,26 +217,7 @@ try {
       g.debt = ${debt}; g.balance = ${balance}; g.round = ${round};
       g.startRescue(); return 1;
     })()`);
-    const seen = [];
-    const fonts = new Set();
-    const wraps = [];
-    const boxes = [];
-    for (let i = 0; i < 120; i++) {
-      const s = await state();
-      if (s.sequenceTitle && !seen.includes(s.sequenceTitle)) {
-        seen.push(s.sequenceTitle);
-        fonts.add(s.sequenceFont);
-        wraps.push(s.sequenceWrapped);
-        boxes.push(s.sequenceBox);
-      }
-      if (!s.intro) break;
-      await sleep(80);
-    }
-    seen.fonts = [...fonts]; // свойства массива в JSON-сравнение не попадают, проверки читают их отдельно
-    seen.wraps = wraps;
-    seen.boxes = boxes;
-    await sleep(150); // экран заставки погас
-    return seen;
+    return readIntro();
   };
   /** Прокрутка: сцена считает сетку сразу, а мы подменяем итог до колбэка — так исход детерминирован. */
   const spin = async (gridExpr, wait = 200) => {
@@ -262,29 +280,35 @@ try {
   check(liveLocked.isSpinning === false && liveLocked.spinsLeft === liveSpinsBefore, 'пока заставка идёт, крутить нельзя: прокрутка не началась (прокруток ' + liveSpinsBefore + ' → ' + liveLocked.spinsLeft + ', spinning ' + liveLocked.isSpinning + ', intro ' + liveLocked.intro + ')');
   check(liveLocked.redWash > 0.1, 'живой вход: красный режим включился');
   await shot('rescue-ru-1280-intro.png'); // заставка на экране автомата
-  // Досматриваем заставку до конца: она должна открыть ввод.
-  for (let i = 0; i < 120; i++) {
-    if (!(await val('window.__g.isRescueIntro'))) break;
-    await sleep(100);
-  }
+  // Заставка первого спасения с чистого профиля — полная, ровно три строки: собираем их, досматривая до конца.
+  const liveIntro = await readIntro(live);
   const liveDone = await state();
   check(liveDone.intro === false, 'заставка погасла и открыла ввод');
   check(liveDone.sequenceParts === 0, 'чёрный экран заставки убран целиком');
+  check(JSON.stringify(liveIntro) === JSON.stringify(RU_ALERTS),
+    'первая яма с чистого профиля — полная заставка тремя сообщениями по порядку: ' + JSON.stringify(liveIntro));
+  check(liveIntro.fonts.length === 1 && liveIntro.fonts[0] === '28px',
+    'у всех трёх строк один кегль 28px, без ужима: ' + JSON.stringify(liveIntro.fonts));
+  check(liveIntro.wraps.some((count) => count >= 2), 'длинная строка переносится, а не ужимается (' + JSON.stringify(liveIntro.wraps) + ' строк)');
+  check(liveIntro.boxes.length === RU_ALERTS.length && liveIntro.boxes.every((box) => box && box.x >= 339 && box.right <= 799 && box.y >= 170 && box.bottom <= 458),
+    'текст всех трёх строк целиком в экране автомата 460×288: ' + JSON.stringify(liveIntro.boxes));
   await reload();
   const clean = await state();
   check(clean.isRescue === false && clean.redWash === 0, 'перезапуск сцены («ЗАНОВО») снимает спасение и красный цвет');
 
-  // ---------- Русский, 1280×720: заставка, вход и красный режим ----------
+  // ---------- Русский, 1280×720: после перезагрузки заставка короткая, вход и красный режим ----------
+  // Полная заставка показана один раз за всё время игры (rescueIntroSeen в прогрессе): после reload() —
+  // строго одно «ПОСЛЕДНИЙ ШАНС», а не снова три строки.
   const ruIntro = await openRescue(1000, 0, 1);
   const s1 = await state();
   check(s1.isRescue === true, 'спасение идёт: isRescue');
   check(s1.spinsLeft === 5, 'на входе 5 прокруток (их ' + s1.spinsLeft + ')');
-  check(JSON.stringify(ruIntro) === JSON.stringify(RU_ALERTS), 'RU: заставка тремя сообщениями по порядку: ' + JSON.stringify(ruIntro));
-  check(ruIntro.fonts.length === 1 && ruIntro.fonts[0] === '28px',
-    'RU: кегль у всех строк заставки один, без ужима: ' + JSON.stringify(ruIntro.fonts));
-  check(ruIntro.wraps.some((count) => count >= 2), 'RU: длинная строка переносится, а не ужимается (' + JSON.stringify(ruIntro.wraps) + ' строк)');
-  check(ruIntro.boxes.length > 0 && ruIntro.boxes.every((box) => box.x >= 339 && box.right <= 799 && box.y >= 170 && box.bottom <= 458),
-    'RU: текст заставки целиком в экране автомата 460×288: ' + JSON.stringify(ruIntro.boxes));
+  check(JSON.stringify(ruIntro) === JSON.stringify([RU_SHORT]),
+    'после перезагрузки заставка короткая — ровно одна строка: ' + JSON.stringify(ruIntro));
+  check(ruIntro.fonts.length === 1 && ruIntro.fonts[0] === '28px' && ruIntro.wraps[0] === 1,
+    'короткая строка одна, кегль тот же 28px, без ужима: ' + JSON.stringify(ruIntro.fonts) + ', ' + JSON.stringify(ruIntro.wraps) + ' строк');
+  check(ruIntro.boxes.length === 1 && ruIntro.boxes[0].x >= 339 && ruIntro.boxes[0].right <= 799 && ruIntro.boxes[0].y >= 170 && ruIntro.boxes[0].bottom <= 458,
+    'короткая строка целиком в экране автомата 460×288: ' + JSON.stringify(ruIntro.boxes));
   check(s1.hasBar === false, 'плашки-окна нет: rescueBar в сцене отсутствует');
   check(s1.bandRect === false, 'плашки-окна нет: прямоугольника 222×82 в сцене нет');
   check(!s1.screenTexts.includes('СПАСЕНИЕ') && !s1.screenTexts.some((t) => t.startsWith('ОСТАЛОСЬ ПРОКРУТОК')), 'старых строк полосы («СПАСЕНИЕ», «ОСТАЛОСЬ ПРОКРУТОК») на экране нет');
@@ -453,7 +477,7 @@ try {
 
   // ---------- Вторая яма в той же сессии (DONTLIKE п.6): только «ПОСЛЕДНИЙ ШАНС» ----------
   const repeatIntro = await openRescue(1000, 0, 1);
-  check(JSON.stringify(repeatIntro) === JSON.stringify(['ПОСЛЕДНИЙ ШАНС']),
+  check(JSON.stringify(repeatIntro) === JSON.stringify([RU_SHORT]),
     'повторное спасение: полного текста больше нет, только «' + repeatIntro.join(' / ') + '»');
   check(repeatIntro.wraps[0] === 1 && repeatIntro.fonts[0] === '28px',
     'повторное спасение: одна строка, тот же кегль 28px (' + JSON.stringify(repeatIntro.wraps) + ', ' + JSON.stringify(repeatIntro.fonts) + ')');
@@ -468,7 +492,8 @@ try {
   const ru390Intro = await openRescue(1000, 0, 1);
   await spin(BLANK_KEEP_FROZEN);
   const s390 = await state();
-  check(JSON.stringify(ru390Intro) === JSON.stringify(RU_ALERTS), '390×844: заставка теми же тремя строками');
+  check(JSON.stringify(ru390Intro) === JSON.stringify([RU_SHORT]), '390×844: заставка короткая, одна строка — флаг уже стоит: ' + JSON.stringify(ru390Intro));
+  check(ru390Intro.wraps[0] === 1 && ru390Intro.fonts[0] === '28px', '390×844: одна строка, кегль 28px');
   check(s390.news === 'ЗАМОРОЗЬ СТОЛБЕЦ · ОСТАЛОСЬ 4', '390×844: подсказка со счётчиком: ' + JSON.stringify(s390.news));
   check(newsInsideGlass(s390), '390×844: подсказка внутри стекла');
   await moveAway();
@@ -476,6 +501,11 @@ try {
 
   // ---------- Английский, 1280×720 ----------
   await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  // Правило «полная заставка один раз за игру» уже проверено по-русски. Флаг снимаем на старте новой страницы,
+  // как у нового игрока (так его не перезапишет сцена перед перезагрузкой): проверяются и английские строки.
+  const enSeed = await send('Page.addScriptToEvaluateOnNewDocument', {
+    source: "try{const p=JSON.parse(localStorage.getItem('dolgovaya-yama-progress')||'{}');p.rescueIntroSeen=false;localStorage.setItem('dolgovaya-yama-progress',JSON.stringify(p));}catch(e){}",
+  });
   await val(`localStorage.setItem('dolgovaya-yama-lang', 'en')`);
   await send('Page.reload');
   await sleep(4000);
@@ -484,6 +514,12 @@ try {
   await sleep(700);
   const enIntro = await openRescue(1000, 0, 1);
   check(JSON.stringify(enIntro) === JSON.stringify(EN_ALERTS), 'EN: заставка тремя сообщениями по порядку: ' + JSON.stringify(enIntro));
+  // И сразу вторая яма — короткая и по-английски: правило держится на любом языке.
+  const enRepeat = await openRescue(1000, 0, 1);
+  check(JSON.stringify(enRepeat) === JSON.stringify([EN_SHORT]), 'EN: вторая яма — одна строка «' + enRepeat.join(' / ') + '»');
+  if (enSeed && enSeed.result && enSeed.result.identifier) {
+    await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: enSeed.result.identifier });
+  }
   await spin(BLANK_KEEP_FROZEN);
   const en = await state();
   check(en.news === 'FREEZE A COLUMN · 4 LEFT', 'EN: подсказка со счётчиком: ' + JSON.stringify(en.news));

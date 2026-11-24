@@ -133,7 +133,7 @@ try {
   await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: 'http://127.0.0.1:8774/' });
   await sleep(3500);
-  await val(`localStorage.setItem('dolgovaya-yama-lang', 'ru'); localStorage.removeItem('dolgovaya-yama-progress'); 1`);
+  await val(`localStorage.setItem('dolgovaya-yama-lang', 'ru'); localStorage.setItem('dolgovaya-yama-progress', JSON.stringify({ tutorialDone: true, rescueIntroSeen: true, actionsUnlocked: true, patterns: [], achievements: [], runAmulets: [], runAmuletPicks: 1, upgrades: {}, runs: 1 })); 1`);
   await send('Page.reload');
   await sleep(3800);
   check((await val('typeof window.__g')) === 'object', 'hook: сцена в window.__g');
@@ -143,7 +143,7 @@ try {
   // ---------- А. Вход и закрытие панели ----------
   const a0 = await state();
   check(a0.open === false && a0.panel === false, 'до нажатия панели нет');
-  check(a0.board !== null && a0.board.w > 100, 'табличка «ДЕЙСТВИЯ» на стене есть: ' + JSON.stringify(a0.board));
+  check(a0.board !== null && a0.board.w > 30 && a0.board.h > 200, 'кнопка «ДЕЙСТВИЯ» на корпусе есть: ' + JSON.stringify(a0.board));
   await key('A');
   const a1 = await state();
   check(a1.open === true && a1.panel === true, 'клавиша A открывает панель');
@@ -209,7 +209,7 @@ try {
   check(den.offPlates >= 2, 'недоступные строки: плашка в неактивной палитре (' + den.offPlates + ')');
   check(den.reasons.length >= 2 && den.reasons.every((text) => typeof text === 'string' && text.length > 3), 'у кнопки серым написана причина: ' + JSON.stringify(den.reasons));
   check(den.denied === den.base && den.enabled > den.base, 'наведение на недоступную строку не подсвечивает (' + den.base + ' → ' + den.denied + '), а на доступную — да (' + den.enabled + ')');
-  check((await val('window.__g.actionBoard.labels[0].text')) === 'ДЕЙСТВИЯ', 'табличка подписана по-русски');
+  check((await val('window.__g.actionBoard.label.text')) === 'Д\nЕ\nЙ\nС\nТ\nВ\nИ\nЯ', 'кнопка подписана по-русски, столбиком');
   const ruTitle = await val("window.__g.actionPanel.parts.some((part) => part.text === 'ДЕЙСТВИЯ ВНЕ ПРОКРУТКИ')");
   check(ruTitle === true, 'RU: заголовок панели — ДЕЙСТВИЯ ВНЕ ПРОКРУТКИ');
   const ruRisk = await val("window.__g.actionPanel.parts.some((part) => String(part.text).includes('KABOOM'))");
@@ -409,7 +409,7 @@ try {
   await send('Emulation.setEmulatedMedia', { features: [{ name: 'hover', value: 'none' }, { name: 'pointer', value: 'coarse' }] });
   await send('Page.reload');
   await sleep(4200);
-  await val(`localStorage.setItem('dolgovaya-yama-progress', JSON.stringify({ tutorialDone: true, patterns: [], achievements: [], runAmulets: [], runAmuletPicks: 1, upgrades: {}, runs: 0 })); 1`);
+  await val(`localStorage.setItem('dolgovaya-yama-progress', JSON.stringify({ tutorialDone: true, rescueIntroSeen: true, actionsUnlocked: true, patterns: [], achievements: [], runAmulets: [], runAmuletPicks: 1, upgrades: {}, runs: 1 })); 1`);
   await send('Page.reload');
   await sleep(4200);
   await val('window.__g.finishTutorial(); 1');

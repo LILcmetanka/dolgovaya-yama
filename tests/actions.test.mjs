@@ -136,11 +136,11 @@ test('продажа символа: клетки на сетке, цена за
   assert.equal(ACT.symbolCells(null, 'cherry'), 0, 'сетки ещё нет');
   assert.equal(ACT.salePrice(symbolById('cherry'), 3), 12, 'без множителя — вишня по 4 за клетку');
   assert.equal(ACT.salePrice(symbolById('seven'), 3), 75, 'семёрка по 25');
-  // Шаг 38 (DONTLIKE п.4, решение СОЛО): цена × клетки × текущий множитель серии, с потолком цены.
+  // Шаг 38 (DONTLIKE п.4): цена × клетки × текущий множитель серии, без потолка (DONTLIKE п.5).
   assert.equal(ACT.salePrice(symbolById('cherry'), 3, 5), 60, 'на ×5 — впятеро больше (4 × 3 × 5)');
   assert.equal(ACT.salePrice(symbolById('seven'), 3, 4), 300, 'семёрка на ×4 — 300');
-  assert.equal(ACT.salePrice(symbolById('cherry'), 3, ACT.ACTION_SALE_MULT_CAP), 120, 'на потолке множителя — 10×');
-  assert.equal(ACT.salePrice(symbolById('cherry'), 3, 25), 120, 'выше потолка множитель не растёт');
+  assert.equal(ACT.salePrice(symbolById('cherry'), 3, 10), 120, 'на ×10 — 120');
+  assert.equal(ACT.salePrice(symbolById('cherry'), 3, 25), 300, 'выше прежнего потолка множитель растёт: 4 × 3 × 25 = 300');
   assert.equal(ACT.salePrice(symbolById('cherry'), 3, 1.4), 17, 'дробный множитель считается: 4 × 3 × 1,4 = 16,8 → 17');
   assert.equal(ACT.salePrice(symbolById('cherry'), 3, 0.5), 12, 'множитель меньше 1 — как ×1 (разгон не штрафует)');
   assert.equal(ACT.salePrice(symbolById('cherry'), 3, 0), 12, 'ноль — как ×1, а не бесплатно');

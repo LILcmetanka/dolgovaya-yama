@@ -42,6 +42,7 @@ export const POPUP_DEPTH = 10; // всплывающие надписи
 export const REVEAL_DEPTH = 12; // тьма первого забега (reveal.ts): над частями и фишками (5), под подсказкой (25) и паузой
 export const TOOLTIP_DEPTH = 25; // подсказка при наведении — поверх всего, кроме экрана DEATH
 export const GAME_OVER_DEPTH = 30; // экран DEATH — конец забега
+export const LAMP_DEPTH = 14; // лампочки рамки: над стеклом списка (13), в магазине их прячет ShopScene
 
 /** Всплывающие надписи жирные и с тёмной обводкой, чтобы читались поверх сетки. */
 export const POPUP_STYLE = { fontSize: '36px', fontStyle: 'bold', stroke: '#0f172a', strokeThickness: 6 };
@@ -136,13 +137,7 @@ export const SCREEN_UI = {
   reasonFont: 11,
   reasonMinFont: 9,
   reasonGap: 8,
-  // 4а. Пустые окна автомата, пока открыт список: мягкая накатка, чтобы чёрное стекло не читалось дырой.
-  quietFill: 0xb9ad9c,
-  quietAlpha: 0.3,
-  quietEdge: 0x000000,
-  quietEdgeAlpha: 0.22,
-  quietRadius: 8,
-  // 4б. Стрелка «ещё есть» внизу стекла, когда под видимыми строками остались ещё.
+  // 4. Стрелка «ещё есть» внизу стекла, когда под видимыми строками остались ещё.
   moreArrowHalf: 7,
   moreArrowHeight: 5,
   moreArrowInset: 8,

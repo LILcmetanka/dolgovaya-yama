@@ -15,11 +15,13 @@
  *  1) чистый профиль: тьма первого забега активна, рычаг стоит в её пятне света;
  *  2) шкалы замаха на панели нет: полей chargeFrame/Track/Fill/Text и методов showCharge/setChargeVisible
  *     не существует, раскладка CHARGE_ANCHOR удалена, в тексте src/game/lang.ts нет ключей chargeTitle/chargeWhat;
- *  3) клик мышью по рычагу сразу даёт прокрутку: счётчик прокруток уменьшился ровно на 1, без удержания;
- *  4) повторный клик по рычагу, пока сетка крутится, второй прокрутки не даёт;
- *  5) Пробел — тоже одна прокрутка на одно нажатие;
- *  6) прокрутки раунда доигрываются до 0, приходит Коллектор, тьма гаснет;
- *  7) перезагрузка: обучение пройдено, тьмы нет.
+ *  3) обучение текстами (партия 4) закрыто finishTutorial() до первого клика — иначе клик попал бы в текст,
+ *     а не в рычаг; тут же проверяем, что после finishTutorial() тьма погасла совсем (reveal === null);
+ *  4) клик мышью по рычагу сразу даёт прокрутку: счётчик прокруток уменьшился ровно на 1, без удержания;
+ *  5) повторный клик по рычагу, пока сетка крутится, второй прокрутки не даёт;
+ *  6) Пробел — тоже одна прокрутка на одно нажатие;
+ *  7) прокрутки раунда доигрываются до 0, приходит Коллектор;
+ *  8) перезагрузка: обучение пройдено, тьмы нет.
  */
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -147,7 +149,16 @@ try {
   // ---------- 1. Чистый профиль: тьма активна, шкалы нет ----------
   check((await val('typeof window.__g')) === 'object', 'hook: сцена в window.__g');
   const s0 = await state();
-  check(s0.progress === null, 'профиль чистый: в localStorage нет прогресса (тьма точно первая) — ' + JSON.stringify(s0.progress));
+  // Профиль — свежий user-data-dir, но «localStorage пуст» проверить нельзя: beginRun пишет счётчик забегов на каждом
+  // старте, а проверка ради языка один раз перезагружает страницу. Значит, профиль чистый = нет ни одного флага
+  // обучения и ни одного пройденного шага (тьма тогда точно первая).
+  const clean0 = s0.progress ? JSON.parse(s0.progress) : null;
+  // Шаги: beginRun слил дорожки и записал все четыре ключа нулями, так что пустого объекта быть не должно.
+  // «Ни один шаг не ≥ 1» по пустому объекту даёт вакуумную истину — поэтому список шагов обязан быть непустым.
+  const cleanStepList = clean0 && clean0.tutorial ? Object.values(clean0.tutorial) : null;
+  const cleanSteps = Array.isArray(cleanStepList) && cleanStepList.length > 0 && cleanStepList.every((step) => !(step >= 1));
+  check(clean0 !== null && clean0.tutorialDone === false && clean0.darknessDone === false && cleanSteps,
+    'профиль чистый: обучение не начато — tutorialDone/darknessDone false, ни один шаг не ≥ 1 — ' + JSON.stringify(s0.progress));
   check(s0.reveal !== null && s0.reveal.isActive === true, 'тьма первого забега активна (reveal.isActive)');
   check(s0.hasChargeBar === false, 'шкалы замаха на панели нет: chargeFrame/Track/Fill/Text и showCharge/setChargeVisible отсутствуют');
   check(LAYOUT.CHARGE_ANCHOR === undefined, 'раскладка CHARGE_ANCHOR удалена (шкалу больше некуда ставить)');
@@ -158,7 +169,19 @@ try {
   console.log(`     крепление LEVER_MOUNT ${JSON.stringify(LEVER_MOUNT)}, страница: ${JSON.stringify({ x: Math.round(aim0.page.x), y: Math.round(aim0.page.y) })}`);
   await shot('step8-tutorial.png');
 
-  // ---------- 2. Клик по рычагу — сразу прокрутка ----------
+  // ---------- 2. Обучение текстами закрыто, тьма погасла ----------
+  // Партия 4 добавила обучение: пока Диллер говорит, ввод закрыт, и первый клик попал бы в текст, а не в рычаг.
+  // Эта проверка — про рычаг в темноте, а не про туториал, поэтому обучение закрываем сразу и отдельно смотрим,
+  // что finishTutorial() гасит тьму совсем (проверку тьмы не ослабляем: было isActive, стало reveal === null).
+  await val('window.__g.finishTutorial(); 1');
+  await sleep(900);
+  const naked = await state();
+  check(naked.reveal === null, 'после finishTutorial() тьма погасла совсем (reveal === null), сейчас: ' + JSON.stringify(naked.reveal));
+  const nakedProgress = naked.progress ? JSON.parse(naked.progress) : null;
+  check(nakedProgress !== null && nakedProgress.tutorialDone === true && nakedProgress.darknessDone === true,
+    'в прогрессе после finishTutorial() стоят tutorialDone и darknessDone');
+
+  // ---------- 3. Клик по рычагу — сразу прокрутка ----------
   const spinsBeforeClick = s0.spinsLeft;
   await clickLever();
   const click1 = await state();
@@ -172,7 +195,7 @@ try {
   const afterSpin1 = await waitIdle();
   check(afterSpin1.spinsLeft === spinsBeforeClick - 1, `прокрутка дошла до итога: spinsLeft ${afterSpin1.spinsLeft}`);
 
-  // ---------- 3. Пробел — тоже одна прокрутка на одно нажатие ----------
+  // ---------- 4. Пробел — тоже одна прокрутка на одно нажатие ----------
   const spinsBeforeKey = afterSpin1.spinsLeft;
   await pressSpace();
   const key1 = await state();
@@ -180,14 +203,10 @@ try {
     `Пробел дал одну прокрутку: isSpinning ${key1.isSpinning}, spinsLeft ${spinsBeforeKey} → ${key1.spinsLeft}`);
   const afterSpin2 = await waitIdle();
 
-  // ---------- 4. Тьма гаснет (обучение пройдено), панель целиком на виду ----------
-  await val('window.__g.finishTutorial(); 1');
-  await sleep(1200);
-  const naked = await state();
-  check(naked.reveal === null || naked.reveal.isActive === false, 'тьма погасла после обучения (reveal.isActive false)');
+  // ---------- 5. Панель целиком на виду (тьму погасили в блоке 2) ----------
   await shot('step8-panel.png');
 
-  // ---------- 5. Прокрутки раунда до 0 → Коллектор ----------
+  // ---------- 6. Прокрутки раунда до 0 → Коллектор ----------
   let s = afterSpin2;
   for (let guard = 0; guard < 40; guard++) {
     if (s.spinsLeft === 0 || s.isRoundOver || s.isAwaitingPayment || s.isRescue || s.isGameOver) break;
@@ -215,7 +234,7 @@ try {
   check(collector.hasChargeBar === false, 'шкала не вернулась вместе с Коллектором — её больше нет вовсе');
   check(collector.reveal === null || collector.reveal.isActive === false, 'тьмы на экране больше нет');
 
-  // ---------- 6. Перезагрузка: обучение пройдено, тьмы нет ----------
+  // ---------- 7. Перезагрузка: обучение пройдено, тьмы нет ----------
   await val('window.__marker = "before-reload"; 1');
   await send('Page.reload');
   await sleep(4000);

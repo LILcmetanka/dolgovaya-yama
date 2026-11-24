@@ -1,7 +1,6 @@
 import Phaser from 'phaser';
 import type { MachineSpec } from '../machines';
 import {
-  characterTexture,
   createLamps,
   createPatternTextures,
   createRustTexture,
@@ -623,9 +622,8 @@ export class SlotScreen {
 
   /** Пришёл новый автомат: на стекле его значок и название, например «💰 ЖАДНЫЙ». */
   announceMachine(machine: MachineSpec): void {
-    // У классического автомата значка нет — новость без картинки.
-    const icon = machine.sign === '' ? undefined : characterTexture(machine);
-    this.newsOnGlass(t(machine.name).toUpperCase(), GOLD_TEXT, MACHINE_FONT_SIZE, GLASS.y, icon);
+    // Без значка: «какой это автомат» игрок смотрит в планшете, а не в новости на стекле (DONTLIKE).
+    this.newsOnGlass(t(machine.name).toUpperCase(), GOLD_TEXT, MACHINE_FONT_SIZE, GLASS.y);
   }
 
   /**
@@ -736,6 +734,11 @@ export class SlotScreen {
     this.scene.tweens.killTweensOf(this.cellHighlights); // недогасший твин прошлого шага не должен тянуть alpha дальше
     this.cellHighlights.clear().setAlpha(1);
     for (const slot of this.patternSlots) if (this.isOpen(slot.id)) slot.frame.setStrokeStyle(PATTERN_FRAME_LINE, PATTERN_FRAME_DIM);
+  }
+
+  /** Лампочки рамки скрыть/показать: над панелью магазина они не должны висеть (DONTLIKE п.4). */
+  setLampsVisible(visible: boolean): void {
+    for (const lamp of this.lamps) lamp.setVisible(visible);
   }
 
   /** Огоньки бегут по лампочкам: горит каждая третья, огонёк сдвигается раз в lampSpeed тиков. */

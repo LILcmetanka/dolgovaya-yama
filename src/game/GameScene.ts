@@ -8,6 +8,7 @@ import {
   debtBuyCut,
   debtBuyPrice,
   lotteryRoll,
+  saleMultiplier,
   salePrice,
   serviceAllowed,
   servicePrice,
@@ -26,6 +27,7 @@ import { amuletKey, itemKey, machineKey, see } from './codex';
 import { lang, t, toggleLang, type Lang, type TextKey } from './lang';
 import { BODY, LEVER_GLOW, NOTE, WALL_PANEL, ZOOM } from './layout';
 import { memoryOptions } from './memory';
+import { isActionsUnlocked } from './progress';
 import { ActionBoard } from './parts/actionBoard';
 import { AmuletCase, MAIN_CASE_LOOK, MINI_CASE_LOOK } from './parts/amuletCase';
 import { AmuletRack } from './parts/amuletRack';
@@ -54,7 +56,7 @@ import { WallScreen, type DevActions } from './parts/wallScreen';
 import { Tooltip } from './parts/tooltip';
 import { CollectorScene } from './scene/CollectorScene';
 import { ITEMS, MAX_SLOTS, offerRowCount, type ItemId } from './items';
-import { isTutorialDone, markTutorialDone } from './progress';
+import { isDarknessDone, markDarknessDone } from './progress';
 import { symbolWeightOf } from './skullShare';
 import { isPaying, SPINS_PER_ROUND, SYMBOLS, weightsForRound, type SlotSymbol } from './rules';
 import type { RunSave } from './save';
@@ -189,15 +191,16 @@ export class GameScene extends CollectorScene {
     this.pauseScreen = new PauseScreen(this, () => this.resumeGame());
     this.settingsPanel = new SettingsPanel(this, (kind, level) => this.changeVolume(kind, level), (language) => this.chooseLanguage(language));
     // Первый забег — в кромешной тьме: видны только автомат и рычаг в пятнах света (после обучения тьмы нет).
-    this.reveal = isTutorialDone() ? null : new Reveal(this, BODY, NOTE, LEVER_GLOW);
+    this.reveal = isDarknessDone() ? null : new Reveal(this, BODY, NOTE, LEVER_GLOW);
     // Пока тьма не погасла, подсказок нет: они выдали бы то, что в ней спрятано.
     this.tooltip.setBlockedCheck(() => this.reveal?.isActive ?? false);
-    // Canvas не создался — тьмы нет: обучение считаем пройденным, иначе оно зациклится (каждый забег снова «первый»).
+    // Canvas не создался — тьмы нет: считаем её погашенной, иначе она пыталась бы включиться каждый забег.
+    // Мастер-флаг обучения не ставим: тексты обучения идут и без тьмы (его ставит Коллектор, finishTutorial).
     if (this.reveal && !this.reveal.isActive) {
-      markTutorialDone();
+      markDarknessDone();
       this.reveal = null;
     }
-    // Тьма первого забега: подсказок над ней не показывать (BaseScene.finishTutorial), а рычаг в пятне света — дёргать можно.
+    // Тьма первого забега: подсказок над ней не показывать (BaseScene.finishDarkness), а рычаг в пятне света — дёргать можно.
     this.setupKeyboard();
     this.setupSound();
     this.setupPause();
@@ -314,6 +317,7 @@ export class GameScene extends CollectorScene {
       this.sfx.play('news', 0.3);
     }
     this.panel.callLever(); // новый забег: пока ни разу не крутил — рычаг зовёт (после отката кассетой он не нужен)
+    this.tutorialOnRunStart(); // обучение текстами (TutorialScene): первый забег новичка начинается с интро
   }
 
   /**
@@ -683,6 +687,10 @@ export class GameScene extends CollectorScene {
       return;
     }
     if (this.isGameOver || this.isPaused) return;
+    if (!isActionsUnlocked()) {
+      this.sfx.play('deny'); // первая смерть ещё не случилась: обучение не пускает в действия
+      return;
+    }
     if (!this.canUseActions()) {
       this.sfx.play('deny'); // крутится, магазин, спасение, чужой выбор — действовать не между прокрутками
       return;
@@ -721,7 +729,6 @@ export class GameScene extends CollectorScene {
     this.actionPanel.show(list, {
       title: t('actionsTitle'),
       caption: t('actionsCaption'),
-      dimPayout: this.pot === 0, // на кону пусто — окошко выплаты прикрыто, пока список открыт
       onPick: (index) => {
         const row = rows[index];
         if (row) this.pickAction(row.id);
@@ -861,7 +868,6 @@ export class GameScene extends CollectorScene {
       {
         title: t('actionsTitle'),
         caption,
-        dimPayout: this.pot === 0,
         onPick: (index) => {
           const choice = choices[index];
           if (choice && choice.enabled !== false) onPickSymbol(choice.symbol);
@@ -994,9 +1000,10 @@ export class GameScene extends CollectorScene {
       return;
     }
     const multiplier = this.multiplier(); // текущий разгон серии: продажа соразмерна ему (шаг 38, DONTLIKE п.4)
+    const shown = saleMultiplier(multiplier); // в подписи — тот же множитель, что входит в цену; потолка нет (DONTLIKE п.5)
     const choices: ActionChoice[] = this.gridSymbols().map((symbol) => {
       const cells = symbolCells(this.lastGrid, symbol.id);
-      return { symbol, note: t('actionSaleNote', symbol.price, cells, multiplier, salePrice(symbol, cells, multiplier)) };
+      return { symbol, note: t('actionSaleNote', symbol.price, cells, shown, salePrice(symbol, cells, multiplier)) };
     });
     this.showSymbolChoices(choices, t('actionSalePick', choices.length), t('screenSell'), (symbol) => this.applySale(symbol), () => this.showActionRows());
   }

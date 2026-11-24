@@ -159,7 +159,7 @@ export const UPGRADE_CHERRY_WEIGHT = 1; // №24: вишня 🍒 тяжелее
 export const UPGRADE_AMULET_TICKETS_OFF = 1; // №26: амулеты дешевле на 1 билет (не ниже 1)
 export const UPGRADE_AMULET_MAX_COPIES = 1; // №27: каждая копия улучшения поднимает потолок копий на 1
 // ---------- Числа третьей партии (28в) ----------
-export const UPGRADE_SKULL_SHARE_DELTA = -0.01; // №31: доля черепов ниже на 1 п.п. (складывается со всеми поправками)
+export const UPGRADE_SKULL_SHARE_DELTA = -0.01; // №31: доля черепов ниже на 1 % (складывается со всеми поправками)
 export const UPGRADE_BLOOD_WEIGHT = 2; // №35: кровь 🩸 тяжелее на 2 (базовый вес 4)
 export const UPGRADE_JACKPOT_WIN_MUL = 1.2; // №34: джекпот платит ×120 вместо ×100
 export const UPGRADE_SHOP_PRICE_MUL = 0.9; // №36: всё в магазине дешевле на 10% (перемножается со скидкой сделки)

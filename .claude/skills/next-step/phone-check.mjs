@@ -229,7 +229,7 @@ try {
   await send('Page.navigate', { url: 'http://127.0.0.1:8767/' });
   await sleep(2500);
   // Тьма первого забега закрывает рычаг и плашки: отмечаем обучение пройденным, как после первого забега.
-  await val(`localStorage.setItem('dolgovaya-yama-progress', JSON.stringify({ tutorialDone: true, patterns: [], achievements: [] }))`);
+  await val(`localStorage.setItem('dolgovaya-yama-progress', JSON.stringify({ tutorialDone: true, rescueIntroSeen: false, actionsUnlocked: true, patterns: [], achievements: [], runs: 1 }))`);
   await send('Page.reload');
   await sleep(4000);
 

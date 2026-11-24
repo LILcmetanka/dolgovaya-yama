@@ -103,9 +103,11 @@ export const WALL_PANEL: Box = { x: VIEW_CENTER_X, y: 322, width: 1060, height: 
 // На него ложится купленная кассета.
 export const VCR: Box = { x: 949, y: 543, width: 150, height: 34 };
 export const VCR_CRATE: Box = { x: 949, y: 600, width: 136, height: 80 }; // ящик под видеомагнитофоном, стоит на полу
-// Действия вне прокрутки (шаг 29): табличка на стене справа, под телевизором и над видеомагнитофоном.
+// Действия вне прокрутки (шаг 29): кнопка на корпусе автомата, в левой полосе под значком автомата.
+// Раньше это была настенная табличка рядом с рычагом — DONTLIKE п.5: она не входила в дизайн и торчала
+// у края вида. Теперь это маленькая штампованная кнопка на самом автомате, как кнопка сервиса.
 // Клик по ней или клавиша A открывают панель; сама она видна всегда.
-export const ACTION_BOARD: Box = { x: 1000, y: 338, width: 172, height: 56 };
+export const ACTION_BOARD: Box = { x: 305, y: 314, width: 38, height: 288 }; // 286…324 × 170…458: ближе к рамке экрана, но не на ней
 
 // Предметы (полка, магазин, у экрана) и амулеты (гнёзда, витрина) — квадратные картинки такой стороны, px.
 export const ITEM_SIZE = 56;
@@ -156,14 +158,14 @@ export const AMULET_CASE_ICON_Y = 82; // амулеты и билет: вмес�
 export const AMULET_CASE_PRICE_Y = 136; // ценники под ними
 // Мини-чемодан за фишки (DONTLIKE п.7): второй, меньше и ровно на два амулета (MINI_CASE_PLACES) — слева от основного.
 // Низ на той же линии (180), левый край — в 15 от кромки панели (250): за стену и на полку не заходит.
-export const MINI_CASE: Box = { x: 360, y: 132, width: 190, height: 96 }; // 265…455 × 84…180
+export const MINI_CASE: Box = { x: 360, y: 156, width: 190, height: 96 }; // 265…455 × 108…204: ниже табло фишек и билетов (DONTLIKE п.11)
 export const MINI_CASE_STEP = 70; // от места до места: амулеты тут мельче, а ценники шире — без наложения
-export const MINI_CASE_ICON_Y = 112; // амулеты посередине бархата
-export const MINI_CASE_PRICE_Y = 152; // таблички цен под ними
+export const MINI_CASE_ICON_Y = 136; // амулеты посередине бархата
+export const MINI_CASE_PRICE_Y = 176; // таблички цен под ними
 // Торговый автомат под витриной: предметы рядами, справа от предмета — ценник.
 export const VENDING: Box = { x: 625, y: 404, width: 280, height: 412 };
 // Витрина и панель со щелью стоят внутри окантовки лицевой части (она от 485 до 765, бок — левее), с равными полями.
-export const VENDING_GLASS: Box = { x: 609, y: 384, width: 178, height: 280 }; // витрина: 4 ряда (три предмета и билеты)
+export const VENDING_GLASS: Box = { x: 609, y: 384, width: 178, height: 300 }; // витрина: 4 ряда (три предмета и билеты); 300 — чтобы и 5 рядов с улучшением дышали
 export const VENDING_GOOD_X = 557; // предмет в ряду: спираль под ним — на таком же поле от края витрины, как ценник
 export const VENDING_PRICE_X = 607; // ценник: фишка, правее — «× цена»
 export const VENDING_COIN_SLOT = { x: 731, y: 282 }; // щель для фишек на панели справа от витрины
@@ -175,24 +177,25 @@ export const VENDING_BIN: Box = { x: 632, y: 566, width: 220, height: 36 }; // �
 // DONTLIKE п.8: автомат на 10% меньше по ширине и высоте; низ и левый край остаются на месте (262…438 × 286…610).
 export const MINI_SHOP_SCALE = 0.9;
 const MINI_SHOP_LEFT = 262; // левый край прежнего автомата — он не съезжает
-const MINI_SHOP_BOTTOM = 610; // низ на линии низа торгового автомата — он тоже не съезжает
-/** Точка прежней раскладки мини-автомата в уменьшенном: x — от левого края, y — от низа. */
+/** Точка прежней раскладки мини-автомата в уменьшенном: x — от левого края. */
 const miniX = (x: number): number => MINI_SHOP_LEFT + (x - MINI_SHOP_LEFT) * MINI_SHOP_SCALE;
-const miniY = (y: number): number => MINI_SHOP_BOTTOM - (MINI_SHOP_BOTTOM - y) * MINI_SHOP_SCALE;
-export const MINI_SHOP: Box = { x: miniX(360), y: miniY(430), width: 196 * MINI_SHOP_SCALE, height: 360 * MINI_SHOP_SCALE };
+// Корпус подогнан под витрину и лоток: сверху 20 px поля, а не прежние 50 (DONTLIKE п.6: автомат выглядел
+// вытянутым, с пустой верхней третью). Низ и левый край стоят на месте.
+export const MINI_SHOP: Box = { x: miniX(360), y: (316 + 610) / 2, width: 196 * MINI_SHOP_SCALE, height: 610 - 316 };
 // Витрина: хромированная рамка и тёмное нутро с двумя полками. Дверцы нет (DONTLIKE п.8): товар и цены видны сразу.
 // Верхний ряд — место на полке, нижний — гнездо амулета; товар стоит на полке, ценник — тёмной табличкой справа.
+// Витрина под два ряда: 335…505, полки 405 и 490 — ряды стоят ровно, без пустой верхней половины (DONTLIKE п.6).
 export const MINI_SHOP_GLASS: Box = {
-  x: miniX(367),
-  y: miniY(428),
+  x: MINI_SHOP.x, // витрина по центру корпуса (была сдвинута вправо на 7 единиц — след от дверцы с петлёй)
+  y: 435,
   width: 148 * MINI_SHOP_SCALE,
-  height: 244 * MINI_SHOP_SCALE,
+  height: 200,
 };
 export const MINI_SHOP_FRAME = 6; // хромированная рамка витрины, px
-export const MINI_SHOP_ROW_Y = [miniY(393), miniY(516)]; // товар и ценник ряда
-export const MINI_SHOP_SHELF_Y = [miniY(420), miniY(542)]; // полка ряда: на её линии стоит товар
-export const MINI_SHOP_GOOD_X = miniX(336); // товар в ряду: слева, до таблички ценника — 2
-export const MINI_SHOP_PRICE_X = miniX(378); // ценник: значок фишки/билета, правее — «× цена»
+export const MINI_SHOP_ROW_Y = [386, 482]; // товар и ценник ряда
+export const MINI_SHOP_SHELF_Y = [405, 515]; // полка ряда: на её линии стоит товар
+export const MINI_SHOP_GOOD_X = MINI_SHOP_GLASS.x - (367 - 336) * MINI_SHOP_SCALE; // товар в ряду: слева, до таблички ценника — 2
+export const MINI_SHOP_PRICE_X = MINI_SHOP_GLASS.x + (378 - 367) * MINI_SHOP_SCALE - 10; // левее: табличка ценника целиком внутри стекла // ценник: значок фишки/билета, правее — «× цена»
 export const MINI_SHOP_SOCKET_RADIUS = 26 * MINI_SHOP_SCALE; // гнездо в витрине: диаметр 47 — с товар в соседнем ряду
 // Плашка выдачи внизу (DONTLIKE п.8): тёмный проём в хромированной окантовке, как лоток торгового автомата.
 // Покупка уходит в него и лежит, пока её не заберут кликом.

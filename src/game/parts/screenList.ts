@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { CHIP_TEXTURE } from '../decor';
-import { GLASS, PAYOUT_WINDOW, SCREEN } from '../layout';
-import { addText, fitTextWidth, GAME_OVER_DEPTH, POPUP_DEPTH, SCREEN_UI as UI, TEXTURE_SCALE } from '../theme';
+import { SCREEN } from '../layout';
+import { addText, fitTextWidth, GAME_OVER_DEPTH, SCREEN_UI as UI, TEXTURE_SCALE } from '../theme';
 
 /**
  * Экранный список (шаг 37, корпус — шаг 41): единственное место, где игрок выбирает что-то из нового. Живёт НА
@@ -24,22 +24,27 @@ import { addText, fitTextWidth, GAME_OVER_DEPTH, POPUP_DEPTH, SCREEN_UI as UI, T
  * Строки — 56 px в единицах раскладки (не меньше минимума 44), видно столько, сколько влезает по высоте стекла.
  *
  * Недоступная строка погашена: название, значок и описание вполнакала, плашка в неактивной палитре, а причина —
- * серой подписью у кнопки; наведения на такую строку нет. Пока список открыт, пустые окна корпуса (стекло с
- * паттернами и окошко выплаты без кона) прикрыты мягкой накаткой — чёрное не читается дырой.
+ * серой подписью у кнопки; наведения на такую строку нет.
  *
  * Часть только показывает готовые строки и сообщает о нажатии: цены, доступность и эффекты считает сцена.
  * Клавиши по-прежнему работают (1–6 — строки, 0 — назад или закрыть), но подсказок про них на экране нет.
  */
-const DEPTH = GAME_OVER_DEPTH - 1; // выше игры и всплывашек, ниже паузы (30): Esc её открывает и закрывает
+// Список — не окно поверх игры, а САМ экран автомата: тот же прямоугольник SCREEN, без своей рамки.
+// Поэтому он лежит над корпусом и сеткой (2), но под новостями на стекле (10), магазином (9), планшетом (25)
+// и паузой (30) — ничего не «наслаивается».
+const DEPTH = 13; // над тьмой обучения (12): выбор автомата в первом забеге должен быть виден
 export const SCREEN_LIST_OVER_DEATH_DEPTH = GAME_OVER_DEPTH + 2; // экран улучшений — поверх затемнения смерти (30)
 const CLOSE_KEY_INDEX = 9; // клавиша «0»: закрыть список (в выборе — назад)
 const DRAG_STEP = 24; // столько нужно провести пальцем, чтобы список сдвинулся на строку
 
-// Экран и его стекло: окантовка лежит НАД границей SCREEN, стекло — ровно SCREEN (совпадает с экраном автомата).
+// Стекло списка — ровно SCREEN: рамку с лампочками рисует корпус автомата (decor.ts), своей рамки у
+// списка нет, он просто заменяет экран (DONTLIKE п.3, п.4).
 const GLASS_LEFT = SCREEN.x - SCREEN.width / 2;
 const GLASS_TOP = SCREEN.y - SCREEN.height / 2;
 const GLASS_RIGHT = SCREEN.x + SCREEN.width / 2;
 const GLASS_BOTTOM = SCREEN.y + SCREEN.height / 2;
+const GLASS_WIDTH = SCREEN.width;
+const GLASS_HEIGHT = SCREEN.height;
 const ROWS_TOP = GLASS_TOP + UI.headerHeight;
 const ROWS_BOTTOM = GLASS_BOTTOM - UI.padBottom;
 const ROW_LEFT = GLASS_LEFT + UI.padLeft;
@@ -56,16 +61,14 @@ const PLATE_LEFT = PLATE_RIGHT - UI.buttonWidth;
 // Текст строки: название идёт за значком, описание — во всю ширину до плашки (иначе длинное не влезает в две строки).
 const ROW_TEXT_LEFT = ROW_LEFT + UI.rowTextInset;
 const DESC_WIDTH = PLATE_LEFT - 8 - ROW_TEXT_LEFT;
-// Накатка на пустые окна корпуса — под новостями на стекле (они остаются читаемыми) и под самим списком.
-const QUIET_DEPTH = POPUP_DEPTH - 1;
 // Рельса прокрутки — внутри стекла, у правого края.
 const RAIL_X = GLASS_RIGHT - UI.railInset - UI.railWidth / 2;
 const RAIL_TOP = ROWS_TOP + UI.arrowSize * 2 + 2;
 const RAIL_BOTTOM = ROWS_BOTTOM - UI.arrowSize * 2 - 2;
 
-const PANEL_TEXTURE = 'screen-list-panel'; // корпус и стекло списка, запечённые один раз
-const PANEL_WIDTH = SCREEN.width + UI.frame * 2;
-const PANEL_HEIGHT = SCREEN.height + UI.frame * 2;
+const PANEL_TEXTURE = 'screen-list-panel'; // стекло списка, запечённое один раз (без своей рамки)
+const PANEL_WIDTH = GLASS_WIDTH;
+const PANEL_HEIGHT = GLASS_HEIGHT;
 const BUTTON_TEXTURE = 'screen-list-button'; // штампованная плашка: обычная, нажатая, недоступная
 const BUTTON_PRESSED_TEXTURE = 'screen-list-button-pressed';
 const BUTTON_OFF_TEXTURE = 'screen-list-button-off';
@@ -98,79 +101,41 @@ function roundedPath(ctx: CanvasRenderingContext2D, x: number, y: number, width:
   ctx.closePath();
 }
 
-/** Окантовка: вертикальный градиент, светлая верхняя кромка, тёмная нижняя. */
-function drawChrome(ctx: CanvasRenderingContext2D): void {
-  const gradient = ctx.createLinearGradient(0, 0, 0, PANEL_HEIGHT);
-  gradient.addColorStop(0, colorOf(UI.chromeTop));
-  gradient.addColorStop(0.45, colorOf(UI.chromeMid));
-  gradient.addColorStop(1, colorOf(UI.chromeBottom));
-  roundedPath(ctx, 0, 0, PANEL_WIDTH, PANEL_HEIGHT, UI.outerRadius);
-  ctx.fillStyle = gradient;
-  ctx.fill();
-  ctx.fillStyle = rgbaOf(UI.chromeEdgeLight, UI.chromeEdgeLightAlpha);
-  ctx.fillRect(UI.outerRadius, 0, PANEL_WIDTH - UI.outerRadius * 2, 1);
-  ctx.fillStyle = rgbaOf(UI.chromeEdgeDark, 1);
-  ctx.fillRect(UI.outerRadius, PANEL_HEIGHT - 1, PANEL_WIDTH - UI.outerRadius * 2, 1);
-}
-
 /** Стекло: радиальный градиент, тёплая виньетка по углам, сканлайны и внутренняя тень по периметру. */
 function drawGlass(ctx: CanvasRenderingContext2D): void {
-  const gx = UI.frame;
-  const gy = UI.frame;
-  const cx = gx + SCREEN.width / 2;
-  const cy = gy + SCREEN.height / 2;
+  const gx = 0;
+  const gy = 0;
+  const cx = gx + GLASS_WIDTH / 2;
+  const cy = gy + GLASS_HEIGHT / 2;
   ctx.save();
-  roundedPath(ctx, gx, gy, SCREEN.width, SCREEN.height, UI.glassRadius);
+  roundedPath(ctx, gx, gy, GLASS_WIDTH, GLASS_HEIGHT, UI.glassRadius);
   ctx.clip();
   const glass = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(SCREEN.width, SCREEN.height) * 0.72);
   glass.addColorStop(0, colorOf(UI.glassCenter));
   glass.addColorStop(1, colorOf(UI.glassEdge));
   ctx.fillStyle = glass;
-  ctx.fillRect(gx, gy, SCREEN.width, SCREEN.height);
-  const vignetteRadius = Math.min(SCREEN.width, SCREEN.height) * 0.62;
+  ctx.fillRect(gx, gy, GLASS_WIDTH, GLASS_HEIGHT);
+  const vignetteRadius = Math.min(GLASS_WIDTH, GLASS_HEIGHT) * 0.62;
   const corners: Array<[number, number]> = [
     [gx, gy],
-    [gx + SCREEN.width, gy],
-    [gx, gy + SCREEN.height],
-    [gx + SCREEN.width, gy + SCREEN.height],
+    [gx + GLASS_WIDTH, gy],
+    [gx, gy + GLASS_HEIGHT],
+    [gx + GLASS_WIDTH, gy + GLASS_HEIGHT],
   ];
   for (const [px, py] of corners) {
     const vignette = ctx.createRadialGradient(px, py, 0, px, py, vignetteRadius);
     vignette.addColorStop(0, rgbaOf(UI.glassVignette, UI.glassVignetteAlpha));
     vignette.addColorStop(1, rgbaOf(UI.glassVignette, 0));
     ctx.fillStyle = vignette;
-    ctx.fillRect(gx, gy, SCREEN.width, SCREEN.height);
+    ctx.fillRect(gx, gy, GLASS_WIDTH, GLASS_HEIGHT);
   }
   ctx.fillStyle = rgbaOf(UI.scanline, UI.scanlineAlpha);
-  for (let y = gy; y < gy + SCREEN.height; y += UI.scanlineStep) ctx.fillRect(gx, y, SCREEN.width, 1);
+  for (let y = gy; y < gy + GLASS_HEIGHT; y += UI.scanlineStep) ctx.fillRect(gx, y, GLASS_WIDTH, 1);
   ctx.strokeStyle = rgbaOf(UI.innerShadow, UI.innerShadowAlpha);
   ctx.lineWidth = UI.innerShadowWidth;
-  roundedPath(ctx, gx + 1, gy + 1, SCREEN.width - 2, SCREEN.height - 2, UI.glassRadius - 1);
+  roundedPath(ctx, gx + 1, gy + 1, GLASS_WIDTH - 2, GLASS_HEIGHT - 2, UI.glassRadius - 1);
   ctx.stroke();
   ctx.restore();
-}
-
-/** Четыре заклёпки по углам окантовки: радиальный градиент и тёмный контур. */
-function drawRivets(ctx: CanvasRenderingContext2D): void {
-  const inset = UI.rivetInset;
-  const spots: Array<[number, number]> = [
-    [inset, inset],
-    [PANEL_WIDTH - inset, inset],
-    [inset, PANEL_HEIGHT - inset],
-    [PANEL_WIDTH - inset, PANEL_HEIGHT - inset],
-  ];
-  for (const [x, y] of spots) {
-    const rivet = ctx.createRadialGradient(x - 1, y - 1, 0, x, y, UI.rivetRadius * 1.6);
-    rivet.addColorStop(0, colorOf(UI.rivetLight));
-    rivet.addColorStop(1, colorOf(UI.rivetDark));
-    ctx.beginPath();
-    ctx.arc(x, y, UI.rivetRadius, 0, Math.PI * 2);
-    ctx.fillStyle = rivet;
-    ctx.fill();
-    ctx.lineWidth = 0.8;
-    ctx.strokeStyle = colorOf(UI.rivetOutline);
-    ctx.stroke();
-  }
 }
 
 /** Описание строки: перенос до двух строк; если текст длинный — кегль мельче на шаг, но слова не теряются. */
@@ -190,17 +155,6 @@ function fitDescLines(
   }
 }
 
-/**
- * Накатка на пустое окно корпуса: тёплая полупрозрачная заливка и тонкая тёмная кромка. Чёрное стекло под ней
- * светлеет и читается как матовое, а не как дыра; надписи на стекле (они выше) остаются яркими.
- */
-function drawQuietWindow(g: Phaser.GameObjects.Graphics, x: number, y: number, width: number, height: number, radius: number): void {
-  g.fillStyle(UI.quietFill, UI.quietAlpha);
-  g.fillRoundedRect(x, y, width, height, radius);
-  g.lineStyle(1, UI.quietEdge, UI.quietEdgeAlpha);
-  g.strokeRoundedRect(x + 0.5, y + 0.5, width - 1, height - 1, radius);
-}
-
 /** Запечь корпус и стекло списка — один раз на игру. */
 function createPanelTexture(scene: Phaser.Scene): void {
   if (scene.textures.exists(PANEL_TEXTURE)) return;
@@ -208,9 +162,7 @@ function createPanelTexture(scene: Phaser.Scene): void {
   if (!canvas) return;
   const ctx = canvas.context;
   ctx.scale(TEXTURE_SCALE, TEXTURE_SCALE);
-  drawChrome(ctx);
   drawGlass(ctx);
-  drawRivets(ctx);
   canvas.refresh();
   canvas.source[0].resolution = TEXTURE_SCALE;
   canvas.get().setTrim(PANEL_WIDTH, PANEL_HEIGHT, 0, 0, PANEL_WIDTH, PANEL_HEIGHT);
@@ -267,8 +219,6 @@ export interface ScreenRow {
 export interface ScreenListOptions {
   title: string;
   caption?: string;
-  /** Приглушать ли окошко выплаты на корпусе, пока список открыт: только если на кону пусто (иначе там сумма). */
-  dimPayout?: boolean;
   onPick: (index: number) => void;
   onDeny?: (index: number) => void;
   onClose?: () => void;
@@ -387,26 +337,11 @@ export class ScreenList {
     createPanelTexture(this.scene);
     createButtonTextures(this.scene);
     const panel = this.scene.add.image(SCREEN.x, SCREEN.y, PANEL_TEXTURE).setDepth(this.depth);
-    const quiet = this.scene.add.graphics().setDepth(QUIET_DEPTH);
-    // Накатка на пустые окна корпуса: стекло с паттернами над экраном и окошко выплаты, если на кону пусто.
-    const glassLeft = GLASS.x - GLASS.width / 2;
-    const glassTop = GLASS.y - GLASS.height / 2;
-    drawQuietWindow(quiet, glassLeft, glassTop, GLASS.width, GLASS.height, UI.glassRadius);
-    if (options.dimPayout !== false) {
-      drawQuietWindow(
-        quiet,
-        PAYOUT_WINDOW.x - PAYOUT_WINDOW.width / 2,
-        PAYOUT_WINDOW.y - PAYOUT_WINDOW.height / 2,
-        PAYOUT_WINDOW.width,
-        PAYOUT_WINDOW.height,
-        UI.quietRadius,
-      );
-    }
     const strips = this.scene.add.graphics().setDepth(this.depth + 0.01);
     const overlay = this.scene.add.graphics().setDepth(this.depth + 0.03);
     this.strips = strips;
     this.overlay = overlay;
-    this.parts.push(panel, quiet, strips, overlay);
+    this.parts.push(panel, strips, overlay);
 
     const titleMax = (options.onBack ? BACK_X - UI.headerButtonSize / 2 : CLOSE_X - UI.headerButtonSize / 2) - ROW_LEFT - 8;
     const title = addText(this.scene, ROW_LEFT, GLASS_TOP + (options.caption ? UI.headerTitleY : UI.headerHeight / 2 - 1), options.title.toUpperCase(), {
@@ -587,9 +522,12 @@ export class ScreenList {
   }
 
   private releasePress(): void {
-    if (this.pressedIndex === null) return;
-    this.pressedIndex = null;
-    if (this.open) this.layout();
+    if (this.pressedIndex !== null) {
+      this.pressedIndex = null;
+      if (this.open) this.layout();
+    }
+    this.dragStart = null;
+    this.dragMoved = false;
   }
 
   /**
@@ -648,7 +586,7 @@ export class ScreenList {
     g.clear();
     // Гравированная полоска шапки и янтарная линия под ней.
     const plateX = GLASS_LEFT + UI.headerPlateInset;
-    const plateWidth = SCREEN.width - UI.headerPlateInset * 2;
+    const plateWidth = GLASS_WIDTH - UI.headerPlateInset * 2;
     g.fillStyle(0x000000, UI.headerPlateAlpha);
     g.fillRoundedRect(plateX, GLASS_TOP + 2, plateWidth, UI.headerHeight - 6, UI.headerPlateRadius);
     g.fillStyle(UI.headerLine, UI.headerLineAlpha);
@@ -727,7 +665,7 @@ export class ScreenList {
     g.clear();
     const inset = UI.innerShadowWidth / 2;
     g.lineStyle(UI.innerShadowWidth, UI.innerShadow, UI.innerShadowAlpha);
-    g.strokeRoundedRect(GLASS_LEFT + inset, GLASS_TOP + inset, SCREEN.width - inset * 2, SCREEN.height - inset * 2, UI.glassRadius - inset);
+    g.strokeRoundedRect(GLASS_LEFT + inset, GLASS_TOP + inset, GLASS_WIDTH - inset * 2, GLASS_HEIGHT - inset * 2, UI.glassRadius - inset);
     const max = Math.max(0, this.data.length - this.visibleCount);
     if (this.topIndex < max) {
       const band = UI.fadeHeight / FADE_BANDS;
@@ -769,6 +707,12 @@ export class ScreenList {
 
   private drag(pointer: Phaser.Input.Pointer): void {
     if (!this.open || this.dragStart === null) return;
+    // Свайп — только с зажатой кнопкой: обычное движение мыши после неудачного нажатия не листает список.
+    if (!pointer.isDown) {
+      this.dragStart = null;
+      this.dragMoved = false;
+      return;
+    }
     const dy = pointer.worldY - this.dragStart;
     if (Math.abs(dy) < DRAG_STEP) return;
     this.scroll(dy > 0 ? -1 : 1);

@@ -20,9 +20,19 @@ import { DISPLAY } from '../layout';
 import { RESCUE_FADE_TIME } from '../parts/atmosphere';
 import type { ScreenRow } from '../parts/screenList';
 import { MEMORY_PICKS_PACT } from '../memory';
-import { grantUpgrade, setNextRunMemory } from '../progress';
+import {
+  grantUpgrade,
+  isRescueIntroSeen,
+  isTutorialDone,
+  markRescueIntroSeen,
+  setNextRunMemory,
+  setTutorialStep,
+  tutorialStep,
+  unlockActions,
+} from '../progress';
 import type { Grid } from '../rules';
-import { GOLD_TEXT, GREEN_TEXT, LAMP_OFF, LAMP_RED, UPGRADE_GROUP_ICONS } from '../theme';
+import { GAME_OVER_DEPTH, GOLD_TEXT, GREEN_TEXT, LAMP_OFF, LAMP_RED, UPGRADE_GROUP_ICONS } from '../theme';
+import { DEATH_LINES, DEATH_SCREEN_LINES, RESCUE_WIN_LINES, TUTORIAL_LINE_HOLD } from '../tutorial';
 import { UPGRADE_SECOND_PRICE, memoryPickCount, roundDebtTickets, upgradeOffers, type Upgrade } from '../upgrades';
 import { SaveScene } from './SaveScene';
 
@@ -34,13 +44,16 @@ const KABOOM_SHAKE_TIME = 700;
 const KABOOM_SHAKE = 0.03;
 const RESCUE_TENSION = 1; // в раунде спасения сердце в музыке бьётся быстрее всего
 const RESCUE_WIN_PAUSE = 1200; // паттерн собран: столько видно новость, потом магазин
+// Строки обучения на экране смерти лежат выше затемнения экрана DEATH (GAME_OVER_DEPTH), иначе тьма их съест.
+const DEATH_TEXT_DEPTH = GAME_OVER_DEPTH + 2;
+// Запас страховки поверх времени строк: заставка почему-то не позвала done — экран улучшений не должен потеряться.
+const DEATH_TEXT_GUARD_MS = 4000;
 // Победа (набрано CHIP_GOAL).
 const VICTORY_SETTLE_TIME = 400; // после прибавки фишек столько ждём: текущее действие успевает доиграть
 const VICTORY_PAUSE = 1400; // лампы погасли, новое число на табло видно — пауза, потом затемнение
-// Первое спасение за сессию: полная заставка «ВНИМАНИЕ! → АКТИВИРОВАН… → СОБЕРИ…». Дальше — короткое
-// «ПОСЛЕДНИЙ ШАНС» (DONTLIKE п.6): автору не нужно одно и то же объяснение на каждую яму. Флаг живёт модуль —
-// значит, весь сеанс страницы, и переживает «ЗАНОВО», но не перезагрузку.
-let lastChanceIntroSeen = false;
+// Полная заставка спасения «ВНИМАНИЕ! → АКТИВИРОВАН… → СОБЕРИ…» — только в первый раз за всё время игры,
+// дальше короткое «ПОСЛЕДНИЙ ШАНС» (DONTLIKE п.6). Флаг живёт в прогрессе (localStorage), а не в сессии
+// страницы: после перезагрузки игрок уже знает, что делать.
 
 /**
  * Слой Коллектора: в конце раунда к автомату приходит Коллектор. Хватает фишек — из темноты выезжает банкомат, отдаёшь долг,
@@ -61,7 +74,8 @@ export abstract class CollectorScene extends SaveScene {
   private readonly frozenColumns = new Set<number>(); // замороженные столбцы: прокрутка их не трогает
   private isRescueIntro = false; // на экране автомата идёт заставка спасения: ввод закрыт, крутить нельзя (шаг 32)
   private rescueHintLive = false; // подсказка спасения сейчас на стекле: её перерисовывает смена языка (шаг 35)
-  private rescueIntroFull = true; // полная заставка (первая яма сессии) или короткое «ПОСЛЕДНИЙ ШАНС» (DONTLIKE п.6)
+  private rescueIntroFull = true; // полная заставка (один раз за всё время — флаг rescueIntroSeen) или короткое «ПОСЛЕДНИЙ ШАНС» (DONTLIKE п.6)
+  private rescueIntroTutorial = false; // в первую яму первого обучения вместо трёх строк говорит Диллер (DEATH_LINES)
   private isRescueWinPending = false; // паттерн собран: новость показана, через мгновение магазин
   private wasShoppingAtVictory = false; // победа застала магазин на экране: «ДАЛЬШЕ» доиграет его выход
   private victoryReached = false; // цель уже взята (порог сверен и пройден): падение баланса ниже chipGoal её не отменяет
@@ -80,6 +94,7 @@ export abstract class CollectorScene extends SaveScene {
     this.isRescueIntro = false;
     this.isRescueWinPending = false;
     this.rescueHintLive = false;
+    this.rescueIntroTutorial = false;
     this.frozenColumns.clear();
     this.wasShoppingAtVictory = false;
     this.victoryReached = false; // новый забег — цель снова не взята
@@ -94,6 +109,15 @@ export abstract class CollectorScene extends SaveScene {
   }
 
   /**
+   * Кассета работает и в последнем шансе (DONTLIKE п.14): между прокрутками спасения откат разрешён.
+   * Не разрешён во время прокрутки, заставки и показа «паттерн собран»: там сцена перезапускается сама.
+   * Откат возвращает к записи (до ямы); сама яма уже израсходована — второй не будет.
+   */
+  protected override canRewindDuringRescue(): boolean {
+    return this.isRescue && !this.isSpinning && !this.isRescueIntro && !this.isRescueWinPending;
+  }
+
+  /**
    * Прокрутки кончились (или долг отдают раньше — isPaidEarly): Коллектор идёт за долгом.
    * Фишек не хватает — сначала тревога и красные огни на GOOD_LUCK_TIME, потом раунд спасения.
    * Если спасение в этом забеге уже было — не прощают: GOOD LUCK не показываем, сразу KABOOM
@@ -104,7 +128,10 @@ export abstract class CollectorScene extends SaveScene {
     // Забег уже кончен (победа по цели или KABOOM): Коллектору за долгом идти незачем.
     // Без этой строки он приезжал бы поверх экрана победы — его вызов стоит в таймере endOfSpins.
     if (this.isGameOver) return;
-    this.finishTutorial(); // Коллектор пришёл — тьма рассеивается совсем (и обучение запоминается)
+    // Коллектор пришёл — тьма рассеивается совсем. Обучение ещё не дошло до конца — закрываем и его (мастер-флаг):
+    // иначе оно вернулось бы в следующий забег и говорило бы поверх обычной игры.
+    if (this.tutorialActive()) this.finishTutorial();
+    else this.finishDarkness();
     // Долга нет (прощённый первый долг, №8): платить нечего — банкомат не выезжает, анимаций и GOOD LUCK нет,
     // сразу магазин. Так нулевой долг не может дойти до раунда спасения (`DONTLIKE` п.5 и п.15, шаг 38).
     if (this.isDebtFree()) {
@@ -259,19 +286,27 @@ export abstract class CollectorScene extends SaveScene {
     this.enterRescueMood();
     this.refreshHud();
     this.sfx.play('warning', 0.5);
-    // Заставка на экране автомата: в первую яму сессии — «ВНИМАНИЕ!» → «АКТИВИРОВАН ПОСЛЕДНИЙ ШАНС» →
-    // «СОБЕРИ ЛЮБОЙ ПАТТЕРН ЧТОБЫ ВЫЖИТЬ», дальше — только «ПОСЛЕДНИЙ ШАНС» (DONTLIKE п.6).
-    this.rescueIntroFull = !lastChanceIntroSeen;
-    lastChanceIntroSeen = true;
+    // Заставка на экране автомата: в первую яму за всё время (флаг rescueIntroSeen лежит в localStorage и живёт
+    // дольше сессии) — «ВНИМАНИЕ!» → «АКТИВИРОВАН ПОСЛЕДНИЙ ШАНС» → «СОБЕРИ ЛЮБОЙ ПАТТЕРН ЧТОБЫ ВЫЖИТЬ»,
+    // начиная со второй ямы — только «ПОСЛЕДНИЙ ШАНС» (DONTLIKE п.6).
+    // В первую яму первого обучения вместо трёх строк говорит Диллер: семь строк дорожки спасения (DEATH_LINES) —
+    // «Хахахаха» → … → «УДАЧИ». Мастер-флаг обучения значит «обучение пропущено целиком»: у старых сохранений
+    // и браузерных сценариев с tutorialDone: true новых строк не будет.
+    this.rescueIntroFull = !isRescueIntroSeen();
+    markRescueIntroSeen();
+    this.rescueIntroTutorial = this.rescueIntroFull && !isTutorialDone();
     this.isRescueIntro = true;
     this.rescueHintLive = false;
-    this.collector.showScreenSequence(this.rescueIntroLines(), () => {
+    const introDone = (): void => {
       this.isRescueIntro = false; // заставка погасла: рычаг снова слушается
-    });
+    };
+    if (this.rescueIntroTutorial) this.tutorialTalkKeys(DEATH_LINES, introDone);
+    else this.collector.showScreenSequence(this.rescueIntroLines(), introDone);
   }
 
   /** Строки заставки спасения на текущем языке: их же заново показывает смена языка (шаг 35). */
   private rescueIntroLines(): string[] {
+    if (this.rescueIntroTutorial) return DEATH_LINES.map((key) => t(key)); // первая яма обучения: строки Диллера
     if (!this.rescueIntroFull) return [t('rescueLastChanceShort')];
     return [t('rescueAlert1'), t('rescueAlert2'), t('rescueAlert3')];
   }
@@ -418,7 +453,7 @@ export abstract class CollectorScene extends SaveScene {
     this.screen.endPick();
     this.screen.announceSequence([{ text: t('rescueSurvived') }]); // «ПАТТЕРН СОБРАН» на стекле
     this.sfx.play('bigWin');
-    this.time.delayedCall(RESCUE_WIN_PAUSE, () => {
+    const toShop = (): void => {
       if (!this.isRescue || !this.isRescueWinPending) return;
       this.isRescueWinPending = false;
       // Сообщение на стекле оставляем: пусть висит, пока гаснет красное и встаёт магазин (closeRescue(true)).
@@ -432,7 +467,20 @@ export abstract class CollectorScene extends SaveScene {
         if (this.isGameOver || this.isShopOpen) return;
         this.openShop(true, replayRound);
       });
-    });
+    };
+    // Первое выживание в обучении: после «ПАТТЕРН СОБРАН» Диллер говорит три строки, магазин — после них.
+    // Показали раз — дорожка rescueWin помечена; мастер-флаг обучения здесь не ставится (его ставит смерть).
+    if (!isTutorialDone() && tutorialStep('rescueWin') === 0) {
+      this.time.delayedCall(RESCUE_WIN_PAUSE, () => {
+        if (!this.isRescue || !this.isRescueWinPending) return;
+        this.tutorialTalkKeys(RESCUE_WIN_LINES, () => {
+          setTutorialStep('rescueWin', 1);
+          toShop();
+        });
+      });
+      return;
+    }
+    this.time.delayedCall(RESCUE_WIN_PAUSE, toShop);
   }
 
   /**
@@ -587,10 +635,10 @@ export abstract class CollectorScene extends SaveScene {
    * след «забег трогали в ТЕСТ»: он тоже закрывает список, даже если режим к моменту смерти уже выключили,
    * иначе улучшения фармились бы тестовыми фишками.
    */
-  private showUpgradeChoice(): void {
-    if (isDevMode() || this.devUsedThisRun) return; // в «ТЕСТ» улучшений не даём: ни бесплатного, ни второго за билеты
+  private showUpgradeChoice(): boolean {
+    if (isDevMode() || this.devUsedThisRun) return false; // в «ТЕСТ» улучшений не даём: ни бесплатного, ни второго за билеты
     const offers = upgradeOffers(this.upgrades);
-    if (offers.length === 0) return; // предлагать нечего: список улучшений просто не показывается
+    if (offers.length === 0) return false; // предлагать нечего: список улучшений просто не показывается
     this.upgradeOfferList = offers;
     this.upgradeSecondPhase = false;
     this.upgradeScreen.show(offers.map((upgrade) => this.upgradeRow(upgrade)), {
@@ -598,6 +646,7 @@ export abstract class CollectorScene extends SaveScene {
       caption: t('upgFreeHint'),
       onPick: (index) => this.pickUpgrade(index),
     });
+    return true;
   }
 
   /** Строка улучшения на экране автомата: значок группы, название, описание и плашка справа (шаги 41–42). */
@@ -650,18 +699,52 @@ export abstract class CollectorScene extends SaveScene {
   }
 
   /**
-   * Экран улучшений закрыт: дальше — обычное «ЗАНОВО» экрана смерти. Память амулетов больше не витрина после
-   * смерти (шаг 38, DONTLIKE п.2): она выбирается на старте следующего забега, бесплатно.
+   * Экран улучшений закрыт: выбор сделан (или от улучшений отказались ✕) — сразу новый забег.
+   * Кнопки «ЗАНОВО» на экране смерти больше нет: список улучшений — единственный путь дальше (DONTLIKE п.7).
    */
   private closeUpgrades(): void {
     this.upgradeScreen.close();
     this.upgradeOfferList = [];
     this.upgradeSecondPhase = false;
+    this.restartGame();
   }
 
-  /** Конец забега: на экране автомата KABOOM, потом автомат взрывается, всё темнеет, и на нём — KABOOM, счёт, «ЗАНОВО». */
+  /**
+   * Обучение первой смерти: между экраном DEATH и экраном улучшений Диллер говорит семь строк (дорожка death).
+   * Строки ложатся поверх затемнения экрана DEATH (DEATH_TEXT_DEPTH): ниже тьма их съела бы. Показали —
+   * дорожка пройдена; обучение пройдено или уже показано — вызывающий сразу идёт к улучшениям.
+   * Страховка: если заставка почему-то не позвала done, строки снимаются, и экран улучшений всё равно встаёт.
+   */
+  private showDeathTutorial(done: () => void): void {
+    // Мастер-флаг значит «обучение пропущено целиком»: старые сохранения и браузерные сценарии с tutorialDone:
+    // true новых строк не видят. Дорожка показывается один раз (tutorialStep('death') === 0) и мастер-флаг не ставит.
+    if (isTutorialDone() || tutorialStep('death') !== 0) {
+      done();
+      return;
+    }
+    let finished = false;
+    const finish = (): void => {
+      if (finished) return; // заставка и страховка зовут одно и то же — дальше один раз
+      finished = true;
+      setTutorialStep('death', 1);
+      done();
+    };
+    const texts = DEATH_SCREEN_LINES.map((key) => t(key));
+    this.collector.showScreenSequence(texts, finish, { hold: TUTORIAL_LINE_HOLD, depth: DEATH_TEXT_DEPTH });
+    this.time.delayedCall(texts.length * TUTORIAL_LINE_HOLD + DEATH_TEXT_GUARD_MS, () => {
+      if (finished) return;
+      this.collector.clearScreenSequence(); // недоигранные строки не должны висеть над улучшениями
+      finish();
+    });
+  }
+
+  /**
+   * Конец забега: на экране автомата KABOOM, потом автомат взрывается, всё темнеет, и на нём — экран DEATH.
+   * Кнопки «ЗАНОВО» на нём нет (DONTLIKE п.7): дальше три улучшения, а если улучшать нечего — кнопка появляется.
+   */
   protected kaboom(): void {
     this.isGameOver = true;
+    unlockActions(); // первая смерть: действия между прокрутками открываются навсегда
     this.bankRunAmulets(); // забег кончился: его амулеты ждут выбора памяти на старте следующего (шаг 38)
     // Экран DEATH тоже ляжет выше окна ачивки: выданное перед смертью ждёт в очереди и доедет в новом забеге
     // (restartGame передаёт pendingAchievements), а не тает под экраном.
@@ -681,11 +764,17 @@ export abstract class CollectorScene extends SaveScene {
       this.time.delayedCall(KABOOM_AFTER_TIME, () => {
         this.collector.clearGoodLuck(); // KABOOM погас: под экраном DEATH не должно остаться старого мигающего заголовка
         this.collector.blackout(() => {
-          this.collector.showDeath(this.closedDebts(), this.record, () => this.restartGame(), 'KABOOM');
+          this.collector.showDeath(() => this.restartGame(), 'KABOOM');
+          // Сначала — строки обучения первой смерти (если она ещё не показана), потом улучшения.
           // После смерти — три улучшения (шаг 28). Память амулетов сюда больше не входит (шаг 38): она ждёт старта забега.
-          this.showUpgradeChoice();
-          this.time.delayedCall(RESTART_SPACE_DELAY, () => {
-            this.canRestartWithSpace = true;
+          // Кнопки «ЗАНОВО» на экране смерти нет (DONTLIKE п.7): улучшения есть — новый забег начнёт выбор,
+          // улучшать нечего — показываем кнопку, иначе забег не начать.
+          // Пробел начинает забег только после этого: во время строк он не должен перескочить улучшения.
+          this.showDeathTutorial(() => {
+            if (!this.showUpgradeChoice()) this.collector.showRestartButton();
+            this.time.delayedCall(RESTART_SPACE_DELAY, () => {
+              this.canRestartWithSpace = true;
+            });
           });
         });
       });

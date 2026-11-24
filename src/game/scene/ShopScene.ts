@@ -73,6 +73,7 @@ export abstract class ShopScene extends DealerScene {
     }
     this.round = shopRound;
     this.applyShopDebt(keepDebt);
+    this.screen.setLampsVisible(false); // лампочки рамки не висят над панелью магазина
     this.isShopOpen = true; // панель на экране — и пока едет, и когда уже стоит
     this.isLeavingShop = false; // забег мог перезапуститься посреди выхода: панель снова на месте
     this.updateRecord();
@@ -100,7 +101,8 @@ export abstract class ShopScene extends DealerScene {
     const prices = offer.map((item) => this.itemPriceNow(item)); // цены — доля нового долга и скидки улучшений №22 и №36
     // Что открыто — по закрытым долгам: номер раунда уже номер этого магазина, поэтому предикаты дают его счёт.
     this.amuletCase.setAvailable(isAmulets);
-    this.miniCase.setAvailable(isAmulets); // мини-чемодан за фишки виден вместе с основным
+    // Мини-чемодан за фишки: один амулет за забег — после покупки он исчезает до конца забега (DONTLIKE п.4).
+    this.miniCase.setAvailable(isAmulets && !this.amuletChipUsedThisRun);
     this.drum.setAvailable(this.drumUnlocked());
     this.cassette.setAvailable(this.cassetteUnlocked());
     // Панель поехала: чемодан и маленький автомат прошлого захода сразу пусты, цены на панели — уже от нового долга.
@@ -157,6 +159,7 @@ export abstract class ShopScene extends DealerScene {
   private skipClosedShop(keepDebt: boolean, shopRound: number): void {
     this.round = shopRound;
     this.applyShopDebt(keepDebt);
+    this.screen.setLampsVisible(false); // лампочки рамки не висят над панелью магазина
     this.isShopOpen = false;
     this.isShopping = false;
     this.isLeavingShop = false;
@@ -445,6 +448,7 @@ export abstract class ShopScene extends DealerScene {
       this.amuletOffer[place] = null;
       this.sfx.play('burn', 0.2);
       this.shop.announce(t('pactAmuletBurned'));
+      this.miniCase.setAvailable(false); // амулет сгорел, но попытка потрачена: чемодан исчезает
       this.afterPurchase();
       return;
     }
@@ -525,6 +529,7 @@ export abstract class ShopScene extends DealerScene {
       if (isNew) this.amulets.pop();
       this.sfx.play('burn', 0.2);
       this.shop.announce(t('pactAmuletBurned'));
+      this.miniCase.setAvailable(false); // амулет сгорел, но попытка потрачена: чемодан исчезает
       this.afterPurchase();
       return;
     }
@@ -533,6 +538,7 @@ export abstract class ShopScene extends DealerScene {
       if (isNew) this.amuletRack.putAmulet(index, amulet, count, x, y);
       else this.amuletRack.putCopy(index, amulet, count, x, y);
       this.showBones();
+      this.miniCase.setAvailable(false); // куплено — чемодан уходит с панели до конца забега
     });
     this.afterPurchase();
   }
@@ -673,6 +679,7 @@ export abstract class ShopScene extends DealerScene {
       // Победа могла перехватить выход, пока панель ехала (suspendShop): тогда раунд начнёт «ДАЛЬШЕ».
       if (!this.isLeavingShop) return;
       this.isLeavingShop = false;
+      this.screen.setLampsVisible(true); // лампочки — только когда панель уехала, иначе они на миг видны поверх магазина
       this.enterNextRound();
     });
   }
@@ -689,7 +696,9 @@ export abstract class ShopScene extends DealerScene {
     this.isShopping = false;
     this.tooltip.hide();
     this.miniShop.clear(); // дверца маленького автомата закрывается и на прерванном победой выходе тоже
-    this.shop.close(() => {});
+    this.shop.close(() => {
+      this.screen.setLampsVisible(true); // как и в leaveShop: после того, как панель уехала
+    });
     return true;
   }
 
