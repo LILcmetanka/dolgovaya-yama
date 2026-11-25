@@ -129,6 +129,7 @@ export abstract class DealerScene extends RoundScene {
     }
     this.itemShelf.refreshPulses(); // сделка могла укоротить столбик — пульс полки пересчитать
     this.applyPactOnce(spec.id);
+    this.trackEvent('pact_taken', { card: spec.id, round: this.round, balance: this.balance }); // метрика: какую карту взяли
     this.sfx.play('item');
     this.screen.announceNews(t('pactNews', t(spec.bonus), t(spec.cost)));
   }

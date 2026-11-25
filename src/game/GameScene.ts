@@ -18,6 +18,7 @@ import {
   theftSucceeds,
   useAction,
   type ActionId,
+  type ActionState,
 } from './actions';
 import { isBloodSpill, type AchievementId } from './achievements';
 import { addCopy, AMULETS, countOf, MAX_SOCKETS, symbolPayout, spinsPerRound, type AmuletId } from './amulets';
@@ -118,6 +119,7 @@ export class GameScene extends CollectorScene {
   private amuletPick!: ScreenList; // выбор амулета из прошлого забега (шаг 38) — там же, бесплатно
   private actionPanel!: ScreenList; // шесть действий вне прокрутки — там же (шаг 29)
   private languageAtPause!: Lang; // язык, какой был, когда встали на паузу: после «▶» записка переворачивается, только если он другой
+  private runActionUses: Partial<Record<ActionId, number>> = {}; // сколько раз каждое действие брали в этом забеге (метрика)
 
   constructor() {
     super('GameScene');
@@ -132,6 +134,12 @@ export class GameScene extends CollectorScene {
     // Откат кассетой — тот же забег с того же места: resetState по этому флагу не двигает номер забега (улучшение №8).
     this.isTapeRestart = Boolean(data.tape);
     this.resetState();
+    // Метрики: новый забег — новый id попытки, время старта и счётчики событий. Откат кассетой — тот же забег,
+    // поэтому attemptId и флаги событий остаются (поля класса restart не сбрасывает).
+    if (!data.tape || !this.attemptId) {
+      this.startMetricsRun();
+      this.runActionUses = {};
+    }
     // resetState() обнуляет след «ТЕСТ», а откат его не снимает: он приходит отдельным полем, помимо записи кассеты.
     if (data.devUsed) this.devUsedThisRun = true;
     if (data.achievements) this.restoreAchievements(data.achievements); // очередь показа пережила рестарт
@@ -882,6 +890,18 @@ export class GameScene extends CollectorScene {
     );
   }
 
+  /**
+   * Действие панели сработало: отмечаем его в состоянии раунда и шлём событие метрики action_used
+   * (times — сколько раз это действие уже брали в забеге, включая этот).
+   */
+  private takeAction(state: ActionState, id: ActionId): ActionState {
+    const next = useAction(state, id);
+    const times = (this.runActionUses[id] ?? 0) + 1;
+    this.runActionUses[id] = times;
+    this.trackEvent('action_used', { action: id, round: this.round, times });
+    return next;
+  }
+
   /** №2, шаг 1: что убрать — платящий символ с последней сетки. «←» — назад к списку. */
   private showExchangeFrom(): void {
     if (!this.canUseActions() || actionUsed(this.actionState, 'exchange') || this.tickets < ACTION_EXCHANGE_TICKETS) {
@@ -917,7 +937,7 @@ export class GameScene extends CollectorScene {
       return;
     }
     this.spendRunTickets(ACTION_EXCHANGE_TICKETS);
-    this.actionState = useAction({ ...this.actionState, exchange: { from: from.id, to: to.id } }, 'exchange');
+    this.actionState = this.takeAction({ ...this.actionState, exchange: { from: from.id, to: to.id } }, 'exchange');
     this.repaintGrid(from, to);
     this.closeActions();
     this.dropPendingMachineNews();
@@ -947,7 +967,7 @@ export class GameScene extends CollectorScene {
     }
     this.spendRunTickets(ACTION_LOTTERY_TICKETS);
     const prize = lotteryRoll(() => this.lotteryRandom());
-    this.actionState = useAction({ ...this.actionState, lottery: prize }, 'lottery');
+    this.actionState = this.takeAction({ ...this.actionState, lottery: prize }, 'lottery');
     this.actionSpins(prize.spins ?? 0);
     this.closeActions();
     this.dropPendingMachineNews();
@@ -964,7 +984,7 @@ export class GameScene extends CollectorScene {
       return;
     }
     this.balance -= price;
-    this.actionState = useAction({ ...this.actionState, serviceRounds: ACTION_SERVICE_ROUNDS }, 'service');
+    this.actionState = this.takeAction({ ...this.actionState, serviceRounds: ACTION_SERVICE_ROUNDS }, 'service');
     this.closeActions();
     this.dropPendingMachineNews();
     this.screen.announceNews(t('actionServiceDone'));
@@ -978,7 +998,7 @@ export class GameScene extends CollectorScene {
       this.sfx.play('deny');
       return;
     }
-    this.actionState = useAction(this.actionState, 'theft');
+    this.actionState = this.takeAction(this.actionState, 'theft');
     this.closeActions();
     this.sfx.play('warning', 0.3);
     if (theftSucceeds(this.round, () => this.theftRandom())) {
@@ -1019,7 +1039,7 @@ export class GameScene extends CollectorScene {
       this.sfx.play('deny');
       return;
     }
-    this.actionState = useAction({ ...this.actionState, sold: [...this.actionState.sold, symbol.id] }, 'sale');
+    this.actionState = this.takeAction({ ...this.actionState, sold: [...this.actionState.sold, symbol.id] }, 'sale');
     this.earn(price);
     this.closeActions();
     this.effects.popup(`+${price}`, GOLD_TEXT);
@@ -1039,7 +1059,7 @@ export class GameScene extends CollectorScene {
       return;
     }
     this.balance -= price;
-    this.actionState = useAction({ ...this.actionState, debtCut: cut }, 'debt');
+    this.actionState = this.takeAction({ ...this.actionState, debtCut: cut }, 'debt');
     this.closeActions();
     this.dropPendingMachineNews();
     this.screen.announceNews(t('actionDebtDone'));

@@ -38,6 +38,15 @@
       <p class="rotate-title">ПОВЕРНИ ТЕЛЕФОН</p>
       <p class="rotate-sub">ROTATE YOUR PHONE</p>
     </div>
+    <!-- Яндекс Метрика: сам скрипт грузится всегда, номер счётчика и init — в src/game/metrics.ts. -->
+    <script>
+      (function (m, e, t, r, i, k, a) {
+        m[i] = m[i] || function () { (m[i].a = m[i].a || []).push(arguments); };
+        m[i].l = 1 * new Date();
+        for (var j = 0; j < document.scripts.length; j++) { if (document.scripts[j].src === r) { return; } }
+        k = e.createElement(t), a = e.getElementsByTagName(t)[0], k.async = 1, k.src = r, a.parentNode.insertBefore(k, a);
+      })(window, document, 'script', 'https://mc.yandex.ru/metrika/tag.js', 'ym');
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

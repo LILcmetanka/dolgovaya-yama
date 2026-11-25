@@ -185,6 +185,7 @@ export abstract class RoundScene extends TutorialScene {
     if (this.remindReroll()) return; // висит решение — сначала столбец или клетка, крутить раньше нельзя
     if (!this.tutorialCanSpin()) return; // бит «Забери кон»: рычаг молчит, ввод открыт только для take()
     if (!this.canAct()) return;
+    this.trackRunStart(); // первая прокрутка забега — событие game_start (в метриках — один раз за забег)
     this.dropPendingMachineNews(); // прокрутка началась: её результат важнее отложенной новости о смене автомата
     this.forgetTakeThisSpin();
     this.spinsLeft -= 1;
