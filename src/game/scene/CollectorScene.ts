@@ -46,6 +46,10 @@ const RESCUE_TENSION = 1; // в раунде спасения сердце в м
 const RESCUE_WIN_PAUSE = 1200; // паттерн собран: столько видно новость, потом магазин
 // Строки обучения на экране смерти лежат выше затемнения экрана DEATH (GAME_OVER_DEPTH), иначе тьма их съест.
 const DEATH_TEXT_DEPTH = GAME_OVER_DEPTH + 2;
+/** Почему забег кончился — reason в событии game_over (skulls — запас на будущее: сейчас смерть только от долга и кражи). */
+type GameOverReason = 'debt' | 'theft' | 'skulls';
+/** Почему начался раунд спасения: reason в событии rescue_started. */
+type RescueReason = 'debt' | 'theft';
 // Победа (набрано CHIP_GOAL).
 const VICTORY_SETTLE_TIME = 400; // после прибавки фишек столько ждём: текущее действие успевает доиграть
 const VICTORY_PAUSE = 1400; // лампы погасли, новое число на табло видно — пауза, потом затемнение
@@ -68,6 +72,7 @@ export abstract class CollectorScene extends SaveScene {
   // Раунд спасения: сетка, которую докручивает игрок, остаток прокруток и заморозки.
   private rescueGrid: Grid | null = null;
   private rescueSpinsLeft = 0;
+  private rescueReason: RescueReason = 'debt'; // почему начался раунд спасения: неоплаченный долг или провал кражи (метрика)
   private rescueFreezeUsed = false; // заморозка/разморозка в этом ходу уже была: разрешена одна
   private readonly frozenColumns = new Set<number>(); // замороженные столбцы: прокрутка их не трогает
   private isRescueIntro = false; // на экране автомата идёт заставка спасения: ввод закрыт, крутить нельзя (шаг 32)
@@ -88,6 +93,7 @@ export abstract class CollectorScene extends SaveScene {
     super.resetState();
     this.rescueGrid = null;
     this.rescueSpinsLeft = 0;
+    this.rescueReason = 'debt';
     this.rescueFreezeUsed = false;
     this.isRescueIntro = false;
     this.isRescueWinPending = false;
@@ -126,6 +132,7 @@ export abstract class CollectorScene extends SaveScene {
     // Забег уже кончен (победа по цели или KABOOM): Коллектору за долгом идти незачем.
     // Без этой строки он приезжал бы поверх экрана победы — его вызов стоит в таймере endOfSpins.
     if (this.isGameOver) return;
+    this.rescueReason = 'debt'; // метрика: сюда пришли за неоплаченным долгом
     // Коллектор пришёл — тьма рассеивается совсем. Обучение ещё не дошло до конца — закрываем и его (мастер-флаг):
     // иначе оно вернулось бы в следующий забег и говорило бы поверх обычной игры.
     if (this.tutorialActive()) this.finishTutorial();
@@ -155,7 +162,7 @@ export abstract class CollectorScene extends SaveScene {
         return;
       }
       if (!rescueAllowed(this.rescueUsedThisRun)) {
-        this.kaboom(); // яма уже была: второй раз фишек на долг не хватает — конец забега
+        this.kaboom('debt'); // яма уже была: второй раз фишек на долг не хватает — конец забега
         return;
       }
       this.sfx.play('warning');
@@ -252,6 +259,8 @@ export abstract class CollectorScene extends SaveScene {
         this.panel.flyTickets(earned, x, y, () => {
           this.tickets += earned;
           this.refreshHud();
+          // Событие метрики: долг закрыт — раньше конца раунда (early) или на расплате (auto).
+          this.trackEvent('debt_paid', { mode: this.isPaidEarly ? 'early' : 'auto', round: this.round, tickets: earned, balance: this.balance });
         });
       },
       () => {
@@ -272,8 +281,9 @@ export abstract class CollectorScene extends SaveScene {
    */
   protected enterLastChance(): void {
     if (this.isGameOver) return; // забег уже кончен (победа или KABOOM): яме здесь делать нечего
+    this.rescueReason = 'theft'; // метрика: сюда привёл провал кражи
     if (!rescueAllowed(this.rescueUsedThisRun)) {
-      this.kaboom();
+      this.kaboom('theft');
       return;
     }
     // Провал случился посреди раунда: раунд закрыт — рычаг, «забрать» и действия молчат, пока идёт спасение.
@@ -296,6 +306,7 @@ export abstract class CollectorScene extends SaveScene {
    */
   private startRescue(): void {
     this.isRescue = true;
+    this.trackEvent('rescue_started', { round: this.round, reason: this.rescueReason }); // событие метрики: последний шанс
     this.rescueUsedThisRun = true; // спасение одно за забег: вторую яму не прощают (флаг липкий, откат его не снимает)
     this.pot = 0;
     this.rescueGrid = null;
@@ -477,6 +488,7 @@ export abstract class CollectorScene extends SaveScene {
    */
   private winRescue(): void {
     this.isRescueWinPending = true;
+    this.trackEvent('rescue_survived', { round: this.round }); // событие метрики: паттерн собран, выжил
     this.rescueHintLive = false;
     this.screen.endPick();
     this.screen.announceSequence([{ text: t('rescueSurvived') }]); // «ПАТТЕРН СОБРАН» на стекле
@@ -516,8 +528,9 @@ export abstract class CollectorScene extends SaveScene {
    * проиграл, ВСЁ»): счёт раунда не двигается, магазин не открывается.
    */
   private failRescue(): void {
+    const reason = this.rescueReason; // долг или кража привели в спасение — по этому и конец забега
     this.closeRescue();
-    this.kaboom();
+    this.kaboom(reason);
   }
 
   /**
@@ -776,8 +789,10 @@ export abstract class CollectorScene extends SaveScene {
    * Конец забега: на экране автомата KABOOM, потом автомат взрывается, всё темнеет, и на нём — экран DEATH.
    * Кнопки «ЗАНОВО» на нём нет (DONTLIKE п.7): дальше три улучшения, а если улучшать нечего — кнопка появляется.
    */
-  protected kaboom(): void {
+  protected kaboom(reason: GameOverReason = 'debt'): void {
     this.isGameOver = true;
+    // Событие метрики: забег кончился. debts — закрыто долгов (round − 1), chips — набрано игры за забег.
+    this.trackEvent('game_over', { round: this.round, phase: this.phase.number, seconds: this.runSeconds(), reason, debts: this.closedDebts(), chips: this.earned });
     unlockActions(); // первая смерть: действия между прокрутками открываются навсегда
     this.bankRunAmulets(); // забег кончился: его амулеты ждут выбора памяти на старте следующего (шаг 38)
     // Строки обучения первой смерти впереди? Тогда KABOOM под ними не показываем: только затемнение экрана смерти,

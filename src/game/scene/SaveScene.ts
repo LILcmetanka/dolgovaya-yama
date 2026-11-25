@@ -175,6 +175,8 @@ export abstract class SaveScene extends ShopScene {
       // Откат не пополняет страховку: сработки из этого раунда и с плёнки берём по большей.
       insuranceSaves: Math.max(record.round === this.round ? this.insuranceSaves : 0, record.insuranceSaves ?? 0),
     };
+    // Метрика: с какого раунда и на какой откатились; rescue — откат случился в раунде спасения (DONTLIKE п.14).
+    this.trackEvent('tape_rewind', { round: this.round, to: tape.round, rescue: this.isRescue });
     this.cassette.rewind(() => this.scene.restart({ tape, tapesBought, devUsed: this.devUsedThisRun, achievements: this.pendingAchievements() }));
   }
 

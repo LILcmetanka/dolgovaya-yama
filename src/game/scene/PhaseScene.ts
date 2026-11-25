@@ -33,6 +33,7 @@ export abstract class PhaseScene extends BaseScene {
    * огни бегут красным и потом в покое оранжевые, тревожный сигнал, сердце чаще.
    */
   private announcePhase(): void {
+    if (this.phase.number === 2) this.trackPhase2(); // событие метрики: впервые в забеге началась фаза 2
     this.screen.announcePhase(this.phase.number);
     this.panel.flyPhaseSigns();
     this.screen.setCalmColor(this.calmLampColor()); // сначала цвет огней в покое, потом вспышка (наоборот — цвет погасит вспышку)

@@ -7,6 +7,7 @@ import type { Pact } from '../dealerGame';
 import { CHIP_GOAL } from '../gameConfig';
 import { garlicOn, noEffects, START_SLOTS, type Item, type ItemEffects, type ShopItem } from '../items';
 import { formatChips, t } from '../lang';
+import { newAttemptId, track } from '../metrics';
 import { PHASES, type Phase } from '../phases';
 import type { MachineId } from '../machines';
 import type { Pattern } from '../patterns';
@@ -209,6 +210,15 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isActionsOpen = false; // панель действий вне прокрутки (шаг 29) открыта — крутить и забирать нельзя
   protected canRestartWithSpace = false; // Пробел на экране DEATH срабатывает не сразу
 
+  // ---------- Метрики (metrics.ts) ----------
+  // Поля класса при scene.restart не сбрасываются, поэтому id попытки и время старта переживают откат кассетой
+  // (тот же забег). Новый забег ставит их заново — GameScene.create зовёт startMetricsRun.
+  protected attemptId = ''; // id текущей попытки: по нему связываются события одного забега
+  protected runStartedAt = 0; // когда начался забег (Date.now): от него считается seconds в событиях
+  protected runSource: 'new' | 'after_death' = 'new'; // первый забег игрока или уже после смерти
+  private isFirstSpinTracked = false; // game_start уже отправлен в этом забеге
+  private isPhase2Tracked = false; // phase_2_reached уже отправлен в этом забеге
+
   // Звук создаётся один раз вместе со сценой и живёт весь сеанс: при scene.restart() он тот же (аудиоконтекстов в браузере мало).
   protected readonly sfx = new Sound();
 
@@ -332,6 +342,45 @@ export abstract class BaseScene extends Phaser.Scene {
     this.isAtMonitor = false;
     this.isActionsOpen = false; // шаг 29: панель действий в новом забеге закрыта
     this.canRestartWithSpace = false;
+  }
+
+  // ---------- Метрики (metrics.ts) ----------
+
+  /**
+   * Новый забег в метриках: новый id попытки, время старта, откуда забег (первый или после смерти) и флаги событий.
+   * Зовёт GameScene.create — только для нового забега: откат кассетой поле attemptId не трогает (тот же забег).
+   */
+  protected startMetricsRun(): void {
+    this.attemptId = newAttemptId();
+    this.runStartedAt = Date.now();
+    this.runSource = this.runsPlayed > 1 ? 'after_death' : 'new';
+    this.isFirstSpinTracked = false;
+    this.isPhase2Tracked = false;
+  }
+
+  /** Событие Метрики с общим контекстом забега: id попытки (version добавляет metrics.track). */
+  protected trackEvent(event: string, params: Record<string, string | number | boolean> = {}): void {
+    track(event, { attempt: this.attemptId, ...params });
+  }
+
+  /** Сколько секунд идёт забег — для параметра seconds в событиях. */
+  protected runSeconds(): number {
+    return Math.max(0, Math.round((Date.now() - this.runStartedAt) / 1000));
+  }
+
+  /** Первая прокрутка забега: один раз за забег — game_start. Зовёт RoundScene.spin. */
+  protected trackRunStart(): void {
+    if (this.isFirstSpinTracked) return;
+    this.isFirstSpinTracked = true;
+    const upgrades = Object.values(this.upgrades).reduce<number>((sum, count) => sum + (count ?? 0), 0);
+    this.trackEvent('game_start', { round: 1, upgrades, source: this.runSource });
+  }
+
+  /** Впервые в забеге началась фаза 2: один раз за забег — phase_2_reached. Зовёт PhaseScene.checkPhase. */
+  protected trackPhase2(): void {
+    if (this.isPhase2Tracked) return;
+    this.isPhase2Tracked = true;
+    this.trackEvent('phase_2_reached', { round: this.round, balance: this.balance, seconds: this.runSeconds() });
   }
 
   /**
