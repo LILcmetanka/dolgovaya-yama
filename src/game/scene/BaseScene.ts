@@ -5,7 +5,7 @@ import { resetCodex } from '../codex';
 import { isDevMode } from '../devmode';
 import type { Pact } from '../dealerGame';
 import { CHIP_GOAL } from '../gameConfig';
-import { garlicOn, noEffects, type Item, type ItemEffects, type ShopItem } from '../items';
+import { garlicOn, noEffects, START_SLOTS, type Item, type ItemEffects, type ShopItem } from '../items';
 import { formatChips, t } from '../lang';
 import { PHASES, type Phase } from '../phases';
 import type { MachineId } from '../machines';
@@ -16,7 +16,7 @@ import { skullShareOf, type WeightContext } from '../skullShare';
 import type { RunSave, TapeState } from '../save';
 import { Sound } from '../sound';
 import { LAMP_ANGRY, LAMP_BLOOD, LAMP_GARLIC, LAMP_GOLD, LAMP_LUCK } from '../theme';
-import { forgivesDebt, neutralUpgrades, startItemSlots, symbolWeightBonus, upgradeEffects, type PurchasedUpgrades, type UpgradeEffects } from '../upgrades';
+import { forgivesDebt, neutralUpgrades, symbolWeightBonus, upgradeEffects, type PurchasedUpgrades, type UpgradeEffects } from '../upgrades';
 import type { AmuletCase } from '../parts/amuletCase';
 import type { AmuletRack } from '../parts/amuletRack';
 import type { Atmosphere } from '../parts/atmosphere';
@@ -48,6 +48,8 @@ const ANGRY_TENSION = 0.25; // фаза 2: столько тревоги доб�
 const PAY_EARLY_GLOW_SPINS = 3;
 // Пороги по пути к цели: на них на стекле новость «НАБРАНО N» (1 000 000 — уже победа, не новость).
 const CHIP_MILESTONES = [100_000, 500_000];
+// Сколько ждать очередь новостей, прежде чем считать её снятой: строка держится GLASS_NEWS_TIME (2,6 с) и тает 0,4 с.
+const NEWS_QUEUE_GUARD_MS = 3400;
 
 /** Рекорд из localStorage. Если хранилище недоступно — 0, игра работает и так. */
 function loadRecord(): number {
@@ -122,7 +124,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected pot = 0; // кон: выиграно, но ещё не забрано — паттерн из черепов сжигает его
   protected streak = 0; // серия: +1 за прокрутку без паттерна из черепов; черепа оставляют от неё треть (streakAfterSkull), «забрать» уменьшает
   protected record = 0; // рекорд: больше всего закрытых долгов за одну игру
-  protected slots = 0; // сколько мест на полке открыто
+  protected slots = 0; // сколько мест на полке открыто (старт — START_SLOTS, остальные покупаются за фишки)
   protected shelf: (Item | null)[] = []; // что лежит на полке, по месту на клетку; null — пусто
   protected itemEffects: ItemEffects = noEffects(); // какие предметы сейчас включены
   protected offer: (ShopItem | null)[] = []; // что лежит в торговом автомате; купленное — null
@@ -157,7 +159,8 @@ export abstract class BaseScene extends Phaser.Scene {
   protected isTapeRestart = false;
   protected deferredThisRun = false; // улучшение №10: отсрочка в этом забеге уже была (липкая, как rescueUsed)
   protected pactAmuletBurns = false; // сделка №34: следующий купленный амулет сгорит сразу
-  protected amuletChipUsedThisRun = false; // мини-чемодан за фишки (DONTLIKE п.7): амулет за фишки уже брали — откат не возвращает
+  protected miniCaseBought = 0; // мини-чемодан за фишки: сколько амулетов уже взято за забег (до MINI_CASE_PURCHASES)
+  protected miniCaseShopRound = 0; // номер магазина (раунда), где взяли последний амулет за фишки; 0 — не брали
   protected freeGiftGiven = false; // улучшение №40 (28в): подарок первого магазина уже выдан
   protected startSymbolId: string | null = null; // улучшение №33 (28в): выбранный первый символ забега
   protected startGridGiven = false; // первая сетка забега уже получила джокера (№32) и выбранный символ (№33)
@@ -174,6 +177,11 @@ export abstract class BaseScene extends Phaser.Scene {
   private achievementQueue: AchievementId[] = []; // ачивки, которые ещё не показали: выпало несколько — идут по очереди
   private achievementShown: AchievementId | null = null; // какая ачивка сейчас на экране (её тоже нельзя потерять при рестарте)
   private isAchievementShown = false; // окно ачивки занято: следующая ждёт своей очереди
+  // Новости, которым сейчас нельзя появиться на стекле (магазин открыт, идёт реплика Дилера, концовка):
+  // копятся здесь и выходят по одной после pumpPopups (DONTLIKE, 25.11 — ничего поверх панели магазина).
+  private pendingNews: string[] = [];
+  private isNewsPlaying = false; // очередь новостей уже идёт: следующая встанет после её конца
+  private newsGuard: Phaser.Time.TimerEvent | null = null; // страховка: новость сняли извне — очередь всё равно поедет дальше
   protected isEndScreenOpen = false; // экран конца забега (победа, рекорд, смерть) на экране: окно ачивки ждёт, пока его закроют
   private isDevNoticeShown = false; // новость «ТЕСТ: ачивки не пишутся» уже была в этом забеге: второй раз не спамим
   private isDevNoticePending = false; // её отложили (магазин, планшет, пауза, концовка): на стекле сейчас не видно
@@ -229,7 +237,7 @@ export abstract class BaseScene extends Phaser.Scene {
   protected actionBoard!: ActionBoard; // табличка «ДЕЙСТВИЯ» на стене: вход в панель действий (шаг 29)
   protected reveal: Reveal | null = null; // тьма первого забега; null — обучение пройдено или его нет
 
-  /** Начало забега: первый долг, пустое табло, 2 места на полке, ничего не включено, автомат обычный. */
+  /** Начало забега: первый долг, пустое табло, START_SLOTS мест на полке, ничего не включено, автомат обычный. */
   protected resetState(): void {
     // Улучшения (шаг 28): что куплено в прошлых забегах, читаем здесь — раньше долга и всего остального.
     this.upgrades = purchasedUpgrades();
@@ -237,7 +245,8 @@ export abstract class BaseScene extends Phaser.Scene {
     this.runsPlayed = this.isTapeRestart ? runNumber() : beginRun(); // откат кассетой — тот же забег, номер не двигаем (№8)
     this.deferredThisRun = false; // №10: отсрочка снова доступна
     this.pactAmuletBurns = false; // сделка №34: в новом забеге «следующий амулет сгорит» ещё не назначен
-    this.amuletChipUsedThisRun = false; // мини-чемодан: амулет за фишки в новом забеге снова доступен
+    this.miniCaseBought = 0; // мини-чемодан: в новом забеге снова два амулета за фишки
+    this.miniCaseShopRound = 0; // и покупок за фишки ещё не было ни в каком магазине
     this.freeGiftGiven = false; // №40: подарок первого магазина ещё не выдан
     this.startSymbolId = null; // №33: выбираем символ заново в каждом новом забеге
     this.startGridGiven = false; // первая сетка ещё не получила джокера и выбранный символ
@@ -265,6 +274,10 @@ export abstract class BaseScene extends Phaser.Scene {
     this.achievementQueue = [];
     this.achievementShown = null;
     this.isAchievementShown = false;
+    this.pendingNews = [];
+    this.isNewsPlaying = false;
+    this.newsGuard?.remove(false);
+    this.newsGuard = null;
     this.isEndScreenOpen = false;
     this.isDevNoticeShown = false; // новый забег: про запрет ачивок в ТЕСТ скажем снова, если он всё ещё включён
     this.isDevNoticePending = false;
@@ -275,8 +288,8 @@ export abstract class BaseScene extends Phaser.Scene {
     this.pot = 0;
     this.streak = 0;
     this.record = loadRecord();
-    // №21 (28б): +1 место на полке с первого кадра, но не больше MAX_SLOTS — больше мест не бывает.
-    this.slots = startItemSlots(this.upgradeEffects.itemSlots);
+    // Полка начинается с двух мест (START_SLOTS); третье–восьмое открываются покупкой в магазине за фишки.
+    this.slots = START_SLOTS;
     this.shelf = new Array<Item | null>(this.slots).fill(null);
     this.itemEffects = noEffects();
     this.offer = [];
@@ -360,10 +373,14 @@ export abstract class BaseScene extends Phaser.Scene {
     this.cassette.showUsable(this.canRecord() || this.canRewind());
     this.monitor.setEnabled(this.canAct() || this.isAtMonitor || this.isRerolling); // планшет — и во время обязательного выбора: он игру не двигает
     // До первой смерти на кнопке действий пустое стекло, после — надпись; гаснет она, когда действовать нельзя.
-    const unlocked = isActionsUnlocked();
-    this.actionBoard.setState(this.canUseActions(), unlocked); // пустой экран до смерти, надпись — после
+    // Пока открыт экран конца забега (смерть, улучшения, победа), надписи нет вовсе: «ДЕЙСТВИЯ» появляется после
+    // выбора улучшения или в новом забеге (DONTLIKE: надпись не должна вставать раньше списка улучшений).
+    const unlocked = isActionsUnlocked() && !this.isEndScreenOpen;
+    this.actionBoard.setState(this.canUseActions(), unlocked); // пустой экран до смерти, надпись — после и вне концовки
     // Отложенная новость про ТЕСТ: как только стекло снова на виду (магазин уехал, планшет закрыт, пауза снята), её показываем.
     this.flushDevNotice();
+    // Заодно выходят новости и ачивки, что ждали закрытого магазина или конца реплики Дилера.
+    this.pumpPopups();
     const tension = this.tension();
     this.sfx.setTension(tension);
     this.atmosphere.setTension(tension);
@@ -414,7 +431,7 @@ export abstract class BaseScene extends Phaser.Scene {
     const milestone = crossed.at(-1);
     if (milestone === undefined) return;
     // Без процента от цели: число про оборот (earned), а цель и процент считаются от баланса — мешать их нельзя.
-    this.screen.announceNews(t('chipsMilestone', formatChips(milestone)));
+    this.news(t('chipsMilestone', formatChips(milestone)));
     this.sfx.play('news', 0.3);
   }
 
@@ -459,11 +476,58 @@ export abstract class BaseScene extends Phaser.Scene {
     if (!this.isDevNoticePending || this.isDevNoticeShown) return;
     // Магазин закрывает стекло панелью, планшет ложится поверх (OVERLAY_DEPTH), пауза и концовка — ещё выше:
     // новость там не прочитать. Ждём следующего refreshHud — он придёт, когда экран уберут.
-    if (this.isShopOpen || this.isAtMonitor || this.isPaused || this.isEndScreenOpen) return;
+    if (!this.canShowPopups()) return;
     this.isDevNoticePending = false;
     this.isDevNoticeShown = true;
-    this.screen.announceNews(t('achievementDevNotice'));
+    this.news(t('achievementDevNotice'));
     this.sfx.play('news', 0.3);
+  }
+
+  /**
+   * Можно ли сейчас показывать новости и окна: магазин закрывает стекло панелью, планшет, пауза и концовка
+   * лежат ещё выше. Текст Дилера (busy) добавляет TutorialScene, уезжающую панель — ShopScene.
+   */
+  protected canShowPopups(): boolean {
+    return !this.isShopOpen && !this.isAtMonitor && !this.isPaused && !this.isEndScreenOpen;
+  }
+
+  /**
+   * Новость на стекле. Если сейчас её не видно (магазин, реплика Дилера, концовка), она не пропадает:
+   * копится в pendingNews и выходит после pumpPopups — по одной, в порядке появления (DONTLIKE, 25.11).
+   */
+  protected news(text: string): void {
+    this.pendingNews.push(text);
+    this.pumpPopups();
+  }
+
+  /** Показать одну новость из очереди; следующая встанет после её конца — так снятая извне новость не уносит остальные. */
+  private flushNews(): void {
+    if (this.isNewsPlaying || !this.canShowPopups() || this.pendingNews.length === 0) return;
+    this.isNewsPlaying = true;
+    const text = this.pendingNews.shift();
+    if (text === undefined) {
+      this.isNewsPlaying = false; // очередь опустела между проверкой и shift — показывать нечего
+      return;
+    }
+    let fired = false;
+    const done = (): void => {
+      if (fired) return; // страховка и настоящий конец зовут одно и то же — считаем один раз
+      fired = true;
+      this.newsGuard?.remove(false);
+      this.newsGuard = null;
+      this.isNewsPlaying = false;
+      this.pumpPopups(); // новость кончилась — следующая или ачивки
+    };
+    this.screen.announceSequence([{ text }], done);
+    // Новость могут снять извне (clearNews в спасении или у обязательного решения) — done тогда не позовут.
+    // Страховка по времени не даёт очереди застрять: ачивки за ней ждать не должны.
+    this.newsGuard = this.time.delayedCall(NEWS_QUEUE_GUARD_MS, done);
+  }
+
+  /** Всё скопившееся на показ: сначала новости, за ними ачивки. Зовётся после магазина и после текста Дилера. */
+  protected pumpPopups(): void {
+    this.flushNews();
+    this.pumpAchievements();
   }
 
   /**
@@ -483,17 +547,17 @@ export abstract class BaseScene extends Phaser.Scene {
    * что «Конец?» и «Это не конец...» терялись). Так же ждут планшет (isAtMonitor, глубина 20) и пауза (isPaused,
    * 30): окно на 13 лежало бы под ними, а таймер 2.5 с шёл бы зря. Очередь довозит continueRun («ДАЛЬШЕ»),
    * lookBack (закрытие планшета), resumeGame (снятие паузы) или новая сцена после «Заново».
+   * Магазин и текст Дилера — тоже ждут: окно во время покупок или реплики автору не нужно (DONTLIKE, 25.11).
    */
   protected pumpAchievements(): void {
-    if (this.isAchievementShown || !this.achievements || this.isEndScreenOpen || this.isAtMonitor || this.isPaused) return;
+    if (this.isAchievementShown || !this.achievements || !this.canShowPopups()) return;
+    if (this.isNewsPlaying || this.pendingNews.length > 0) return; // сначала новости, что ждали дольше
     const id = this.achievementQueue.shift();
     if (id === undefined) return;
     this.isAchievementShown = true;
     this.achievementShown = id;
     const achievement = achievementById(id);
-    // В магазине панель лежит над стеклом автомата: новость на стекле читалась бы поверх панели, где её не ждут.
-    // Там остаётся только окно ачивки — оно выше панели магазина (13 против 9).
-    if (!this.isShopOpen) this.screen.announceNews(t('achievementNews', t(achievement.name))); // на стекле — только название (как просил автор)
+    this.news(t('achievementNews', t(achievement.name))); // на стекле — только название (как просил автор)
     this.sfx.play('news', 0.4);
     this.achievements.show(achievement, () => {
       this.isAchievementShown = false;

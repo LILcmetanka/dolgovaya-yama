@@ -32,7 +32,7 @@ import {
 } from '../progress';
 import type { Grid } from '../rules';
 import { GAME_OVER_DEPTH, GOLD_TEXT, GREEN_TEXT, LAMP_OFF, LAMP_RED, UPGRADE_GROUP_ICONS } from '../theme';
-import { DEATH_LINES, DEATH_SCREEN_LINES, RESCUE_WIN_LINES, TUTORIAL_LINE_HOLD } from '../tutorial';
+import { DEATH_LINES, DEATH_SCREEN_LINES, RESCUE_WIN_LINES, type TutorialLine } from '../tutorial';
 import { UPGRADE_SECOND_PRICE, memoryPickCount, roundDebtTickets, upgradeOffers, type Upgrade } from '../upgrades';
 import { SaveScene } from './SaveScene';
 
@@ -46,8 +46,6 @@ const RESCUE_TENSION = 1; // в раунде спасения сердце в м
 const RESCUE_WIN_PAUSE = 1200; // паттерн собран: столько видно новость, потом магазин
 // Строки обучения на экране смерти лежат выше затемнения экрана DEATH (GAME_OVER_DEPTH), иначе тьма их съест.
 const DEATH_TEXT_DEPTH = GAME_OVER_DEPTH + 2;
-// Запас страховки поверх времени строк: заставка почему-то не позвала done — экран улучшений не должен потеряться.
-const DEATH_TEXT_GUARD_MS = 4000;
 // Победа (набрано CHIP_GOAL).
 const VICTORY_SETTLE_TIME = 400; // после прибавки фишек столько ждём: текущее действие успевает доиграть
 const VICTORY_PAUSE = 1400; // лампы погасли, новое число на табло видно — пауза, потом затемнение
@@ -229,7 +227,8 @@ export abstract class CollectorScene extends SaveScene {
   /**
    * Отдать долг: фишки уходят с табло в банкомат, остаток остаётся на табло (с «Процентами» растёт),
    * за долг — билеты: они летят из купона на табло. Числа меняются по ходу анимации: фишки — когда купон напечатан,
-   * билет — когда он долетел до табло, и только тогда refreshHud. Банкомат уедет — магазин.
+   * билет — когда он долетел до табло, и только тогда refreshHud. Банкомат уедет — дорожка денег (один раз,
+   * шаг 46б) и магазин.
    */
   protected payDebt(): void {
     if (!this.isAwaitingPayment) return;
@@ -256,12 +255,38 @@ export abstract class CollectorScene extends SaveScene {
         });
       },
       () => {
-        this.openShop();
+        // Дорожка денег (шаг 46б): один раз после первой оплаты — семь строк и только потом магазин.
+        // Ранняя оплата (DONTLIKE, 25.11): сразу после второго долга и ДО магазина — панель выезжает только тогда,
+        // когда Диллер договорил, иначе текст ложился поверх витрины с новым товаром.
+        this.tutorialMoneyPaid(() => this.tutorialEarlyPayBeforeShop(() => this.openShop()));
       },
     );
   }
 
   // ---------- Раунд спасения ----------
+
+  /**
+   * Провал риска в действиях (кража) — не KABOOM сразу, а последний шанс: тот же вход, что у неоплаченного долга.
+   * Раунд закрывается, тревога, красные огни и GOOD LUCK на банкомате, потом раунд спасения (DONTLIKE, 25.11).
+   * Спасение одно за забег: уже было — второй раз не прощают, KABOOM как обычно (rescueAllowed).
+   */
+  protected enterLastChance(): void {
+    if (this.isGameOver) return; // забег уже кончен (победа или KABOOM): яме здесь делать нечего
+    if (!rescueAllowed(this.rescueUsedThisRun)) {
+      this.kaboom();
+      return;
+    }
+    // Провал случился посреди раунда: раунд закрыт — рычаг, «забрать» и действия молчат, пока идёт спасение.
+    this.isRoundOver = true;
+    // Коллектор пришёл — тьма рассеивается совсем, обучение закрывается, как в callCollector.
+    if (this.tutorialActive()) this.finishTutorial();
+    else this.finishDarkness();
+    this.tooltip.hide();
+    this.sfx.play('warning');
+    this.screen.flashLamps(LAMP_RED, GOOD_LUCK_TIME);
+    // Банкомат выезжает без фишек на долг: на его экране GOOD LUCK, уехал — начался раунд спасения.
+    this.collector.reachOut(this.debt, false, () => this.startRescue());
+  }
 
   /**
    * Фишек не хватило: банкомат уехал с GOOD LUCK — всё уходит в красный, игра даёт 5 прокруток.
@@ -300,15 +325,18 @@ export abstract class CollectorScene extends SaveScene {
     const introDone = (): void => {
       this.isRescueIntro = false; // заставка погасла: рычаг снова слушается
     };
-    if (this.rescueIntroTutorial) this.tutorialTalkKeys(DEATH_LINES, introDone);
-    else this.collector.showScreenSequence(this.rescueIntroLines(), introDone);
+    if (this.rescueIntroTutorial) this.tutorialTalk(DEATH_LINES, introDone);
+    else this.collector.showTutorialSequence(this.rescueIntroLines(), introDone);
   }
 
-  /** Строки заставки спасения на текущем языке: их же заново показывает смена языка (шаг 35). */
-  private rescueIntroLines(): string[] {
-    if (this.rescueIntroTutorial) return DEATH_LINES.map((key) => t(key)); // первая яма обучения: строки Диллера
-    if (!this.rescueIntroFull) return [t('rescueLastChanceShort')];
-    return [t('rescueAlert1'), t('rescueAlert2'), t('rescueAlert3')];
+  /**
+   * Строки заставки спасения на текущем языке — крупным текстом обучения (кегль 36, как у Диллера), их же заново
+   * показывает смена языка (шаг 35). Мелкая заставка showScreenSequence здесь больше не звучит (DONTLIKE, 25.11).
+   */
+  private rescueIntroLines(): readonly TutorialLine[] {
+    if (this.rescueIntroTutorial) return DEATH_LINES; // первая яма обучения: строки Диллера
+    if (!this.rescueIntroFull) return [{ key: 'rescueLastChanceShort' }];
+    return [{ key: 'rescueAlert1' }, { key: 'rescueAlert2' }, { key: 'rescueAlert3' }];
   }
 
   /**
@@ -316,7 +344,7 @@ export abstract class CollectorScene extends SaveScene {
    * перерисовываем их на новом языке с того же места (шаг 35). Ничего не висит — ничего не трогаем.
    */
   protected relabelRescueTexts(): void {
-    if (this.isRescueIntro) this.collector.relabelScreenSequence(this.rescueIntroLines());
+    if (this.isRescueIntro) this.collector.relabelTutorialSequence(this.rescueIntroLines());
     if (this.rescueHintLive) this.showRescueHint();
   }
 
@@ -710,15 +738,24 @@ export abstract class CollectorScene extends SaveScene {
   }
 
   /**
+   * Строки обучения первой смерти впереди: обучение не пройдено целиком и дорожка death ещё не показана.
+   * Общая проверка для экрана смерти (KABOOM под строками не мигает) и для самой дорожки.
+   */
+  private deathTextsPending(): boolean {
+    return !isTutorialDone() && tutorialStep('death') === 0;
+  }
+
+  /**
    * Обучение первой смерти: между экраном DEATH и экраном улучшений Диллер говорит семь строк (дорожка death).
-   * Строки ложатся поверх затемнения экрана DEATH (DEATH_TEXT_DEPTH): ниже тьма их съела бы. Показали —
-   * дорожка пройдена; обучение пройдено или уже показано — вызывающий сразу идёт к улучшениям.
+   * Строки идут крупным текстом обучения (collector.showTutorialSequence — куски своих тонов, кегль 36), тем же,
+   * что у интро, а не мелкой заставкой showScreenSequence (DONTLIKE, 25.11). Слой — поверх затемнения экрана DEATH
+   * (DEATH_TEXT_DEPTH): ниже тьма их съела бы. Показали — дорожка пройдена, сразу улучшения.
    * Страховка: если заставка почему-то не позвала done, строки снимаются, и экран улучшений всё равно встаёт.
    */
   private showDeathTutorial(done: () => void): void {
     // Мастер-флаг значит «обучение пропущено целиком»: старые сохранения и браузерные сценарии с tutorialDone:
     // true новых строк не видят. Дорожка показывается один раз (tutorialStep('death') === 0) и мастер-флаг не ставит.
-    if (isTutorialDone() || tutorialStep('death') !== 0) {
+    if (!this.deathTextsPending()) {
       done();
       return;
     }
@@ -726,16 +763,13 @@ export abstract class CollectorScene extends SaveScene {
     const finish = (): void => {
       if (finished) return; // заставка и страховка зовут одно и то же — дальше один раз
       finished = true;
+      this.collector.clearScreenSequence(); // недоигранные строки не должны висеть над улучшениями
       setTutorialStep('death', 1);
       done();
     };
-    const texts = DEATH_SCREEN_LINES.map((key) => t(key));
-    this.collector.showScreenSequence(texts, finish, { hold: TUTORIAL_LINE_HOLD, depth: DEATH_TEXT_DEPTH });
-    this.time.delayedCall(texts.length * TUTORIAL_LINE_HOLD + DEATH_TEXT_GUARD_MS, () => {
-      if (finished) return;
-      this.collector.clearScreenSequence(); // недоигранные строки не должны висеть над улучшениями
-      finish();
-    });
+    const lines = DEATH_SCREEN_LINES.map((key) => ({ key }));
+    // Страховку зовёт сам tutorialTalk (TUTORIAL_GUARD_MS), если заставка почему-то не позвала done.
+    this.tutorialTalk(lines, finish, 'chain', DEATH_TEXT_DEPTH);
   }
 
   /**
@@ -746,6 +780,9 @@ export abstract class CollectorScene extends SaveScene {
     this.isGameOver = true;
     unlockActions(); // первая смерть: действия между прокрутками открываются навсегда
     this.bankRunAmulets(); // забег кончился: его амулеты ждут выбора памяти на старте следующего (шаг 38)
+    // Строки обучения первой смерти впереди? Тогда KABOOM под ними не показываем: только затемнение экрана смерти,
+    // поверх — строки, а после них сразу улучшения (без второй вспышки KABOOM между текстами и списком).
+    const firstDeathTexts = this.deathTextsPending();
     // Экран DEATH тоже ляжет выше окна ачивки: выданное перед смертью ждёт в очереди и доедет в новом забеге
     // (restartGame передаёт pendingAchievements), а не тает под экраном.
     this.isEndScreenOpen = true;
@@ -764,14 +801,20 @@ export abstract class CollectorScene extends SaveScene {
       this.time.delayedCall(KABOOM_AFTER_TIME, () => {
         this.collector.clearGoodLuck(); // KABOOM погас: под экраном DEATH не должно остаться старого мигающего заголовка
         this.collector.blackout(() => {
-          this.collector.showDeath(() => this.restartGame(), 'KABOOM');
+          // Обычный конец забега — KABOOM на экране смерти. Обучение первой смерти — экран смерти без надписи:
+          // строки учат сами, а KABOOM вернётся, только если улучшать нечего (ниже).
+          this.collector.showDeath(() => this.restartGame(), firstDeathTexts ? null : 'KABOOM');
           // Сначала — строки обучения первой смерти (если она ещё не показана), потом улучшения.
           // После смерти — три улучшения (шаг 28). Память амулетов сюда больше не входит (шаг 38): она ждёт старта забега.
           // Кнопки «ЗАНОВО» на экране смерти нет (DONTLIKE п.7): улучшения есть — новый забег начнёт выбор,
-          // улучшать нечего — показываем кнопку, иначе забег не начать.
+          // улучшать нечего — показываем KABOOM и кнопку, иначе забег не начать.
           // Пробел начинает забег только после этого: во время строк он не должен перескочить улучшения.
           this.showDeathTutorial(() => {
-            if (!this.showUpgradeChoice()) this.collector.showRestartButton();
+            if (!this.showUpgradeChoice()) {
+              // Улучшать нечего: KABOOM и «ЗАНОВО» встают сразу, без вспышки между текстами и списком.
+              if (firstDeathTexts) this.collector.showDeathTitle('KABOOM');
+              this.collector.showRestartButton();
+            }
             this.time.delayedCall(RESTART_SPACE_DELAY, () => {
               this.canRestartWithSpace = true;
             });

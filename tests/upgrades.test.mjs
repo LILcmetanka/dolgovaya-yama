@@ -43,8 +43,8 @@ const MACH = await import('../src/game/machines.ts');
 /** Покупки из списка id по одному разу: так в тестах виднее, что именно взято. */
 const buy = (...ids) => Object.fromEntries(ids.map((id) => [id, 1]));
 
-test('пул: 40 улучшений с уникальными id, все однократные, кроме «Ещё копия» (×2)', () => {
-  assert.equal(UPG.UPGRADES.length, 40, 'первая партия 11 (28а), вторая 13 (28б), третья 10 (28в), четвёртая 6 (28г): №46 и №47 удалены шагом 38');
+test('пул: 39 улучшений с уникальными id, все однократные, кроме «Ещё копия» (×2)', () => {
+  assert.equal(UPG.UPGRADES.length, 39, 'первая партия 11 (28а), вторая 12 (28б), третья 10 (28в), четвёртая 6 (28г): №21, №46 и №47 удалены');
   const ids = UPG.UPGRADES.map((upgrade) => upgrade.id);
   assert.equal(new Set(ids).size, ids.length, 'id не повторяются');
   for (const upgrade of UPG.UPGRADES) {
@@ -53,15 +53,15 @@ test('пул: 40 улучшений с уникальными id, все одн�
     assert.ok(['spins', 'debt', 'chips', 'tickets', 'items', 'amulets', 'grid', 'shop', 'tape', 'other'].includes(upgrade.group), `${upgrade.id}: известная группа`);
   }
   // Номера исходного списка: 1, 3, 4 (прокрутки), 6, 7, 8, 10 (долг), 12, 13, 14, 15 (фишки), 16, 17, 18 (билеты),
-  // 21–25 (предметы), 26–30 (амулеты), 31–35 (сетка), 36–40 (магазин), 42, 44, 45 (кассета), 48–50 (прочее).
-  // №46 «+5% рекорда» и №47 «билет за ачивку» удалены целиком (DONTLIKE п.10 и п.1).
+  // 22–25 (предметы), 26–30 (амулеты), 31–35 (сетка), 36–40 (магазин), 42, 44, 45 (кассета), 48–50 (прочее).
+  // №21 «ещё место на полке», №46 «+5% рекорда» и №47 «билет за ачивку» удалены целиком.
   assert.deepEqual(
     ids,
     [
       'spin-first-round', 'spin-cap', 'spin-skull-free', 'debt-start', 'debt-growth', 'debt-forgive', 'debt-defer',
       'win-patterns', 'win-interest', 'win-piggy', 'win-insurance',
       'ticket-start', 'ticket-third-debt', 'ticket-jackpot',
-      'item-slot', 'item-price', 'item-clover-weight', 'item-cherry-weight', 'item-hammer-empty',
+      'item-price', 'item-clover-weight', 'item-cherry-weight', 'item-hammer-empty',
       'amulet-price', 'amulet-copy', 'amulet-first-socket', 'amulet-first-rare', 'amulet-survives-death',
       'grid-skull-share', 'grid-start-joker', 'grid-start-symbol', 'grid-jackpot', 'grid-blood-weight',
       'shop-discount', 'shop-extra-row', 'shop-ticket-share', 'shop-amulet-chips', 'shop-gift-item',
@@ -117,7 +117,6 @@ test('0 покупок — нейтральные числа: без улучш�
   assert.equal(effects.startTickets, 0, 'стартового билета нет');
   assert.equal(effects.debtTicketBonus, 0, 'билета за третий долг нет');
   assert.equal(effects.jackpotTickets, 0, 'джекпот платит как обычно');
-  assert.equal(effects.itemSlots, 0, 'мест на полке не прибавилось');
   assert.equal(effects.itemPriceMul, 1, 'предметы по обычной цене');
   assert.equal(effects.cloverWeight, 0, 'вес клевера обычный');
   assert.equal(effects.cherryWeight, 0, 'вес вишни обычный');
@@ -210,11 +209,6 @@ test('вторая партия (билеты, предметы, амулеты)
   // №18: джекпот 2 + 1 = 3 билета; обычный паттерн улучшение не трогает.
   assert.equal(B.JACKPOT_TICKETS + UPG.upgradeEffects(buy('ticket-jackpot')).jackpotTickets, 3, 'джекпот — 3 билета');
   assert.equal(B.JACKPOT_TICKETS, 2, 'без улучшения — 2');
-  // №21: +1 место, но не больше MAX_SLOTS.
-  assert.equal(UPG.startItemSlots(UPG.upgradeEffects(buy('item-slot')).itemSlots), 3, 'два места + 1 = 3');
-  assert.equal(UPG.startItemSlots(0), I.START_SLOTS, 'без улучшения — как было');
-  assert.equal(UPG.startItemSlots(99), I.MAX_SLOTS, 'больше MAX_SLOTS мест не бывает');
-  assert.equal(UPG.startItemSlots(Number.NaN), I.START_SLOTS, 'мусор — обычные места');
   // №22: −10% через ту же дверь цены, что и сделка №2; округление до 5 и нижняя граница 5 сохраняются.
   const mul = UPG.upgradeEffects(buy('item-price')).itemPriceMul;
   assert.equal(mul, 0.9, 'множитель 0,9');
@@ -324,8 +318,6 @@ test('третья партия (28в): сетка и магазин — чис�
   assert.equal(I.itemPrice(cigar, 540, effects.shopPriceMul), 195, '0,4 × 540 × 0,9 = 194,4 → 195');
   assert.equal(I.itemPrice(cigar, 540, 0.8 * effects.shopPriceMul), 155, '0,8 × 0,9 = 0,72 → 155');
   assert.equal(I.itemPrice(cigar, 10, effects.shopPriceMul), 5, 'не ниже 5 фишек');
-  assert.equal(I.slotPrice(2, 540, effects.shopPriceMul), 485, 'место тоже дешевле: 540 × 0,9 → 485');
-  assert.equal(I.slotPrice(2, 540), 540, 'без №36 место прежнее');
 
   // №37: витрина на ряд длиннее, но больше предметов, чем есть в игре, не выложить.
   assert.equal(I.offerRowCount(effects.offerRows), 4, 'три ряда + 1');
@@ -342,18 +334,20 @@ test('третья партия (28в): сетка и магазин — чис�
   assert.equal(I.ticketForChips(1000, 0), 400, 'без №38 — 400');
   assert.equal(I.ticketForChips(10, 0, 1, effects.ticketShareStart), 5, 'не ниже 5 фишек');
 
-  // №39: мини-чемодан вдвое дешевле; цена в фишках — доля рук (amulets.miniCasePrice), флаг липкий (кассета не возвращает).
+  // №39: мини-чемодан вдвое дешевле; цена в фишках — доля рук (amulets.miniCasePrice), покупки ведутся по записи.
   assert.equal(A.miniCasePrice(10000), 5000, 'мини-чемодан: половина фишек на руках');
   assert.equal(A.miniCasePrice(200), 300, 'мини-чемодан: ниже 300 не опускается');
   assert.equal(A.miniCasePrice(10000, 0.5), 2500, '№39: вдвое дешевле');
   assert.equal(A.miniCasePrice(200, 0.5), 300, '№39: нижняя граница не скидывается');
   assert.equal(A.miniCasePrice(Number.NaN), 300, 'мусор в балансе — нижняя граница');
   assert.equal(A.MINI_CASE_PLACES, 2, 'в мини-чемодане ровно два места');
-  assert.equal(A.MINI_CASE_PURCHASES, 1, 'амулет за фишки — один за забег');
+  assert.equal(A.MINI_CASE_PURCHASES, 2, 'амулетов за фишки — до двух за забег');
   assert.equal(UPG.upgradeEffects(buy('shop-amulet-chips')).miniCasePriceMul, 0.5, '№39 включён');
-  assert.equal(S.amuletChipUsedOf({}, false), false, 'ещё не брали');
-  assert.equal(S.amuletChipUsedOf({}, true), true, 'текущий флаг важнее плёнки');
-  assert.equal(S.amuletChipUsedOf({ amuletChipUsed: true }, false), true, 'старая плёнка не возвращает покупку');
+  assert.equal(S.miniCaseBoughtOf({}), 0, 'ещё не брали');
+  assert.equal(S.miniCaseBoughtOf({ miniCaseBought: 1 }), 1, 'один амулет на плёнке');
+  assert.equal(S.miniCaseBoughtOf({ miniCaseBought: 9 }), 2, 'больше двух не бывает');
+  assert.equal(S.miniCaseShopRoundOf({ miniCaseShopRound: 4 }), 4, 'магазин, где брали, едет с плёнкой');
+  assert.equal(S.miniCaseShopRoundOf({ miniCaseShopRound: Number.NaN }), 0, 'мусор — не брали');
 
   // №40: подарок — флаг и липкость; место под него ищет сцена (freeSlot), пул — тот же randomOffer.
   assert.equal(UPG.upgradeEffects(buy('shop-gift-item')).freeItemFirstShop, true, '№40 включён');
@@ -421,7 +415,7 @@ test('четвёртая партия (28г): прочее — автомат и
   assert.equal(S.skullCancelUsedOf({}, true), true, 'текущий флаг важнее плёнки');
 });
 
-test('все 40 покупок сразу: прибавки складываются, множители перемножаются', () => {
+test('все 39 покупок сразу: прибавки складываются, множители перемножаются', () => {
   const all = buy(...UPG.UPGRADES.map((upgrade) => upgrade.id));
   const effects = UPG.upgradeEffects(all);  assert.equal(effects.firstRoundSpins, 1, 'одна прокрутка');
   assert.equal(effects.spinCapBonus, 2, 'два к потолку');
@@ -439,7 +433,6 @@ test('все 40 покупок сразу: прибавки складывают
   assert.equal(effects.startTickets, 1, 'билет на старте');
   assert.equal(effects.debtTicketBonus, 1, 'билет за третий долг');
   assert.equal(effects.jackpotTickets, 1, 'джекпот +1 билет');
-  assert.equal(effects.itemSlots, 1, 'место на полке +1');
   assert.equal(effects.itemPriceMul, 0.9, 'предметы −10%');
   assert.equal(effects.cloverWeight, 1, 'клевер +1');
   assert.equal(effects.cherryWeight, 1, 'вишня +1');

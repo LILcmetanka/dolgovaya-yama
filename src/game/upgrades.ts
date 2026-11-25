@@ -10,7 +10,7 @@
  */
 
 import { INSURANCE_SHARE } from './amulets';
-import { MAX_SLOTS, START_SLOTS, TICKET_SHARE_START } from './items';
+import { TICKET_SHARE_START } from './items';
 import type { TextKey } from './lang';
 import { DEBT_GROWTH, JOKER, SYMBOLS, type Grid } from './rules';
 
@@ -18,10 +18,11 @@ import { DEBT_GROWTH, JOKER, SYMBOLS, type Grid } from './rules';
 export type UpgradeGroup = 'spins' | 'debt' | 'chips' | 'tickets' | 'items' | 'amulets' | 'grid' | 'shop' | 'tape' | 'other';
 
 /**
- * Id пула. Первая партия (28а) — 11 штук; вторая (28б) — ещё 13: билеты (№16–18), предметы (№21–25),
- * амулеты (№26–30); третья (28в) — 10: сетка (№31–35) и магазин (№36–40); четвёртая (28г) — кассета
+ * Id пула. Первая партия (28а) — 11 штук; вторая (28б) — 12: билеты (№16–18), предметы (№22–25),
+ * амулеты (№26–30); третья (28в) — 9: сетка (№31–35) и магазин (№36, 38–40); четвёртая (28г) — кассета
  * (№42, 44, 45) и прочее (№48–50). №46 «+5% рекорда к стартовым фишкам» и №47 «билет за ачивку» удалены
- * шагом 38 (`DONTLIKE.md` п.1 и п.10): пул 42 → 40.
+ * шагом 38 (`DONTLIKE.md` п.1 и п.10): пул 42 → 40. №21 «ещё место на полке» удалён 25.11: полка
+ * фиксированная. №37 «+1 ряд витрины» удалён 25.11 (автор: «убрать улучшение на 5 предметов»): пул 39 → 38.
  */
 export type UpgradeId =
   | 'spin-first-round'
@@ -39,8 +40,7 @@ export type UpgradeId =
   | 'ticket-start'
   | 'ticket-third-debt'
   | 'ticket-jackpot'
-  // 28б: предметы (№21–25)
-  | 'item-slot'
+  // 28б: предметы (№22–25)
   | 'item-price'
   | 'item-clover-weight'
   | 'item-cherry-weight'
@@ -57,9 +57,8 @@ export type UpgradeId =
   | 'grid-start-symbol'
   | 'grid-jackpot'
   | 'grid-blood-weight'
-  // 28в: магазин (№36–40)
+  // 28в: магазин (№36, 38–40)
   | 'shop-discount'
-  | 'shop-extra-row'
   | 'shop-ticket-share'
   | 'shop-amulet-chips'
   | 'shop-gift-item'
@@ -94,7 +93,6 @@ export interface UpgradeGain {
   startTickets?: number; // билеты на табло в начале забега (№16)
   debtTicketBonus?: number; // прибавка билетов за долг, закрытый в раунде UPGRADE_DEBT_TICKET_ROUND (№17)
   jackpotTickets?: number; // прибавка билетов за джекпот (№18)
-  itemSlots?: number; // прибавка мест на полке в начале забега (№21)
   itemPriceMul?: number; // во столько раз дешевле предметы (перемножается, №22)
   cloverWeight?: number; // прибавка веса клевера 🍀 (№23)
   cherryWeight?: number; // прибавка веса вишни 🍒 (№24)
@@ -111,7 +109,6 @@ export interface UpgradeGain {
   jackpotWinMul?: number; // во столько раз больше платит только джекпот-паттерн (№34)
   bloodWeight?: number; // прибавка веса крови 🩸 (№35)
   shopPriceMul?: number; // во столько раз дешевле всё в магазинах (перемножается, №36)
-  offerRows?: number; // прибавка рядов предметов в торговом автомате (№37)
   ticketShareStart?: number; // доля фишек за первый билет (№38; шаги роста не меняются)
   miniCasePriceMul?: number; // №39: во столько раз дешевле амулет за фишки в мини-чемодане (перемножается)
   freeItemFirstShop?: number; // 1 — в первом магазине забега один предмет бесплатно (№40)
@@ -152,7 +149,6 @@ export const UPGRADE_START_TICKETS = 1; // №16: билет на табло с 
 export const UPGRADE_DEBT_TICKET_ROUND = 3; // №17: только за долг, закрытый ровно в третьем раунде
 export const UPGRADE_DEBT_TICKET_BONUS = 1; // №17: +1 билет к обычному «билету за долг»
 export const UPGRADE_JACKPOT_TICKETS = 1; // №18: джекпот даёт на билет больше (2 + 1 = 3)
-export const UPGRADE_ITEM_SLOT_BONUS = 1; // №21: +1 место на полке в начале забега
 export const UPGRADE_ITEM_PRICE_MUL = 0.9; // №22: предметы дешевле на 10%
 export const UPGRADE_CLOVER_WEIGHT = 1; // №23: клевер 🍀 тяжелее на 1
 export const UPGRADE_CHERRY_WEIGHT = 1; // №24: вишня 🍒 тяжелее на 1
@@ -163,16 +159,17 @@ export const UPGRADE_SKULL_SHARE_DELTA = -0.01; // №31: доля черепо�
 export const UPGRADE_BLOOD_WEIGHT = 2; // №35: кровь 🩸 тяжелее на 2 (базовый вес 4)
 export const UPGRADE_JACKPOT_WIN_MUL = 1.2; // №34: джекпот платит ×120 вместо ×100
 export const UPGRADE_SHOP_PRICE_MUL = 0.9; // №36: всё в магазине дешевле на 10% (перемножается со скидкой сделки)
-export const UPGRADE_OFFER_ROW_BONUS = 1; // №37: в торговом автомате на один ряд предметов больше
 export const UPGRADE_TICKET_SHARE_START = 0.3; // №38: первый билет за фишки — 30% банка вместо 40%
 export const UPGRADE_MINI_CASE_PRICE_MUL = 0.5; // №39: амулет за фишки в мини-чемодане вдвое дешевле
 // ---------- Числа четвёртой партии (28г) ----------
 export const MEMORY_PICKS_UPGRADE = 1; // №30: ещё один амулет из прошлого забега можно взять на старте
 
 /**
- * Пул — 40 улучшений (номера — исходные из `DONTLIKE.md` §1): 11 первой партии (28а), 13 второй (28б),
- * 10 третьей (28в), 6 четвёртой (28г). Прокрутки (№1, 3, 4), долг (№6, 7, 8, 10), фишки (№12–15); билеты (№16–18),
- * предметы (№21–25), амулеты (№26–30); сетка (№31–35), магазин (№36–40); кассета (№42, 44, 45) и прочее (№48–50).
+ * Пул — 38 улучшений (номера — исходные из `DONTLIKE.md` §1): 11 первой партии (28а), 12 второй (28б),
+ * 9 третьей (28в), 6 четвёртой (28г). Прокрутки (№1, 3, 4), долг (№6, 7, 8, 10), фишки (№12–15); билеты (№16–18),
+ * предметы (№22–25), амулеты (№26–30); сетка (№31–35), магазин (№36, 38–40); кассета (№42, 44, 45) и прочее (№48–50).
+ * №21 «ещё место на полке» убран: полка фиксированная, места не расширяются (DONTLIKE, 25.11).
+ * №37 «+1 ряд витрины» убран: витрина снова 4 ряда — три предмета и билеты (DONTLIKE, 25.11).
  */
 export const UPGRADES: Upgrade[] = [
   {
@@ -231,10 +228,6 @@ export const UPGRADES: Upgrade[] = [
   {
     id: 'ticket-jackpot', group: 'tickets', name: 'upgTicketJackpot', desc: 'upgTicketJackpotWhat', repeat: 1,
     apply: { jackpotTickets: UPGRADE_JACKPOT_TICKETS },
-  },
-  {
-    id: 'item-slot', group: 'items', name: 'upgItemSlot', desc: 'upgItemSlotWhat', repeat: 1,
-    apply: { itemSlots: UPGRADE_ITEM_SLOT_BONUS },
   },
   {
     id: 'item-price', group: 'items', name: 'upgItemPrice', desc: 'upgItemPriceWhat', repeat: 1,
@@ -298,10 +291,6 @@ export const UPGRADES: Upgrade[] = [
   {
     id: 'shop-discount', group: 'shop', name: 'upgShopDiscount', desc: 'upgShopDiscountWhat', repeat: 1,
     apply: { shopPriceMul: UPGRADE_SHOP_PRICE_MUL },
-  },
-  {
-    id: 'shop-extra-row', group: 'shop', name: 'upgShopRow', desc: 'upgShopRowWhat', repeat: 1,
-    apply: { offerRows: UPGRADE_OFFER_ROW_BONUS },
   },
   {
     id: 'shop-ticket-share', group: 'shop', name: 'upgShopTicket', desc: 'upgShopTicketWhat', repeat: 1,
@@ -376,7 +365,6 @@ export interface UpgradeEffects {
   startTickets: number;
   debtTicketBonus: number; // за долг, закрытый в раунде UPGRADE_DEBT_TICKET_ROUND
   jackpotTickets: number;
-  itemSlots: number;
   itemPriceMul: number;
   cloverWeight: number;
   cherryWeight: number;
@@ -393,7 +381,6 @@ export interface UpgradeEffects {
   jackpotWinMul: number;
   bloodWeight: number;
   shopPriceMul: number;
-  offerRows: number;
   ticketShareStart: number;
   miniCasePriceMul: number; // №39: цена амулета за фишки в мини-чемодане (1 — как есть)
   freeItemFirstShop: boolean;
@@ -424,7 +411,6 @@ export function neutralUpgrades(): UpgradeEffects {
     startTickets: 0,
     debtTicketBonus: 0,
     jackpotTickets: 0,
-    itemSlots: 0,
     itemPriceMul: 1,
     cloverWeight: 0,
     cherryWeight: 0,
@@ -440,7 +426,6 @@ export function neutralUpgrades(): UpgradeEffects {
     jackpotWinMul: 1,
     bloodWeight: 0,
     shopPriceMul: 1,
-    offerRows: 0,
     ticketShareStart: TICKET_SHARE_START,
     miniCasePriceMul: 1,
     freeItemFirstShop: false,
@@ -486,14 +471,12 @@ export function upgradeEffects(purchased: PurchasedUpgrades): UpgradeEffects {
     effects.startTickets += (apply.startTickets ?? 0) * count;
     effects.debtTicketBonus += (apply.debtTicketBonus ?? 0) * count;
     effects.jackpotTickets += (apply.jackpotTickets ?? 0) * count;
-    effects.itemSlots += (apply.itemSlots ?? 0) * count;
     effects.cloverWeight += (apply.cloverWeight ?? 0) * count;
     effects.cherryWeight += (apply.cherryWeight ?? 0) * count;
     effects.amuletTicketsOff += (apply.amuletTicketsOff ?? 0) * count;
     effects.amuletMaxCopies += (apply.amuletMaxCopies ?? 0) * count;
     effects.skullShareDelta += (apply.skullShareDelta ?? 0) * count;
     effects.bloodWeight += (apply.bloodWeight ?? 0) * count;
-    effects.offerRows += (apply.offerRows ?? 0) * count;
     if (apply.startDebtMul !== undefined) effects.startDebtMul *= apply.startDebtMul ** count;
     if (apply.debtGrowthMul !== undefined) effects.debtGrowthMul *= apply.debtGrowthMul ** count;
     if (apply.winMul !== undefined) effects.winMul *= apply.winMul ** count;
@@ -569,12 +552,6 @@ export function roundDebtTickets(round: number, bonus: number): number {
  */
 export function keepsHammerAfter(kind: 'skull' | 'win' | 'nothing', keepsOnEmpty: boolean): boolean {
   return keepsOnEmpty && kind === 'nothing';
-}
-
-/** Сколько мест на полке в начале забега: START_SLOTS плюс №21, но не больше MAX_SLOTS. */
-export function startItemSlots(bonus: number): number {
-  const safe = Number.isFinite(bonus) && bonus > 0 ? Math.floor(bonus) : 0;
-  return Math.min(MAX_SLOTS, START_SLOTS + safe);
 }
 
 /**

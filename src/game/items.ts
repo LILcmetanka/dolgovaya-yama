@@ -231,7 +231,7 @@ export function ticketForChips(balance: number, bought: number, mul = 1, start =
   return roundPrice(bank * ticketShare(bought, start), mul);
 }
 
-/** Сколько рядов предметов в торговом автомате: OFFER_SIZE плюс улучшение №37, но не больше, чем предметов в игре. */
+/** Сколько рядов предметов в торговом автомате: OFFER_SIZE с поправкой сделки («на один предмет меньше»), но не больше, чем предметов в игре. */
 export function offerRowCount(bonus = 0): number {
   const extra = Number.isFinite(bonus) && bonus > 0 ? Math.floor(bonus) : 0;
   return Math.min(ITEMS.length, OFFER_SIZE + extra);
@@ -244,7 +244,7 @@ export function slotPrice(slots: number, debt: number, mul = 1): number | null {
 }
 
 /** Что лежит в торговом автомате: OFFER_SIZE разных предметов в случайном порядке. Предметы с unlockRound раньше раунда не продаются.
- *  count — сколько рядов (улучшение №37 даёт на один больше); больше, чем предметов в игре, всё равно не выложить. */
+ *  count — сколько рядов (сделка может дать на один меньше); больше, чем предметов в игре, всё равно не выложить. */
 export function randomOffer(
   round: number,
   isAllowed: (item: ShopItem) => boolean = () => true,

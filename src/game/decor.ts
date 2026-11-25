@@ -79,6 +79,13 @@ export const SHELF_CELL_TEXTURE = 'shelf-cell'; // клетка полки с п
 export const SHELF_DOOR_TEXTURE = 'shelf-door'; // стальная дверца с кодовым замком поверх закрытого отсека
 export const SHOP_SLOT_TEXTURE = 'shop-slot'; // товар мини-автомата «место на полке»: клетка с золотым плюсом
 export const EFFECT_SLOT_TEXTURE = 'effect-slot'; // пустое гнездо под включённый предмет у экрана
+export const SHELF_DARK_TEXTURE = 'shelf-dark'; // пятно тьмы над полками предметов: обучение ещё не дошло до «Это места под предметы»
+// Пятно тьмы — мягкое, как пятно света вокруг автомата в тьме первого забега: скруглённое и с размытым краем.
+// Край размыт на SHELF_DARK_BLUR с каждой стороны (у canvas это σ размыва: потемнение тянется примерно на 3σ,
+// поэтому больше 8 не брать — полка утонула бы в размыве и просвечивала изнутри), поэтому картинка шире пятна;
+// ниже — скругление и сам размыв.
+const SHELF_DARK_BLUR = 7;
+const SHELF_DARK_ROUNDING = 26;
 export const DOOR_CODE_WIDTH = 50; // окошко колёсиков кода на дверце
 export const DOOR_CODE_HEIGHT = 24;
 export const TICKET_TEXTURE = 'ticket'; // красный билет — вторая валюта
@@ -848,7 +855,7 @@ export function createEffectSlotTexture(scene: Phaser.Scene, size: number): void
   bake(g, EFFECT_SLOT_TEXTURE, size, size);
 }
 
-/** Клетка полки: деревянная рамка и тёмная ниша; и доски, которыми заколочена закрытая клетка. */
+/** Клетка полки: деревянная рамка и тёмная ниша; и дверца с кодовым замком, которой закрыт купленный отсек. */
 export function createShelfTextures(scene: Phaser.Scene, size: number): void {
   if (!scene.textures.exists(SHELF_CELL_TEXTURE)) {
     const g = scene.add.graphics();
@@ -896,6 +903,29 @@ export function createShelfTextures(scene: Phaser.Scene, size: number): void {
     for (const [x, y] of [[4, 4], [size - 4, 4], [4, size - 4], [size - 4, size - 4]]) g.fillCircle(x, y, 1.6); // болты
     bake(g, SHOP_SLOT_TEXTURE, size + 4, size + 5);
   }
+}
+
+/**
+ * Пятно тьмы над полками предметов: то же, что тьма первого забега (DARK_COLOR в parts/reveal.ts), но мягкое —
+ * скруглённое и с размытым краем, как пятно света вокруг автомата. Пока обучение не дошло до бита «Это места
+ * под предметы», полка стоит в темноте, а не под чёрной накладкой с резкими углами (замечание автора 25.11).
+ * width × height — размер самого пятна (по нему кроит ItemShelf); картинка шире на SHELF_DARK_BLUR с каждой
+ * стороны, иначе размыв обрезался бы её краем.
+ */
+export function createShelfDarkTexture(scene: Phaser.Scene, width: number, height: number, color: string): void {
+  if (scene.textures.exists(SHELF_DARK_TEXTURE)) return;
+  const texture = createSharpCanvas(scene, SHELF_DARK_TEXTURE, width + SHELF_DARK_BLUR * 2, height + SHELF_DARK_BLUR * 2);
+  if (!texture) return;
+  const ctx = texture.context;
+  ctx.save();
+  // Canvas уже увеличен в TEXTURE_SCALE раз: размыв считается в его пикселях. Где фильтра нет — останется мягкое скругление.
+  if ('filter' in ctx) ctx.filter = `blur(${SHELF_DARK_BLUR * TEXTURE_SCALE}px)`;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.roundRect(SHELF_DARK_BLUR, SHELF_DARK_BLUR, width, height, SHELF_DARK_ROUNDING);
+  ctx.fill();
+  ctx.restore();
+  texture.refresh(); // передать нарисованное в видеокарту
 }
 
 /** Стальная дверца отсека: полосы шлифовки, заклёпки по углам, окошко для трёх цифр кодового замка (цифры рисует сцена). */
@@ -1256,16 +1286,19 @@ function drawVendingMachine(
   g.lineStyle(3, 0x475569);
   g.strokeRoundedRect(left + side + 6, top + 6, body.width - side - 12, body.height - 12, 14);
 
-  // Неоновая вывеска сверху: светящаяся трубка, вокруг — свечение.
-  const signTop = top + 12;
+  // Неоновая вывеска сверху: светящаяся трубка, вокруг — свечение. По ширине витрины и тоньше прежней:
+  // раньше она шла во всю лицевую часть, уходила за стекло вправо и ложилась на его верхний угол.
+  const signTop = top + 10;
+  const signWidth = glass.width;
+  const signLeft = glass.x - signWidth / 2;
   for (let i = 3; i >= 1; i--) {
     g.lineStyle(4 + i * 5, 0x22d3ee, 0.08);
-    g.strokeRoundedRect(left + side + 24, signTop, body.width - side - 48, 24, 12);
+    g.strokeRoundedRect(signLeft, signTop, signWidth, 16, 8);
   }
   g.lineStyle(3, 0x67e8f9);
-  g.strokeRoundedRect(left + side + 24, signTop, body.width - side - 48, 24, 12);
+  g.strokeRoundedRect(signLeft, signTop, signWidth, 16, 8);
   g.fillStyle(0x67e8f9);
-  for (let i = 0; i < 3; i++) g.fillCircle(body.x - 24 + i * 24 + side / 2, signTop + 12, 4); // три огонька внутри
+  for (let i = 0; i < 3; i++) g.fillCircle(glass.x - 24 + i * 24, signTop + 8, 3.5); // три огонька внутри
 
   // Витрина: тёмное нутро и полки рядов; спирали и стекло — отдельными картинками поверх товара.
   const glassLeft = glass.x - glass.width / 2;
@@ -1327,8 +1360,8 @@ const DRUM_GREEN = '#14532d'; // сектор с фишками — зелёны
 const DRUM_GOLD = '#fbbf24';
 const DRUM_DIM = 'rgba(0, 0, 0, 0.65)'; // сектор, который выпасть не может
 
-/** Что нарисовано в секторе колеса: предмет, билет, место на полке или фишки. */
-export type DrumFace = Item | 'ticket' | 'slot' | 'chips';
+/** Что нарисовано в секторе колеса: предмет, билет или фишки. */
+export type DrumFace = Item | 'ticket' | 'chips';
 
 /** Доска под колесом, стрелка и подсветка сектора — неподвижные картинки (колесо рисует drawDrumWheel). */
 export function createDrumTextures(scene: Phaser.Scene, radius: number, sectors: number): void {
@@ -1415,7 +1448,7 @@ function drawDrumSector(ctx: CanvasRenderingContext2D, radius: number, sector: n
   ctx.fill();
 }
 
-/** Картинка приза с серединой в (0, 0): предмет — его коробочка, билет — красный билет, место — клетка полки, фишки — две фишки. */
+/** Картинка приза с серединой в (0, 0): предмет — его коробочка, билет — красный билет, фишки — две фишки. */
 function drawDrumFace(ctx: CanvasRenderingContext2D, face: DrumFace): void {
   ctx.save();
   if (face === 'ticket') {
@@ -1433,8 +1466,6 @@ function drawDrumFace(ctx: CanvasRenderingContext2D, face: DrumFace): void {
       drawChip(ctx, CHIP_SIZE);
       ctx.restore();
     }
-  } else if (face === 'slot') {
-    drawDrumSlot(ctx, DRUM_ICON_SIZE * 0.85);
   } else {
     const scale = DRUM_ICON_SIZE / ITEM_SIZE; // коробочка предмета нарисована под ITEM_SIZE — уменьшаем целиком
     ctx.scale(scale, scale);
@@ -1442,19 +1473,6 @@ function drawDrumFace(ctx: CanvasRenderingContext2D, face: DrumFace): void {
     drawItem(ctx, face, ITEM_SIZE);
   }
   ctx.restore();
-}
-
-/** Пустая клетка полки, как «место» в торговом автомате: деревянная рамка и тёмная ниша с полочкой. */
-function drawDrumSlot(ctx: CanvasRenderingContext2D, size: number): void {
-  const left = -size / 2;
-  ctx.fillStyle = '#4a2f19';
-  ctx.beginPath();
-  ctx.roundRect(left, left, size, size, 3);
-  ctx.fill(); // рамка
-  ctx.fillStyle = '#140d08';
-  ctx.fillRect(left + 3, left + 3, size - 6, size - 7); // ниша
-  ctx.fillStyle = '#6b4423';
-  ctx.fillRect(left + 2, left + size - 5, size - 4, 3); // полочка внизу ниши
 }
 
 /** Золотой обод, спицы между секторами, штырьки на ободе (о них щёлкает стрелка) и ступица. */

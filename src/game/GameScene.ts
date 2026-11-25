@@ -55,7 +55,7 @@ import { ScreenList, SCREEN_LIST_OVER_DEATH_DEPTH, type ScreenRow } from './part
 import { WallScreen, type DevActions } from './parts/wallScreen';
 import { Tooltip } from './parts/tooltip';
 import { CollectorScene } from './scene/CollectorScene';
-import { ITEMS, MAX_SLOTS, offerRowCount, type ItemId } from './items';
+import { ITEMS, MAX_SLOTS, type ItemId } from './items';
 import { isDarknessDone, markDarknessDone } from './progress';
 import { symbolWeightOf } from './skullShare';
 import { isPaying, SPINS_PER_ROUND, SYMBOLS, weightsForRound, type SlotSymbol } from './rules';
@@ -63,15 +63,15 @@ import type { RunSave } from './save';
 import { getVolumes, isSilent, setVolume, toggleSound, volumeShare, type VolumeKind } from './settings';
 import { ACTION_ICONS, GOLD_TEXT } from './theme';
 
-// Клавиши 1–9 и 0: в игре 1–8 — места на полках; в магазине 1–3 — ряды торгового автомата, 4–5 — маленький автомат
-// (место на полке и гнездо), 6–8 — места витрины амулетов, 9 — четвёртый ряд витрины (№37), 0 — барабан.
+// Клавиши 1–9 и 0: в игре 1–8 — места на полке (работают только открытые, всего их MAX_SLOTS); в магазине 1–3 — ряды торгового автомата, 4–5 — маленький автомат
+// (место на полке и гнездо), 6–8 — места витрины амулетов, 9 — свободна (лишнего ряда витрины больше нет), 0 — барабан.
 // Кассета — T (и в магазине, и у видеомагнитофона), ряд билетов — B (шаг 35: раньше кассета сидела на 9 и рядам
-// №37 и билетов клавиш не хватало).
+// витрины и билетов клавиш не хватало).
 const NUMBER_KEYS = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE', 'ZERO'];
 const VENDING_KEYS = 3; // сколько клавиш у торгового автомата (1–3)
 const MINI_KEYS = 2; // сколько клавиш у маленького автомата: место на полке и гнездо
-const CASE_KEYS = 3; // сколько клавиш у витрины амулетов; за ними — четвёртый ряд (9) и барабан (0)
-const EXTRA_ROW_KEY = VENDING_KEYS + MINI_KEYS + CASE_KEYS; // «9»: четвёртый ряд витрины, когда он есть (№37)
+const CASE_KEYS = 3; // сколько клавиш у витрины амулетов; за ними — свободная «9» и барабан «0»
+const FREE_ROW_KEY = VENDING_KEYS + MINI_KEYS + CASE_KEYS; // «9»: лишнего ряда витрины нет, клавиша отвечает отказом
 const TAPE_KEY = 'T'; // кассета: купить в магазине, вне его — записать или откатиться
 const TICKET_KEY = 'B'; // ряд билетов за фишки: раньше покупался только кликом (шаг 35)
 const MUSIC_TICK = 100; // как часто музыка планирует удары «сердца» вперёд, мс
@@ -166,7 +166,7 @@ export class GameScene extends CollectorScene {
     this.amuletRack = new AmuletRack(this, this.sockets, this.tooltip);
     // Полка с включёнными предметами и гнёзда амулетов — до Коллектора: его банкомат, GOOD LUCK и экран KABOOM ложатся поверх всего, что нарисовано раньше.
     this.collector = new Collector(this, this.debt, () => this.payDebt(), () => this.payEarly());
-    this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip, offerRowCount(this.upgradeEffects.offerRows));
+    this.shop = new Shop(this, (row) => this.buy(row), () => this.leaveShop(), this.tooltip);
     // Что из магазина открыто — по закрытым долгам: после отката кассетой раунд уже загружен (loadTape), и части строятся сразу видимыми.
     this.miniShop = new MiniShop(this, (row) => this.buyMini(row), this.tooltip, this.shop.layer);
     this.amuletCase = new AmuletCase(this, MAIN_CASE_LOOK, (place) => this.buyFromCase(place), this.tooltip, this.amuletsUnlocked(), this.shop.layer);
@@ -184,7 +184,7 @@ export class GameScene extends CollectorScene {
     this.machinePick = new ScreenList(this); // выбор стартового автомата (№49) — та же манера
     this.amuletPick = new ScreenList(this); // память амулетов (шаг 38): выбор на старте забега, бесплатно
     this.actionPanel = new ScreenList(this); // шесть действий вне прокрутки (шаг 29) — тоже список на экране
-    this.actionBoard = new ActionBoard(this, () => this.toggleActions(), this.tooltip); // табличка на стене — вход
+    this.actionBoard = new ActionBoard(this, () => this.toggleActions()); // табличка на стене — вход
     this.pumpAchievements(); // то, что выдано до постройки окна (или до рестарта), показываем теперь
     this.atmosphere = new Atmosphere(this);
     this.corner = new CornerButtons(this, () => this.togglePause(), () => this.toggleMute());
@@ -193,7 +193,8 @@ export class GameScene extends CollectorScene {
     // Первый забег — в кромешной тьме: видны только автомат и рычаг в пятнах света (после обучения тьмы нет).
     this.reveal = isDarknessDone() ? null : new Reveal(this, BODY, NOTE, LEVER_GLOW);
     // Пока тьма не погасла, подсказок нет: они выдали бы то, что в ней спрятано.
-    this.tooltip.setBlockedCheck(() => this.reveal?.isActive ?? false);
+    // И во время обучения подсказок нет вовсе: обучение показывает само, а табличка выдала бы наперёд то, о чём речь.
+    this.tooltip.setBlockedCheck(() => (this.reveal?.isActive ?? false) || this.tutorialHintsBlocked());
     // Canvas не создался — тьмы нет: считаем её погашенной, иначе она пыталась бы включиться каждый забег.
     // Мастер-флаг обучения не ставим: тексты обучения идут и без тьмы (его ставит Коллектор, finishTutorial).
     if (this.reveal && !this.reveal.isActive) {
@@ -509,6 +510,7 @@ export class GameScene extends CollectorScene {
     this.actionBoard.relabel(); // табличка действий (шаг 29) — тоже
     this.relabelReroll(); // висит решение по перемешке — новость на стекле заново на новом языке
     this.relabelRescueTexts(); // заставка спасения и подсказка на стекле — тоже (шаг 35)
+    this.relabelTutorialTexts(); // заставка обучения (бит интро, дорожка) — та же строка на новом языке
     if (!this.isPaused) this.collector.flipNote(this.debt);
   }
 
@@ -970,7 +972,7 @@ export class GameScene extends CollectorScene {
     this.refreshHud();
   }
 
-  /** №6: попытка кражи. Успех — фишки на табло; провал — сразу KABOOM, без очков и без магазина. */
+  /** №6: попытка кражи. Успех — фишки на табло; провал — последний шанс: GOOD LUCK и раунд спасения (DONTLIKE, 25.11). */
   private applyTheft(): void {
     if (!this.canUseActions() || actionUsed(this.actionState, 'theft')) {
       this.sfx.play('deny');
@@ -990,7 +992,8 @@ export class GameScene extends CollectorScene {
       this.refreshHud();
       return;
     }
-    this.kaboom(); // провал — смерть сразу: второй попытки и магазина нет
+    // Провал — не смерть: последний шанс, как у неоплаченного долга (вторая яма в забеге — KABOOM внутри).
+    this.enterLastChance();
   }
 
   /** №8, шаг 1: что продать — платящий символ с сетки; в подписи цена за клетку и итог. */
@@ -1151,8 +1154,9 @@ export class GameScene extends CollectorScene {
   }
 
   /**
-   * Клавиша 1–9 или 0: в магазине — купить (9 — четвёртый ряд витрины №37, 0 — барабан); в игре 1–8 — включить
-   * предмет с полки. Кассета — отдельная клавиша T (и в магазине, и у видеомагнитофона), билеты — B (шаг 35).
+   * Клавиша 1–9 или 0: в магазине — купить (1–3 — торговый автомат, 4–5 — маленький, 6–8 — витрина амулетов,
+   * 9 — свободна, 0 — барабан); в игре 1–8 — включить
+   * предмет с полки (сработают только клавиши открытых мест, MAX_SLOTS). Кассета — отдельная клавиша T (и в магазине, и у видеомагнитофона), билеты — B (шаг 35).
    */
   private onNumber(index: number): void {
     // Выбор стартового автомата (№49): 1–3 — строки списка; остальные клавиши игры молчат.
@@ -1186,16 +1190,14 @@ export class GameScene extends CollectorScene {
   }
 
   /**
-   * Клавиша в магазине: 1–3 — торговый автомат, 4–5 — маленький, 6–8 — витрина амулетов, 9 — четвёртый ряд
-   * витрины (только с улучшением №37), 0 — барабан. Кассета и билеты — отдельными клавишами T и B (шаг 35).
+   * Клавиша в магазине: 1–3 — торговый автомат, 4–5 — маленький (место на полке и гнездо), 6–8 — витрина амулетов,
+   * 9 — свободна (лишнего ряда витрины нет, отвечает отказом), 0 — барабан. Кассета и билеты — отдельными клавишами T и B (шаг 35).
    */
   private onShopNumber(index: number): void {
     if (index < VENDING_KEYS) this.buy(index);
-    else if (index === EXTRA_ROW_KEY) {
-      if (this.shop.offerRows > VENDING_KEYS) this.buy(VENDING_KEYS); // ряд есть только с №37
-      else this.sfx.play('deny'); // четвёртого ряда нет — «9» отвечает отказом, а не тишиной
-    } else if (index < VENDING_KEYS + MINI_KEYS) this.buyMini(index - VENDING_KEYS);
-    else if (index < EXTRA_ROW_KEY) this.buyFromCase(index - VENDING_KEYS - MINI_KEYS);
+    else if (index === FREE_ROW_KEY) this.sfx.play('deny'); // лишнего ряда больше нет: «9» отвечает отказом, а не тишиной
+    else if (index < VENDING_KEYS + MINI_KEYS) this.buyMini(index - VENDING_KEYS);
+    else if (index < FREE_ROW_KEY) this.buyFromCase(index - VENDING_KEYS - MINI_KEYS);
     else this.spinDrum();
   }
 }

@@ -1,5 +1,7 @@
-import { socketWord, type TextKey } from './lang';
+import { t, type TextKey } from './lang';
+import { EARLY_PAY_MIN_SPINS, EARLY_PAY_TICKETS, TICKETS_PER_DEBT } from './amulets';
 import { SYMBOLS, type Grid, type SlotSymbol } from './rules';
+import type { ScreenTone } from './screenText';
 
 /**
  * Обучение текстами: что Диллер говорит и какую сетку показывает. Без Phaser и без сцен — только данные:
@@ -13,11 +15,22 @@ export type TutorialSpin = 'empty' | 'pattern' | 'skull' | 'debt';
 /** Чего шаг ждёт от игрока: прокрутки, нажатия «забрать» или ничего — тогда шаг сам идёт дальше. */
 export type TutorialWait = 'spin' | 'take' | 'none';
 
-/** Строка подсказки: ключ надписи и числа для {0}, {1}… */
-export interface TutorialLine {
-  key: TextKey;
-  args?: readonly (string | number)[];
-}
+/**
+ * Кусок строки: ключ надписи (с числами для {0}, {1}…), уже переведённые слова (имя предмета или амулета)
+ * или готовый текст. Тон — по умолчанию normal.
+ */
+export type TutorialPart =
+  | { key: TextKey; args?: readonly (string | number)[]; tone?: ScreenTone }
+  | { words: readonly string[]; tone?: ScreenTone } // уже переведённое имя (предмет/амулет)
+  | { literal: string; tone?: ScreenTone };
+
+/**
+ * Строка подсказки: либо одна надпись по ключу, либо набор кусков своих тонов. `hold` — сколько держать
+ * именно эту строку; без него берётся общая.
+ */
+export type TutorialLine =
+  | { key: TextKey; args?: readonly (string | number)[]; tone?: ScreenTone; hold?: number }
+  | { parts: readonly TutorialPart[]; hold?: number };
 
 /** Шаг интро: что сказать, чего ждать и что показать на автомате. */
 export interface IntroStep {
@@ -33,11 +46,84 @@ export interface IntroStep {
 }
 
 /** Сколько ждать после прокрутки, мс: сначала падает кон, потом говорим. */
-export const TUTORIAL_AFTER_SPIN = 2000;
-/** Сколько строка висит, мс. */
+export const TUTORIAL_AFTER_SPIN = 1000;
+/** Сколько строка висит, мс. Автор не успевал прочитать первую же строку — держим две секунды (DONTLIKE, 25.11). */
 export const TUTORIAL_LINE_HOLD = 2000;
+/** Длинная строка (больше TUTORIAL_LONG_LINE_CHARS символов) висит дольше: за 2 с её не прочитать (DONTLIKE, 25.11). */
+export const TUTORIAL_LONG_LINE_HOLD = 2800;
+/** С какой длины строка считается длинной: считаются символы фактического текста, а не куски. */
+export const TUTORIAL_LONG_LINE_CHARS = 40;
 /** Пауза между битами, мс. */
-export const TUTORIAL_PAUSE = 2000;
+export const TUTORIAL_PAUSE = 1000;
+
+// Сколько строка гаснет и сколько ждём перед следующей. Значения — как SCREEN_LINE_FADE и SCREEN_LINE_GAP
+// в parts/collector.ts: тот модуль тянет Phaser, а здесь нужны только числа для расчёта времени.
+const SCREEN_FADE_MS = 220;
+const SCREEN_GAP_MS = 120;
+
+/** Текст куска: ключ переводится, готовые слова склеиваются через пробел, литерал — как есть. */
+function partText(part: TutorialPart): string {
+  if ('key' in part) return t(part.key, ...(part.args ?? []));
+  if ('words' in part) return part.words.join(' ');
+  return part.literal;
+}
+
+/** Строка в куски с тонами: у { key } один кусок, у { parts } — по куску на каждую часть. */
+export function tutorialLineParts(line: TutorialLine): readonly { text: string; tone: ScreenTone }[] {
+  if ('key' in line) return [{ text: t(line.key, ...(line.args ?? [])), tone: line.tone ?? 'normal' }];
+  return line.parts.map((part) => ({ text: partText(part), tone: part.tone ?? 'normal' }));
+}
+
+/** Вся строка одним текстом без тонов — для тестов и логов. */
+export function tutorialLineText(line: TutorialLine): string {
+  return tutorialLineParts(line)
+    .map((part) => part.text)
+    .join('');
+}
+
+/**
+ * Строка по рядам: каждый кусок режется по авторским '\n', пустые строки остаются пустыми рядами (отступ),
+ * ряд из нескольких кусков — сегменты по порядку.
+ */
+export function tutorialLineRows(line: TutorialLine): readonly (readonly { text: string; tone: ScreenTone }[])[] {
+  const rows: { text: string; tone: ScreenTone }[][] = [];
+  let row: { text: string; tone: ScreenTone }[] = [];
+  rows.push(row);
+  for (const part of tutorialLineParts(line)) {
+    part.text.split('\n').forEach((piece, index) => {
+      if (index > 0) {
+        row = [];
+        rows.push(row);
+      }
+      row.push({ text: piece, tone: part.tone });
+    });
+  }
+  return rows;
+}
+
+/** Сколько держать строку: свой hold, иначе общий; длинную строку держим дольше — иначе её не успеть прочитать. */
+export function tutorialLineHold(line: TutorialLine, fallback: number): number {
+  return line.hold ?? lineHoldFor(tutorialLineText(line), fallback);
+}
+
+/** Сколько держать текст строки: длинный держится TUTORIAL_LONG_LINE_HOLD, короткий — fallback. Этой же дверью меряет простая заставка. */
+export function lineHoldFor(text: string, fallback: number): number {
+  return text.length > TUTORIAL_LONG_LINE_CHARS ? Math.max(fallback, TUTORIAL_LONG_LINE_HOLD) : fallback;
+}
+
+/**
+ * Сколько идёт речь из строк. chain — как старая заставка: каждая строка держится и гаснет, между строками пауза.
+ * wait — последняя строка остаётся висеть, поэтому её hold не считается: done зовётся сразу после её появления.
+ * Обучение теперь говорит только цепочкой (tutorialStepMode), режим wait остался дверью заставки.
+ */
+export function tutorialTalkTime(lines: readonly TutorialLine[], mode: 'chain' | 'wait', fallback: number): number {
+  if (lines.length === 0) return 0;
+  const holds = lines.map((line) => tutorialLineHold(line, fallback));
+  const total = holds.reduce((sum, hold) => sum + hold, 0);
+  const pauses = (lines.length - 1) * (SCREEN_FADE_MS + SCREEN_GAP_MS);
+  if (mode === 'wait') return total - holds[holds.length - 1] + pauses;
+  return total + pauses;
+}
 
 /** Символ по id: сетки обучения трогают только символы 1-го раунда, чужих id здесь быть не может. */
 function symbolOf(id: string): SlotSymbol {
@@ -81,74 +167,209 @@ export function tutorialGrid(kind: TutorialSpin): Grid {
 }
 
 /**
- * Интро: 13 битов в этом порядке. sockets — сколько сверху гнёзд под амулеты (число и форма слова в tutSlots).
- * Биты с wait: 'none' игрок не крутит: они сами передают эстафету следующему, как в сценарии автора.
- * Прокруток в интро 9 (pull, again, lever, debt, burn, tvInfo, goal, buy, amulets) из 12 за раунд.
- * Черепа падают на бите debt, сразу после «Это твой долг / отдай его до конца раунда».
- * Записка с долгом проступает из тьмы тоже на debt — после прокрутки с паттерном и паузы на показ выигрыша
- * (сценарий автора 24.11: на «Забери кон» долга ещё не видно).
+ * Интро (шаг 46б): 10 битов в порядке сценария автора. Бит с wait: 'none' игрок не крутит — он сам передаёт
+ * эстафету следующему; сейчас таких нет, но дверь живая. Прокруток в интро 9 (pull, again, lever, debt, burn, tv,
+ * goal, places, last) из 12 за раунд; последняя (last) показывает сетку-долг и сводит счётчик к одной.
+ * Черепа падают на бите debt — сразу после «Ты обязан его ВЕРНУТЬ», а сгорают на следующем (burn).
+ * Записка с долгом проступает на входе в бит debt — одновременно с первой строкой «Это твой текущий ДОЛГ»,
+ * а не на бите take: на take остаются только пульс «забрать» и пауза TUTORIAL_AFTER_SPIN (DONTLIKE, 25.11).
+ * «Это монитор» и «Бесполезная вещь» — один бит двумя строками: иначе между ними на миг был виден автомат
+ * (замечание автора 25.11). Числа в строке про долг нет: «Это твой текущий ДОЛГ».
  */
-export function introSteps(sockets: number): readonly IntroStep[] {
+export function introSteps(): readonly IntroStep[] {
   return [
-    { id: 'pull', lines: [{ key: 'tutPull' }], wait: 'spin', spin: 'empty' },
-    { id: 'again', lines: [{ key: 'tutAgain' }], wait: 'spin', spin: 'pattern', pause: TUTORIAL_AFTER_SPIN },
-    { id: 'take', lines: [{ key: 'tutTake' }], wait: 'take', pause: TUTORIAL_AFTER_SPIN, pulseTake: true },
-    { id: 'lever', lines: [{ key: 'tutLever' }], wait: 'spin', spin: 'pattern' },
-    { id: 'debt', lines: [{ key: 'tutDebt' }, { key: 'tutPayByRound' }], wait: 'spin', spin: 'skull', openNote: true },
-    { id: 'burn', lines: [{ key: 'tutSkullsBurn' }], wait: 'spin', spin: 'empty', pause: TUTORIAL_AFTER_SPIN },
-    { id: 'tv', lines: [{ key: 'tutTv' }], wait: 'none', pause: TUTORIAL_PAUSE, clearDark: true },
-    { id: 'tvInfo', lines: [{ key: 'tutTvInfo' }], wait: 'spin', spin: 'empty' },
-    { id: 'goalNot', lines: [{ key: 'tutGoalNotMillion' }], wait: 'none', pause: TUTORIAL_PAUSE },
-    { id: 'goal', lines: [{ key: 'tutGoal' }, { key: 'tutSurvive' }], wait: 'spin', spin: 'empty' },
-    { id: 'places', lines: [{ key: 'tutItemPlaces' }], wait: 'none', pause: TUTORIAL_PAUSE },
-    { id: 'buy', lines: [{ key: 'tutBuyInShop' }, { key: 'tutUseWisely' }], wait: 'spin', spin: 'empty' },
+    { id: 'pull', lines: [{ key: 'tutWhatLooking' }, { key: 'tutPullLever' }], wait: 'spin', spin: 'empty' },
+    { id: 'again', lines: [{ key: 'tutTryAgain' }], wait: 'spin', spin: 'pattern', pause: TUTORIAL_AFTER_SPIN },
+    { id: 'take', lines: [{ key: 'tutTakePot' }], wait: 'take', pause: TUTORIAL_AFTER_SPIN, pulseTake: true },
+    { id: 'lever', lines: [{ key: 'tutSpinFurther' }], wait: 'spin', spin: 'pattern' },
     {
-      id: 'amulets',
+      id: 'debt',
       lines: [
-        { key: 'tutSlots', args: [sockets, socketWord(sockets)] },
-        { key: 'tutAmulets' },
-        { key: 'tutBestHere' },
-        { key: 'tutBuyTickets' },
-        { key: 'tutAmuletsUntilDeath' },
+        { parts: [{ key: 'tutDebtPrefix' }, { literal: '\n' }, { key: 'tutDebtWord', tone: 'red' }] },
+        { parts: [{ key: 'tutMustReturn' }, { literal: '\n' }, { key: 'tutReturnWord', tone: 'red' }] },
       ],
       wait: 'spin',
-      spin: 'debt',
-      lastSpin: true,
+      spin: 'skull',
+      openNote: true, // записка проступает на входе в бит — вместе с первой строкой «Это твой текущий ДОЛГ»
     },
+    {
+      id: 'burn',
+      lines: [{ parts: [{ key: 'tutSkullsBurnPrefix' }, { literal: '\n' }, { key: 'tutPotWord', tone: 'red' }] }],
+      wait: 'spin',
+      spin: 'empty',
+      pause: TUTORIAL_AFTER_SPIN,
+    },
+    {
+      id: 'tv',
+      lines: [{ key: 'tutThisIsMonitor' }, { key: 'tutUselessThing' }],
+      wait: 'spin',
+      spin: 'empty',
+      clearDark: true,
+    },
+    {
+      id: 'goal',
+      lines: [{ key: 'tutWhatQ' }, { key: 'tutGoalQ' }, { key: 'tutForgetIt' }, { key: 'tutNeverReach' }],
+      wait: 'spin',
+      spin: 'empty',
+    },
+    {
+      id: 'places',
+      lines: [
+        { parts: [{ key: 'tutBoxesFor' }, { literal: '\n' }, { key: 'tutItemsWord', tone: 'orange' }] },
+        { key: 'tutIfYouSurvive' },
+        { key: 'tutWhereQ' },
+        { key: 'tutInShop' },
+        {
+          parts: [
+            { key: 'tutIfOfCourse' },
+            { literal: '\n' },
+            { key: 'tutSurviveDebt' },
+            { literal: ' ' },
+            { key: 'tutDebtWord', tone: 'red' },
+          ],
+        },
+      ],
+      wait: 'spin',
+      spin: 'empty',
+    },
+    { id: 'last', lines: [], wait: 'spin', spin: 'debt', lastSpin: true },
   ];
 }
 
-/** Первая смерть: полное объяснение раунда спасения. */
-export const DEATH_LINES: readonly TextKey[] = [
-  'tutRescueLaugh',
-  'tutRescueHere',
-  'tutRescueLook',
-  'tutRescuePattern',
-  'tutRescueFreeze',
-  'tutRescueWontHelp',
-  'tutRescueLuck',
+/**
+ * Режим заставки бита. Раньше бит, ждавший рычага или «забрать», оставлял последнюю строку висеть (wait) — её
+ * снимало действие игрока. Автор передумал (DONTLIKE, 25.11): текст должен догаснуть сам через несколько секунд,
+ * иначе непонятно, что делать, — поэтому все биты идут цепочкой (chain). Строки гаснут по своим hold, экран
+ * остаётся пустым, и только потом бит начинает ждать рычага или «забрать». Режим wait у заставки остался,
+ * но обучение им больше не говорит.
+ */
+export function tutorialStepMode(_step: IntroStep): 'chain' | 'wait' {
+  return 'chain';
+}
+
+/**
+ * Дорожка денег (шаг 46б): семь строк один раз — после первой оплаты долга, перед магазином. Тон кусков:
+ * ФИШКИ белые, БИЛЕТЫ фиолетовые, ВЫЖИВАНИЕ красное — цвета табло и акцентов.
+ */
+export const MONEY_LINES: readonly TutorialLine[] = [
+  { key: 'tutPaidDebt' },
+  { key: 'tutLookUp' },
+  {
+    parts: [
+      { key: 'tutNoticedFunds' },
+      { literal: '\n' },
+      { key: 'tutChipsWord', tone: 'white' },
+      { literal: ' и ' },
+      { key: 'tutTicketsWord', tone: 'purple' },
+    ],
+  },
+  { parts: [{ key: 'tutYourFunds' }, { literal: '\n' }, { key: 'tutSurviveWord', tone: 'red' }] },
+  { parts: [{ key: 'tutChipsWord', tone: 'white' }, { literal: '\n' }, { key: 'tutChipsSimple' }] },
+  { parts: [{ key: 'tutTicketsWord', tone: 'purple' }, { literal: '\n' }, { key: 'tutTicketsRare' }] },
+  { key: 'tutSpendWisely' },
+];
+
+/**
+ * Первый магазин (после первого закрытого долга): игрок ничего не купил и закрывает панель.
+ * Две строки — вопрос и ответ Дилера, дальше выход из магазина идёт как обычно.
+ */
+export const SHOP_EMPTY_LINES: readonly TutorialLine[] = [{ key: 'tutShopEmptyQ' }, { key: 'tutShopEmptyOk' }];
+
+/**
+ * Первый купленный предмет в витрине (не подарок и не барабан): имя предмета — из данных на текущем языке,
+ * поэтому строки собираются функцией, а не константой.
+ */
+export function firstItemLines(name: string): readonly TutorialLine[] {
+  return [
+    { key: 'tutBoughtItemQ', args: [name] },
+    { key: 'tutDontHope' },
+    { key: 'tutUseWhenNeeded' },
+    { key: 'tutNotCheap' },
+  ];
+}
+
+/** Первый купленный амулет (чемодан или мини-чемодан): «до твоей СМЕРТИ», СМЕРТИ — красным. */
+export const FIRST_AMULET_LINES: readonly TutorialLine[] = [
+  { key: 'tutSeeAboveQ' },
+  { key: 'tutYouBoughtAmulet' },
+  { key: 'tutAmuletWithYou' },
+  { parts: [{ key: 'tutUntilYour' }, { literal: '\n' }, { key: 'tutDeathWord', tone: 'red' }] },
+];
+
+/**
+ * Ранняя оплата долга: один раз после того, как отдан второй долг, и ДО открытия магазина. Числа — из констант правил:
+ * сколько прокруток должно остаться (EARLY_PAY_MIN_SPINS) и сколько билетов даёт такая оплата.
+ * Билетов на самом деле два: билет за раннюю оплату (EARLY_PAY_TICKETS) и билет за сам долг (TICKETS_PER_DEBT);
+ * улучшение №17 может добавить третий, но база — два, поэтому в тексте 2, а не 1 (DONTLIKE, 25.11).
+ * ПРОКРУТКИ — зелёным, БИЛЕТА — фиолетовым, как акценты на табло.
+ */
+export const EARLY_PAY_LINES: readonly TutorialLine[] = [
+  { key: 'tutEarlyForgot' },
+  { key: 'tutEarlyCanPay' },
+  {
+    parts: [
+      { key: 'tutEarlyIfLeft' },
+      { literal: '\n' },
+      { key: 'tutEarlyCount', args: [EARLY_PAY_MIN_SPINS] },
+      { literal: ' ' },
+      { key: 'tutEarlySpinsWord', tone: 'green' },
+    ],
+  },
+  {
+    parts: [
+      { key: 'tutEarlyPayAndGet' },
+      { literal: '\n' },
+      { key: 'tutEarlyCount', args: [EARLY_PAY_TICKETS + TICKETS_PER_DEBT] },
+      { literal: ' ' },
+      { key: 'tutEarlyTicketsWord', tone: 'purple' },
+      { literal: ' ' },
+      { key: 'tutEarlyNotOne', args: [TICKETS_PER_DEBT] },
+    ],
+  },
+];
+
+/** Первая смерть: полное объяснение раунда спасения перед спасением (ПОСЛЕДНИЙ ШАНС красным, СТОЛБЕЦ синим). */
+export const DEATH_LINES: readonly TutorialLine[] = [
+  { key: 'tutDeathEndQ' },
+  { key: 'tutDeathNo' },
+  { parts: [{ key: 'tutDeathYouHave' }, { literal: '\n' }, { key: 'tutDeathLastChance', tone: 'red' }] },
+  { key: 'tutDeathTryPattern' },
+  { parts: [{ key: 'tutDeathCanFreeze' }, { literal: '\n' }, { key: 'tutDeathColumn', tone: 'blue' }] },
+  { key: 'tutDeathEverySpin' },
+  { key: 'tutDeathWontHelp' },
+  { key: 'tutDeathSeeAfter' },
 ];
 
 /** Спасение удалось: Диллер недоволен. */
-export const RESCUE_WIN_LINES: readonly TextKey[] = ['tutWinLucky', 'tutWinNextTime', 'tutWinRemember'];
+export const RESCUE_WIN_LINES: readonly TextKey[] = ['tutWinSurvivedQ', 'tutWinPraise', 'tutWinDontForget', 'tutWinNextDeath'];
 
 /** Первая смерть: перед выбором улучшения на следующий забег. */
 export const DEATH_SCREEN_LINES: readonly TextKey[] = [
-  'tutDeathWhat',
-  'tutDeathSurprised',
-  'tutDeathAlive',
-  'tutDeathPick',
-  'tutDeathSomeday',
-  'tutDeathGoal',
+  'tutDeathIsItAll',
+  'tutDeathNo',
+  'tutDeathBeginning',
+  'tutDeathPickUpgrade',
+  'tutDeathMaybe',
+  'tutDeathMillion',
   'tutDeathLuck',
 ];
 
-/** Действия между прокрутками: первое появление полки действий. */
-export const ACTIONS_LINES: readonly TextKey[] = [
-  'tutActionsOh',
-  'tutActionsAffect',
-  'tutActionsCareful',
-  'tutActionsOnce',
-  'tutActionsUseful',
-  'tutActionsThink',
+/** Действия между прокрутками: первое появление полки действий (ПАНЕЛЬ ДЕЙСТВИЙ и КАЖДОЕ — зелёным).
+ *  «КАЖДОЕ действие» — одно словосочетание в одной строке, «всего 1 раз за раунд» — следующая (DONTLIKE, 25.11). */
+export const ACTIONS_LINES: readonly TutorialLine[] = [
+  { key: 'tutActionsOh' },
+  { key: 'tutActionsForgot' },
+  { parts: [{ key: 'tutActionsLeftOfYou' }, { literal: '\n' }, { key: 'tutActionsPanel', tone: 'green' }] },
+  { key: 'tutActionsUseful' },
+  {
+    parts: [
+      { key: 'tutActionsYouCanUse' },
+      { literal: '\n' },
+      { key: 'tutActionsEach', tone: 'green' },
+      { literal: ' ' },
+      { key: 'tutActionWord' },
+    ],
+  },
+  { key: 'tutActionsOncePerRound' },
+  { key: 'tutActionsThinkWhen' },
 ];

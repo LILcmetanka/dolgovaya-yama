@@ -32,7 +32,7 @@ export type PactId =
   | 'win-debt' | 'jackpot-double' | 'cherry-double' | 'step-two'
   | 'amulet-half' | 'ticket-gift' | 'interest-win' | 'insurance-free'
   | 'pot-start' | 'piggy-lock' | 'skull-refund' | 'pot-safe-double' | 'chips-start'
-  | 'free-item' | 'item-cheap' | 'two-slots' | 'joker-slot'
+  | 'item-cheap'
   | 'amulet-copy' | 'socket-gift' | 'amulet-save' | 'rare-only'
   | 'symbol-run' | 'machine-pick' | 'joker-center' | 'blood-round'
   | 'debt-defer' | 'debt-freeze' | 'debt-tickets'
@@ -122,7 +122,6 @@ export interface PactEffects {
   skullDoubleBurn: boolean; // №24: череп после пощажённого сжигает вдвое (пот и столько же с табло)
   itemPriceMul: number; // №27: множитель цен предметов
   itemOfferDelta: number; // №27: на столько меньше/больше предметов в витрине
-  shelfSlotsDelta: number; // №26/28/30: на столько мест на полке больше (+) или меньше (−)
   jokerCenter: boolean; // №39: в центре каждой сетки джокер
   bloodFirstSpin: boolean; // №40: первая прокрутка раунда кровавая
   debtDefer: boolean; // №43: раз за забег долг можно отложить на раунд
@@ -176,7 +175,7 @@ export const PRICE_UP_SKULL_DELTA = 0.005;
  * Долг +8% — разово в момент взятия: бессрочная скидка за один разовый штраф была бы чистой прибылью без риска.
  */
 export const CHEAP_SHOP_ROUNDS = 4;
-/** №2: во столько раз дешевле всё в магазине (предметы, места, амулеты, гнёзда, барабан, кассета). */
+/** №2: во столько раз дешевле всё в магазине (предметы, амулеты, гнёзда, барабан, кассета). */
 export const CHEAP_SHOP_DISCOUNT = 0.8;
 /** №2: во столько раз дороже долг раунда, в котором взяли карту (разово). */
 export const CHEAP_SHOP_DEBT_MUL = 1.08;
@@ -285,20 +284,10 @@ export const POT_SAFE_DOUBLE_ROUNDS = 3;
 /** №25: старт с 100 фишками, стартовый долг +10% (разово). */
 export const CHIPS_START_CHIPS = 100;
 export const CHIPS_START_DEBT_MUL = 1.1;
-/** №26: бесплатный предмет, −1 место на полке три раунда. */
-export const FREE_ITEM_SHELF = -1;
-export const FREE_ITEM_ROUNDS = 3;
 /** №27: предметы −20%, в витрине на один предмет меньше. */
 export const ITEM_CHEAP_MUL = 0.8;
 export const ITEM_CHEAP_OFFER = -1;
 export const ITEM_CHEAP_ROUNDS = 3;
-/** №28: +2 места на полке, черепа чаще на 2 % */
-export const TWO_SLOTS_BONUS = 2;
-export const TWO_SLOTS_SKULL_DELTA = 0.02;
-export const TWO_SLOTS_ROUNDS = 3;
-/** №30: джокер в подарок (предмет «подмена»), −1 место на полке. */
-export const JOKER_SLOT_SHELF = -1;
-export const JOKER_SLOT_ROUNDS = 3;
 /** №32: копия любого амулета бесплатно, все амулеты дороже на 1 билет. */
 export const AMULET_COPY_PRICE_ADD = 1;
 export const AMULET_COPY_ROUNDS = 3;
@@ -505,7 +494,7 @@ export const PACTS: readonly PactSpec[] = [
       en: `each second take loses ${cardNum((1 - DOUBLE_TAKE_SHARE) * 100, true)}%`,
     },
   },
-  // ---------- Шаг 30: 37 карт из DONTLIKE.md §2 ----------
+  // ---------- Шаг 30: 37 карт из DONTLIKE.md §2 (№26, 28, 30 «место на полке» удалены 25.11 — осталось 34) ----------
   {
     id: 'spin-plus',
     rounds: SPIN_PLUS_ROUNDS,
@@ -672,15 +661,6 @@ export const PACTS: readonly PactSpec[] = [
     },
   },
   {
-    id: 'free-item',
-    rounds: FREE_ITEM_ROUNDS,
-    bonus: { ru: 'бесплатный предмет на полку', en: 'a free item on the shelf' },
-    cost: {
-      ru: `мест на полке −${-FREE_ITEM_SHELF} на ${FREE_ITEM_ROUNDS} раунда`,
-      en: `−${-FREE_ITEM_SHELF} shelf slot for ${FREE_ITEM_ROUNDS} rounds`,
-    },
-  },
-  {
     id: 'item-cheap',
     rounds: ITEM_CHEAP_ROUNDS,
     bonus: {
@@ -690,24 +670,6 @@ export const PACTS: readonly PactSpec[] = [
     cost: {
       ru: `в витрине на ${-ITEM_CHEAP_OFFER} предмет меньше`,
       en: `${-ITEM_CHEAP_OFFER} item fewer in the window`,
-    },
-  },
-  {
-    id: 'two-slots',
-    rounds: TWO_SLOTS_ROUNDS,
-    bonus: { ru: `+${TWO_SLOTS_BONUS} места на полке`, en: `+${TWO_SLOTS_BONUS} shelf slots` },
-    cost: {
-      ru: `черепа чаще на ${cardNum(TWO_SLOTS_SKULL_DELTA * 100, false)}%`,
-      en: `skulls ${cardNum(TWO_SLOTS_SKULL_DELTA * 100, true)}% more often`,
-    },
-  },
-  {
-    id: 'joker-slot',
-    rounds: JOKER_SLOT_ROUNDS,
-    bonus: { ru: 'джокер в подарок', en: 'a free joker' },
-    cost: {
-      ru: `джокер занимает ${-JOKER_SLOT_SHELF} место полки`,
-      en: `the joker takes ${-JOKER_SLOT_SHELF} shelf slot`,
     },
   },
   {
@@ -976,7 +938,6 @@ export function pactEffects(pacts: readonly Pact[], round: number): PactEffects 
     skullDoubleBurn: false,
     itemPriceMul: 1,
     itemOfferDelta: 0,
-    shelfSlotsDelta: 0,
     jokerCenter: false,
     bloodFirstSpin: false,
     debtDefer: false,
@@ -1134,19 +1095,9 @@ export function pactEffects(pacts: readonly Pact[], round: number): PactEffects 
         effects.potSafeFirst = true;
         effects.skullDoubleBurn = true;
         break;
-      case 'free-item':
-        effects.shelfSlotsDelta += FREE_ITEM_SHELF;
-        break;
       case 'item-cheap':
         effects.itemPriceMul *= ITEM_CHEAP_MUL;
         effects.itemOfferDelta += ITEM_CHEAP_OFFER;
-        break;
-      case 'two-slots':
-        effects.shelfSlotsDelta += TWO_SLOTS_BONUS;
-        effects.skullShareDelta += TWO_SLOTS_SKULL_DELTA;
-        break;
-      case 'joker-slot':
-        effects.shelfSlotsDelta += JOKER_SLOT_SHELF;
         break;
       case 'amulet-copy':
         effects.amuletPriceAdd += AMULET_COPY_PRICE_ADD;

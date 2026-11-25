@@ -31,6 +31,7 @@ export const GREEN_TEXT = '#4ade80';
 export const RED_TEXT = '#f87171';
 export const BLUE_TEXT = '#38bdf8';
 export const PURPLE_TEXT = '#c084fc'; // паук съел часть кона
+export const ORANGE_TEXT = '#fb923c'; // оранжевый акцент: «ПРЕДМЕТОВ» в обучении (тон orange)
 export const HINT_TEXT = 'rgba(255, 255, 255, 0.55)'; // бледный значок в углу (🔇)
 export const LED_COLOR = '#fbbf24';
 

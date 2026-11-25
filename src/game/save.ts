@@ -1,4 +1,4 @@
-import { ticketPrice, type Amulet, type AmuletCounts } from './amulets';
+import { MINI_CASE_PURCHASES, ticketPrice, type Amulet, type AmuletCounts } from './amulets';
 import type { Pact } from './dealerGame';
 import type { MachineId } from './machines';
 import type { Item, ItemEffects } from './items';
@@ -50,7 +50,8 @@ export interface RunSave {
   devUsed?: boolean; // забег трогали во вкладке «ТЕСТ» до записи: откат этого не забывает, рекорд фишек не пишется; в старых записях поля нет — считаем, что нет
   rescueUsed?: boolean; // спасение в этом забеге уже было: второе не прощают; откат кассетой флаг не снимает; в старых записях поля нет — считаем, что не было
   deferUsed?: boolean; // улучшение №10 «отсрочка» в этом забеге уже потрачено (шаг 28); тоже липкое; в старых записях поля нет — считаем, что нет
-  amuletChipUsed?: boolean; // мини-чемодан за фишки (DONTLIKE п.7): амулет за фишки уже брали; липкое, откат не возвращает
+  miniCaseBought?: number; // мини-чемодан за фишки: сколько амулетов взято за забег (0..MINI_CASE_PURCHASES); откат — по записи
+  miniCaseShopRound?: number; // номер магазина (раунда), где взяли последний амулет за фишки; 0 — не брали
   freeGiftGiven?: boolean; // улучшение №40 (28в): подарок первого магазина уже выдан; липкое, откат второй не даёт
   skullCancelUsed?: boolean; // улучшение №50 (28г): отмена черепа уже потрачена; липкая, откат вторую не даёт
   pactAmuletBurns?: boolean; // сделка №34: следующий купленный амулет сгорит; едет с плёнкой, иначе откат снимал бы сделку
@@ -94,11 +95,21 @@ export function deferUsedOf(record: { deferUsed?: unknown }, current = false): b
 }
 
 /**
- * Липкий флаг «амулет за фишки уже брали» (мини-чемодан, DONTLIKE п.7): откат кассетой не возвращает вторую покупку.
- * Как deferUsedOf: текущий OR с плёнкой, старой плёнке без поля — «не было».
+ * Сколько амулетов за фишки взяли к моменту записи (мини-чемодан, DONTLIKE п.7). Откат ведёт себя по записи, а не
+ * липко: плёнка до покупок возвращает чемодан с двумя амулетами, плёнка после — по правилу «покупка в прошлом
+ * магазине прячет его в следующем». Мусор и минус — 0, больше MINI_CASE_PURCHASES — потолок.
  */
-export function amuletChipUsedOf(record: { amuletChipUsed?: unknown }, current = false): boolean {
-  return current || record.amuletChipUsed === true;
+export function miniCaseBoughtOf(record: { miniCaseBought?: unknown }): number {
+  const bought = record.miniCaseBought;
+  if (typeof bought !== 'number' || !Number.isFinite(bought) || bought <= 0) return 0;
+  return Math.min(MINI_CASE_PURCHASES, Math.floor(bought));
+}
+
+/** Магазин (раунд), где брали последний амулет за фишки: 0 — не брали, мусор и минус — тоже 0, дробное — вниз. */
+export function miniCaseShopRoundOf(record: { miniCaseShopRound?: unknown }): number {
+  const round = record.miniCaseShopRound;
+  if (typeof round !== 'number' || !Number.isFinite(round) || round <= 0) return 0;
+  return Math.floor(round);
 }
 
 /**

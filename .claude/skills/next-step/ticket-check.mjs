@@ -11,7 +11,9 @@
  *  4) потолок за заход (items.TICKETS_PER_SHOP): после покупки ряд гаснет, ценника нет, подсказка говорит почему,
  *     второй клик по погасшему ряду не продаёт;
  *  5) следующий магазин снова зажигает ряд, а цена растёт с покупками за забег — items.ticketForChips(balance, bought);
- *  6) фишек меньше цены — покупка не проходит: ни билета, ни списания.
+ *  6) фишек меньше цены — покупка не проходит: ни билета, ни списания;
+ *  7) билет из барабана (ShopScene.winDrum → shop.flyTicket): в момент выпадения число прежнее, +1 приходит только
+ *     после анимации полёта, и табло с шапкой панели показывают новое число.
  * Порт 8771 — свой: dev-сервер 5173 и порты 8766/8770 из других сценариев не трогаем.
  */
 import { spawn } from 'node:child_process';
@@ -73,6 +75,8 @@ try {
       shopping: g.isShopping, balance: g.balance, tickets: g.tickets, bought: g.ticketsBought,
       rows: shop.goods.length, prices: shop.prices.slice(0, 4), texts: shop.priceTexts.slice(0, 4).map((t) => t.text),
       chips: shop.priceChips.slice(0, 4).map((c) => c.visible),
+      hudTickets: shop.hudTicketsText ? shop.hudTicketsText.text : null,
+      boardTickets: g.panel && g.panel.ticketsText ? g.panel.ticketsText.text : null,
       visible: shop.goods.map((o) => o.visible), ticket: b(shop.goods[3]), ticketVisible: shop.goods[3].visible,
       ticketAlpha: shop.goods[3].alpha, ticketTexture: shop.goods[3].texture.key, glass: shop.goods[0].texture.key,
       hint: shop.hintFor(3),
@@ -151,6 +155,37 @@ try {
   check(s3.balance === 3, 'фишки не списаны: ' + s3.balance);
 
   await shot('shop-ticket-deny.png');
+
+  // ---------- 6. Билет барабана приходит после анимации ----------
+  // DONTLIKE: «если выпадает билет на автомате, то анимация ничего не значит — он уже сразу добавляется».
+  // Теперь сцена (ShopScene.winDrum) зовёт shop.flyTicket(x, y, done), а число билетов растёт только в done —
+  // когда билет долетел. Барабан открыт со второго закрытого долга (closedDebts = round − 1), а мы уже в третьем
+  // раунде — второй магазин его и открыл. Крутить колесо целиком незачем: winDrum — тот же путь выдачи приза,
+  // что и после остановки колеса, и именно в нём живёт прибавка билета.
+  console.log('\n-- билет барабана --');
+  const drum = JSON.parse(await val(`(() => {
+    const g = window.__g;
+    g.balance = 5000; g.tickets = 0; g.refreshShop();
+    return JSON.stringify({ unlocked: g.drumUnlocked(), shopping: g.isShopping, round: g.round, tickets: g.tickets, balance: g.balance });
+  })()`));
+  check(drum.unlocked === true && drum.shopping === true, `барабан открыт (закрыто два долга, раунд ${drum.round}), покупки идут`);
+  const flown = JSON.parse(await val(`(() => {
+    const g = window.__g, wheel = g.drum.wheel;
+    const before = g.tickets;
+    g.winDrum('ticket', wheel.x, wheel.y, 0); // приз выпал: билет полетел в шапку панели
+    return JSON.stringify({ before, after: g.tickets, hud: g.shop.hudTicketsText.text });
+  })()`));
+  check(flown.after === flown.before, `в момент выпадения билета число не изменилось: ${flown.before} → ${flown.after} (анимация ещё идёт)`);
+  await sleep(350);
+  const midFlight = await state();
+  check(midFlight.tickets === flown.before, `через 350 мс билет ещё летит, а число прежнее: ${midFlight.tickets}`);
+  await sleep(700); // полёт билета — 600 мс (TICKET_FLY_TIME в shop.ts)
+  const landedTickets = await state();
+  check(landedTickets.tickets === flown.before + 1, `через анимацию билет долетел и прибавлен: ${flown.before} → ${landedTickets.tickets}`);
+  check(landedTickets.boardTickets === String(landedTickets.tickets) && landedTickets.hudTickets === String(landedTickets.tickets),
+    `табло и шапка панели показывают новое число: табло «${landedTickets.boardTickets}», шапка «${landedTickets.hudTickets}»`);
+  await shot('shop-drum-ticket.png');
+
   console.log(`итог ${ok} из ${all}`);
   ws.close();
   process.exitCode = ok === all ? 0 : 1;

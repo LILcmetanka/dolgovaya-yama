@@ -11,11 +11,14 @@ import { achievementsOf, isAchievementId, type AchievementId } from './achieveme
 import { isDevMode } from './devmode';
 import { isUpgradeId, upgradeById, type PurchasedUpgrades, type UpgradeId } from './upgrades';
 
-/** Дорожки обучения текстами: у каждой своя память шагов. */
-export type TutorialTrack = 'intro' | 'death' | 'rescueWin' | 'actions';
+/**
+ * Дорожки обучения текстами: у каждой своя память шагов. money — один раз после первой оплаты долга (шаг 46б).
+ * Дорожки магазина (shopEmpty, firstItem, firstAmulet) и earlyPay — короткие реплики Дилера один раз за всё обучение.
+ */
+export type TutorialTrack = 'intro' | 'death' | 'rescueWin' | 'actions' | 'money' | 'shopEmpty' | 'firstItem' | 'firstAmulet' | 'earlyPay';
 
 /** Все дорожки: по этому списку читаем и сливаем шаги (чужие ключи сохранения отбрасываются). */
-const TUTORIAL_TRACKS: readonly TutorialTrack[] = ['intro', 'death', 'rescueWin', 'actions'];
+const TUTORIAL_TRACKS: readonly TutorialTrack[] = ['intro', 'death', 'rescueWin', 'actions', 'money', 'shopEmpty', 'firstItem', 'firstAmulet', 'earlyPay'];
 
 export interface Progress {
   tutorialDone: boolean; // мастер-флаг «обучение пропущено целиком»: текстов больше не будет. Ставится только в двух местах — конец дорожки действий (TutorialScene.tutorialActionsIntro) и finishTutorial()

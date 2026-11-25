@@ -2,7 +2,6 @@ import Phaser from 'phaser';
 import { t } from '../lang';
 import { ACTION_BOARD } from '../layout';
 import { addText } from '../theme';
-import { attachHint, type Hint } from './tooltip';
 
 /**
  * Кнопка «ДЕЙСТВИЯ» слева от экрана автомата (шаг 29; перенос — DONTLIKE п.5): вход в панель действий вне прокрутки.
@@ -31,8 +30,8 @@ export class ActionBoard {
   private readonly label: Phaser.GameObjects.Text;
   private unlocked = false; // первая смерть позади: до неё на экране нет надписи
 
-  /** press — нажали кнопку (сцена открывает панель или говорит «нельзя»). hint — подсказка при наведении. */
-  constructor(scene: Phaser.Scene, press: () => void, hint: Hint) {
+  /** press — нажали кнопку (сцена открывает панель или говорит «нельзя»). */
+  constructor(scene: Phaser.Scene, press: () => void) {
     const { x, y, width, height } = ACTION_BOARD;
     const left = x - width / 2;
     const top = y - height / 2;
@@ -60,8 +59,9 @@ export class ActionBoard {
     }).setOrigin(0.5);
     this.box = plate;
     this.label = label;
-    // Подсказка и нажатие — на пластине: мышью клик, пальцем — по отпусканию (долгое — подсказка).
-    attachHint(plate, hint, () => [t('actionsTitle'), t('actionsWhat')], press);
+    // Только нажатие: у таблички действий подсказки нет вовсе (DONTLIKE: над кнопкой она быть не должна).
+    // pointerdown ловит и мышь, и палец — касание открывает панель так же, как клик.
+    plate.on('pointerdown', press);
   }
 
   /**

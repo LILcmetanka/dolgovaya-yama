@@ -1,11 +1,15 @@
-import { t, type TextKey } from '../lang';
+import type { TextKey } from '../lang';
 import { isActionsUnlocked, isTutorialDone, markDarknessDone, markTutorialDone, setTutorialStep, tutorialStep } from '../progress';
 import type { Grid } from '../rules';
 import {
   ACTIONS_LINES,
+  EARLY_PAY_LINES,
   introSteps,
+  MONEY_LINES,
   tutorialGrid,
   TUTORIAL_LINE_HOLD,
+  tutorialStepMode,
+  tutorialTalkTime,
   type IntroStep,
   type TutorialLine,
   type TutorialSpin,
@@ -14,9 +18,12 @@ import { MachineScene } from './MachineScene';
 
 // Номера особых битов берутся из самих данных интро (openNote, clearDark, id 'places'), а не копируются числом:
 // поменяли порядок битов в tutorial.ts — сцена читает то же место, что и тест. Бита нет — безопасное поведение:
-// записка не открывается никогда, тьму гасит только Коллектор, полка предметов видна сразу.
+// записка не открывается никогда, тьму гасит только Коллектор, пятна тьмы над полками нет.
 // Запас страховочного таймера поверх времени строк: строка гаснет и встаёт следующая не мгновенно.
 const TUTORIAL_GUARD_MS = 4000;
+// Пауза между репликами очереди (магазин: предмет, потом амулет): экран заставки остаётся чёрным, меняется только
+// текст — иначе между репликами на миг виден автомат (замечание автора 25.11).
+const TUTORIAL_SAY_GAP = 450;
 
 /** Чего обучение ждёт прямо сейчас: ничего (идёт текст или пауза), рычага или «забрать». */
 type TutorialPhase = 'idle' | 'waitSpin' | 'waitTake';
@@ -49,16 +56,27 @@ export abstract class TutorialScene extends MachineScene {
   private talkToken = 0;
   private talkTimer: Phaser.Time.TimerEvent | null = null; // страховая задержка текущей речи
   private enterTimer: Phaser.Time.TimerEvent | null = null; // пауза перед текстом текущего бита
+  // Строки текущей речи — для смены языка на лету (toggleLanguage → relabelTutorialTexts). Пусто — заставки нет.
+  protected talkLines: readonly TutorialLine[] = [];
+  // Очередь коротких реплик Дилера (магазин, ранняя оплата): две реплики подряд не должны перекрыть друг друга.
+  // Говорит всегда одна — следующая заступает после done. Чистится в resetState и tutorialOff.
+  private sayQueue: { lines: readonly TutorialLine[]; depth?: number; done: () => void }[] = [];
+  private sayRunning = false;
+  private sayTimer: Phaser.Time.TimerEvent | null = null; // пауза между репликами очереди (экран остаётся чёрным)
 
   /** Новый забег: биты читаются заново, шаг — из прогресса (после перезагрузки обучение продолжается). */
   protected resetState(): void {
     super.resetState();
-    this.intro = introSteps(this.sockets);
+    this.intro = introSteps(); // биты — чистые данные; числа долга в тексте больше нет
     this.introStep = tutorialStep('intro');
     this.introDone = isTutorialDone();
     this.busy = false;
     this.armed = null;
+    this.talkLines = [];
     this.tutorialPhase = 'idle';
+    this.sayQueue = []; // недоигранные реплики прошлой сцены не переезжают в новый забег
+    this.sayRunning = false;
+    this.sayTimer = null;
     this.generation += 1; // таймеры прошлой сцены больше не наши
     this.talkToken += 1; // и недоигранная речь тоже
     this.talkTimer = null;
@@ -75,24 +93,31 @@ export abstract class TutorialScene extends MachineScene {
     return this.intro[this.introStep] ?? null;
   }
 
+  /**
+   * Подсказки при наведении во время обучения не работают вовсе: пока идёт текст (busy) или обучение ещё активно,
+   * табличка выдала бы наперёд то, о чём Дилер как раз говорит. После обучения подсказки снова работают.
+   */
+  protected tutorialHintsBlocked(): boolean {
+    return this.busy || this.tutorialActive();
+  }
+
   /** Сейчас идёт бит с таким id? */
   protected tutorialIsStep(id: string): boolean {
     return this.tutorialCurrent()?.id === id;
   }
 
-  /** Номер бита, который открывает записку с долгом: -1 — такого бита нет (записка не проступает никогда). */
-  private noteStep(): number {
-    return this.intro.findIndex((step) => step.openNote === true);
-  }
-
-  /** Номер бита, на котором гаснет тьма первого забега: -1 — в интро она не гаснет (погасит Коллектор). */
-  private darkOffStep(): number {
-    return this.intro.findIndex((step) => step.clearDark === true);
-  }
-
-  /** Номер бита «Это места под предметы»: -1 — полка предметов видна сразу. */
+  /** Номер бита «Это места под предметы»: -1 — пятна тьмы над полками нет, они видны сразу. */
   private placesStep(): number {
     return this.intro.findIndex((step) => step.id === 'places');
+  }
+
+  /**
+   * Эффекты входа в бит по данным бита: записка с долгом и гашение тьмы. Повторный вызов безопасен
+   * (reveal.openNote и finishDarkness сами не запускаются дважды) — поэтому ими же доводится самопочинка.
+   */
+  private tutorialApplyStep(step: IntroStep): void {
+    if (step.clearDark) this.finishDarkness(); // тьма гаснет на входе в бит: её фейд успевает пройти в паузе
+    if (step.openNote) this.reveal?.openNote(); // записка проступает на входе в бит — вместе с первой строкой его текста
   }
 
   /**
@@ -101,7 +126,7 @@ export abstract class TutorialScene extends MachineScene {
    * Интро позади — на первом забеге с открытыми действиями Диллер ещё объясняет полку действий (tutorialActionsIntro).
    */
   protected tutorialOnRunStart(): void {
-    this.tutorialShelfSync(); // обучение не пройдено — полки на стене ещё нет
+    this.tutorialShelfSync(); // обучение не пройдено — над полками ещё тьма
     if (this.tutorialActive()) {
       this.introStep = tutorialStep('intro'); // другая вкладка могла уйти вперёд
       this.tutorialEnter();
@@ -117,6 +142,9 @@ export abstract class TutorialScene extends MachineScene {
    * здесь: больше надписей не будет. Это одно из двух мест, где он вообще ставится (второе — finishTutorial).
    */
   private tutorialActionsIntro(): void {
+    // Экран улучшений или конец забега: шесть строк действий ждут нового забега, а не ложатся поверх списка
+    // улучшений или экрана смерти (иначе они всплывали бы раньше выбора улучшений).
+    if (this.isEndScreenOpen || this.isGameOver || this.upgradeScreen.isOpen) return;
     // Мастер-флаг = «обучение пропущено целиком»: старые сохранения и браузерные сценарии с tutorialDone
     // новых строк не видят вовсе.
     if (isTutorialDone() || !isActionsUnlocked() || tutorialStep('actions') !== 0) return;
@@ -124,7 +152,7 @@ export abstract class TutorialScene extends MachineScene {
     // и шесть строк действий без этой проверки встали бы раньше семи строк смерти и поставили мастер-флаг —
     // строк смерти не было бы никогда. Не пришло время — строки ждут следующего забега.
     if (tutorialStep('death') === 0) return;
-    this.tutorialTalkKeys(ACTIONS_LINES, () => {
+    this.tutorialTalk(ACTIONS_LINES, () => {
       setTutorialStep('actions', 1);
       markTutorialDone();
     });
@@ -137,7 +165,7 @@ export abstract class TutorialScene extends MachineScene {
    * доводится до нужного вида.
    */
   protected tutorialEnter(): void {
-    this.tutorialShelfSync(); // «Это места под предметы» — с этого бита полки видно
+    this.tutorialShelfSync(); // «Это места под предметы» — с этого бита полки выходят из тьмы
     const step = this.tutorialCurrent();
     if (!step) return;
     const gen = this.generation;
@@ -148,32 +176,31 @@ export abstract class TutorialScene extends MachineScene {
     this.tutorialPhase = 'idle';
     this.refreshHud();
     // Самопочинка: сцена могла перезапуститься посреди обучения — тьма и записка должны быть на своём месте.
-    const darkOff = this.darkOffStep();
-    const noteStep = this.noteStep();
-    if (darkOff >= 0 && this.introStep >= darkOff) this.finishDarkness();
-    else if (noteStep >= 0 && this.introStep >= noteStep) this.reveal?.openNote();
+    // Биты, которые уже позади, доводятся сразу. Эффекты текущего бита — тоже на входе, до паузы: записка с долгом
+    // проступает на бите debt одновременно с первой строкой «Это твой текущий ДОЛГ», а не после неё (DONTLIKE, 25.11).
+    for (const past of this.intro.slice(0, this.introStep)) this.tutorialApplyStep(past);
+    this.tutorialApplyStep(step);
     // Бит «забрать», а кон уже забран (пересёкся с перезагрузкой): ждать клика нечего — идём дальше.
     if (step.wait === 'take' && this.pot <= 0) {
       this.tutorialAdvance();
       return;
     }
     // Последний бит: прокрутка остаётся одна, лишние лампочки гаснут — иначе раунд кончился бы на обучении.
-    // В обычном течении интро тратит 9 прокруток из 12, а остальные биты («забрать» и три без нажатия) счёт не
-    // трогают. Но игрок мог накрутить лишние между битами: тогда упёршийся в ноль счётчик вернёт одну, чтобы
-    // обучение не оборвалось на середине.
+    // В обычном течении интро тратит 9 прокруток из 12, а бит «забрать» счёт не трогает. Но игрок мог накрутить
+    // лишние между битами: тогда упёршийся в ноль счётчик вернёт одну, чтобы обучение не оборвалось на середине.
     if (step.lastSpin || this.spinsLeft <= 0) {
       this.spinsLeft = 1;
       this.panel.showSpinsLeft(this.spinsLeft);
     }
     // После текста бит начинает ждать: рычага или «забрать». До этого ввод закрыт (tutorialBlocks).
+    // Текст уже погас сам (все биты идут цепочкой), поэтому экран в этот миг пуст — это и просил автор.
     const next = (): void => {
-      if (gen !== this.generation || !this.scene.isActive()) return;
-      // К этому мгновению на экране автомата не остаётся ничего: ни строки, ни чёрной плашки. Снимаем заставку
-      // явно, а не «как получится»: бит ждёт рычага уже на чистом экране (замечание автора 24.11).
-      this.collector.clearScreenSequence();
-      // Бит без нажатия («Телевизор», «не 1.000.000», места под предметы) сам передаёт эстафету следующему:
-      // по сценарию автора игрок здесь ничего не крутит. Фаза гасится заранее, чтобы пауза перед следующим
-      // текстом не оставила рычаг живым.
+      // Сцену проверяем по поколению, а не по scene.isActive(): в create() статус ещё CREATING, и в режиме wait
+      // заставка зовёт done синхронно — проверка isActive съела бы первый бит после перезагрузки страницы.
+      if (gen !== this.generation) return;
+      // Экран здесь не чистим: строки бита уже погасли по своим hold, а бит без нажатия (wait 'none') сам
+      // передаёт эстафету следующему: здесь ничего не нажимают. Фаза гасится заранее, чтобы пауза перед
+      // следующим текстом не оставила рычаг живым.
       if (step.wait === 'none') {
         this.armed = null;
         this.tutorialPhase = 'idle';
@@ -188,15 +215,20 @@ export abstract class TutorialScene extends MachineScene {
       // пока ввод закрыт, и включённая на входе в бит она бы не дожила до конца текста.
       if (step.pulseTake) this.payout.highlightTake(true);
     };
+    // Пауза бита: сначала видно то, что даёт вход (записка с долгом и тьма — выше), потом идёт текст.
+    const start = (): void => {
+      if (gen !== this.generation) return;
+      this.tutorialTalk(step.lines, next, tutorialStepMode(step));
+    };
     const delay = step.pause ?? 0;
     if (delay <= 0) {
-      this.tutorialTalk(step.lines, next);
+      start();
       return;
     }
     this.enterTimer = this.time.delayedCall(delay, () => {
       this.enterTimer = null;
-      if (gen !== this.generation || !this.scene.isActive()) return;
-      this.tutorialTalk(step.lines, next);
+      if (!this.scene.isActive()) return; // сцена уже погасла: таймер не наш
+      start();
     });
   }
 
@@ -210,20 +242,27 @@ export abstract class TutorialScene extends MachineScene {
     this.talkTimer = null;
     this.enterTimer?.remove(false);
     this.enterTimer = null;
+    this.talkLines = [];
     this.busy = false;
+    // Речь снята — снимается и очередь реплик: иначе следующая реплика заступила бы без своего заказа.
+    this.sayQueue = [];
+    this.sayRunning = false;
+    this.sayTimer?.remove(false);
+    this.sayTimer = null;
     this.collector.clearScreenSequence();
   }
 
   /**
-   * Полка предметов: по сценарию автора ячейки на стене открываются на бите «Это места под предметы» — после
-   * прокрутки на «Твоя цель», а не вместе с гашением тьмы на телевизоре. Пока обучение не дошло до этого бита,
-   * полки нет совсем (и клики сквозь неё не проходят — ItemShelf.setHidden); обучение пройдено — видна всегда.
-   * Состояние считается из introStep, поэтому после перезагрузки посреди обучения полка встаёт на своё место.
+   * Полки предметов: по сценарию автора они выходят из тьмы на бите «Это места под предметы» — после прокрутки
+   * на «Твоя цель», а не вместе с гашением тьмы на телевизоре. Пока обучение не дошло до этого бита, над полками
+   * лежит пятно тьмы (ItemShelf.setDarkened); сами полки не прячутся — на входе в бит пятно гаснет тенью, и полки
+   * проступают из темноты, а не «появляются» (DONTLIKE, 25.11). Обучение пройдено — пятна нет никогда.
+   * Состояние считается из introStep, поэтому после перезагрузки посреди обучения пятно встаёт на своё место.
    */
   private tutorialShelfSync(): void {
     const places = this.placesStep();
-    // Бита «места под предметы» нет — прятать полку нечем, она видна сразу.
-    this.itemShelf.setHidden(places >= 0 && this.tutorialActive() && this.introStep < places);
+    // Бита «места под предметы» нет — прятать полки нечем, они видны сразу.
+    this.itemShelf.setDarkened(places >= 0 && this.tutorialActive() && this.introStep < places);
   }
 
   /** Бит пройден: шаг запоминается (пройденное не откатывается), дальше — следующий бит. */
@@ -234,12 +273,21 @@ export abstract class TutorialScene extends MachineScene {
   }
 
   /**
-   * Текст бита на экране автомата: строки идут по очереди (collector.showScreenSequence), ввод всё это время закрыт.
+   * Текст бита на экране автомата: строки рисует «богатая» заставка (collector.showTutorialSequence — куски своих
+   * тонов, кегль 36), ввод всё это время закрыт. Интро говорит только цепочкой ('chain'): строки гаснут сами,
+   * экран остаётся пустым, и только потом бит начинает ждать рычага или «забрать» (DONTLIKE, 25.11).
+   * Режим 'wait' у двери остался, но обучение им больше не говорит.
    * done придёт от заставки; защитный таймер зовёт его, если заставка почему-то не позвала (обучение не должно встать
    * намертво). Пустые строки — бит без текста, сразу дальше. Каждая речь получает своё поколение: если её сменила
    * другая (новый бит, новая дорожка), запоздавший done молчит и не переносит ввод на чужой бит.
    */
-  protected tutorialTalk(lines: readonly TutorialLine[], done: () => void): void {
+  protected tutorialTalk(
+    lines: readonly TutorialLine[],
+    done: () => void,
+    mode: 'chain' | 'wait' = 'chain',
+    depth?: number,
+    keepScreen = false,
+  ): void {
     const gen = this.generation;
     this.talkToken += 1;
     const token = this.talkToken;
@@ -251,26 +299,121 @@ export abstract class TutorialScene extends MachineScene {
       finished = true;
       this.talkTimer?.remove(false);
       this.talkTimer = null;
-      if (gen !== this.generation || !this.scene.isActive()) return; // сцена перезапустилась: это уже не наше обучение
+      // Поколение, а не scene.isActive(): в create() статус сцены ещё CREATING, а бит с одной строкой в режиме wait
+      // зовёт done прямо из create. Перезапуск сцены двигает поколение (resetState), и это надёжный признак «не наше».
+      if (gen !== this.generation) return;
       this.busy = false;
       done();
+      this.pumpPopups(); // реплика кончилась — скопившиеся новости и ачивки выходят только теперь
     };
-    const texts = lines.map((line) => t(line.key, ...(line.args ?? [])));
-    if (texts.length === 0) {
-      done(); // бит без строк (строки кончились) сразу идёт дальше
+    this.talkLines = lines; // смена языка на лету вернёт эту же строку на новом языке
+    if (lines.length === 0) {
+      done(); // бит без строк (последний бит интро) сразу идёт дальше
       return;
     }
     this.busy = true;
-    this.collector.showScreenSequence(texts, finish, { hold: TUTORIAL_LINE_HOLD });
-    this.talkTimer = this.time.delayedCall(texts.length * TUTORIAL_LINE_HOLD + TUTORIAL_GUARD_MS, finish);
+    this.collector.showTutorialSequence(lines, finish, { mode, hold: TUTORIAL_LINE_HOLD, depth, keepScreen });
+    // Страховка с запасом: в режиме wait последняя строка не считается (она висит, done зовётся сразу),
+    // поэтому время речи считает один и тот же tutorialTalkTime, что и тест.
+    this.talkTimer = this.time.delayedCall(tutorialTalkTime(lines, mode, TUTORIAL_LINE_HOLD) + TUTORIAL_GUARD_MS, finish);
   }
 
   /**
    * Готовая дорожка текстов (список ключей) на экране автомата — те же правила, что у строк бита: держится
-   * TUTORIAL_LINE_HOLD, ввод на это время закрыт. Этой дверью говорят спасение, победа в нём, смерть и действия.
+   * TUTORIAL_LINE_HOLD, ввод на это время закрыт. Этой дверью говорят спасение, победа в нём, смерть, действия
+   * и дорожка денег (MONEY_LINES).
    */
-  protected tutorialTalkKeys(keys: readonly TextKey[], done: () => void): void {
-    this.tutorialTalk(keys.map((key) => ({ key })), done);
+  protected tutorialTalkKeys(keys: readonly TextKey[], done: () => void, mode: 'chain' | 'wait' = 'chain', depth?: number): void {
+    this.tutorialTalk(keys.map((key) => ({ key })), done, mode, depth);
+  }
+
+  /**
+   * Смена языка на живой заставке: та же строка на новом языке, с того же места и с тем же done.
+   * Только пока идёт речь обучения (tutorialTalk): заставку спасения запускает сцена напрямую, и она
+   * перерисовывается своим relabelRescueTexts — чужой talkLines её трогать не должен.
+   */
+  protected relabelTutorialTexts(): void {
+    if (!this.busy) return;
+    this.collector.relabelTutorialSequence(this.talkLines);
+  }
+
+  /**
+   * Дорожка денег (шаг 46б): один раз после первой оплаты долга — семь строк и только потом магазин.
+   * Только обычная оплата: прощённый долг и «отсрочка» идут в магазин без текста. Повтор оплаты — тоже молча.
+   */
+  protected tutorialMoneyPaid(done: () => void): void {
+    if (isTutorialDone() || tutorialStep('money') !== 0) {
+      done();
+      return;
+    }
+    this.tutorialTalk(MONEY_LINES, () => {
+      setTutorialStep('money', 1);
+      done();
+    });
+  }
+
+  /**
+   * Короткая реплика Дилера через очередь: если он уже говорит (реплика магазина, дорожка денег), эта встанет
+   * следующей и прозвучит после done. depth — слой текста: в магазине он выше панели (SHOP_PANEL_DEPTH + 1).
+   */
+  protected tutorialSay(lines: readonly TutorialLine[], done: () => void = () => undefined, depth?: number): void {
+    this.sayQueue.push({ lines, depth, done });
+    this.tutorialSayNext();
+  }
+
+  /** Сказать первую реплику очереди: остальные ждут её done. Дальше очередь двигает finish самой реплики. */
+  private tutorialSayNext(): void {
+    if (this.sayRunning || this.sayTimer) return;
+    const next = this.sayQueue.shift();
+    if (!next) return;
+    this.sayRunning = true;
+    // Чёрный экран реплики не гаснет сам: его судьбу решает конец реплики (ниже), а не начало, — следующая реплика
+    // может встать в очередь, пока эта уже говорит (замечание автора 25.11: между репликами мелькал автомат).
+    this.tutorialTalk(
+      next.lines,
+      () => {
+        this.sayRunning = false;
+        if (this.sayQueue.length > 0) {
+          // Очередь не пуста: экран остаётся чёрным, через паузу на нём же встанет следующая реплика.
+          next.done();
+          this.busy = true; // ввод закрыт и на паузе: очередь ещё говорит
+          const gen = this.generation;
+          this.sayTimer = this.time.delayedCall(TUTORIAL_SAY_GAP, () => {
+            this.sayTimer = null;
+            if (gen !== this.generation) return;
+            this.tutorialSayNext();
+          });
+          return;
+        }
+        // Очередь пуста: экран гаснет как у одиночной реплики, и только потом done — один раз.
+        this.busy = true;
+        this.collector.fadeScreenSequence(() => {
+          this.busy = false;
+          next.done();
+          this.pumpPopups(); // finish уже звал их вхолостую: busy был закрыт
+        });
+      },
+      'chain',
+      next.depth,
+      true,
+    );
+  }
+
+  /**
+   * Ранняя оплата долга (дорожка earlyPay): один раз после того, как отдан второй долг, и ДО открытия магазина.
+   * Панель магазина выезжает только после последней строки — иначе текст ложился поверх витрины с новым товаром
+   * (DONTLIKE, 25.11). Раньше реплика говорила на старте третьего раунда, уже после магазина. Первый отданный долг
+   * идёт без объяснения: закрытых долгов ещё нет (closedDebts() = 0).
+   */
+  protected tutorialEarlyPayBeforeShop(done: () => void): void {
+    if (isTutorialDone() || tutorialStep('earlyPay') !== 0 || this.closedDebts() < 1) {
+      done();
+      return;
+    }
+    this.tutorialSay(EARLY_PAY_LINES, () => {
+      setTutorialStep('earlyPay', 1);
+      done();
+    });
   }
 
   /** Ввод ждёт обучение: идёт текст, пауза перед ним или бит ещё не начал ждать рычага/«забрать». */
@@ -278,6 +421,14 @@ export abstract class TutorialScene extends MachineScene {
     if (this.busy) return true; // идёт текст дорожки: он может звучать и вне интро (спасение, смерть, действия)
     if (!this.tutorialActive()) return false;
     return this.tutorialPhase !== 'waitSpin' && this.tutorialPhase !== 'waitTake';
+  }
+
+  /**
+   * Пока идёт реплика Дилера, окна и новости не показываются: они выйдут после её done (DONTLIKE, 25.11).
+   * Магазин и остальное держит canShowPopups родителя.
+   */
+  protected override canShowPopups(): boolean {
+    return super.canShowPopups() && !this.busy;
   }
 
   /**
@@ -311,9 +462,19 @@ export abstract class TutorialScene extends MachineScene {
     this.tutorialAdvance();
   }
 
-  /** Кон забрали: бит «забрать» пройден — подсветка кнопки гаснет. Зовёт RoundScene.take после payPot. */
+  /**
+   * Рычаг дёрнули: висящая строка бита снимается — бит ведь ждал уже действия, а не текста. Зовёт RoundScene.roll
+   * первой строкой, и прокрутка идёт по чистому экрану. Вне обучения и вне фазы waitSpin — ничего не делает.
+   */
+  protected tutorialSpinStarted(): void {
+    if (!this.tutorialActive() || this.tutorialPhase !== 'waitSpin') return;
+    this.collector.clearScreenSequence();
+  }
+
+  /** Кон забрали: бит «забрать» пройден — висящая строка снимается, подсветка кнопки гаснет. Зовёт RoundScene.take после payPot. */
   protected tutorialPotTaken(): void {
     if (!this.tutorialActive() || !this.tutorialIsStep('take')) return;
+    this.collector.clearScreenSequence();
     this.payout.highlightTake(false);
     this.tutorialAdvance();
   }
@@ -322,7 +483,7 @@ export abstract class TutorialScene extends MachineScene {
   protected tutorialOff(): void {
     this.introDone = true;
     this.tutorialCancelTalk(); // недоигранная строка не должна пережить обучение
-    this.tutorialShelfSync(); // обучение кончилось — полка предметов на месте
+    this.tutorialShelfSync(); // обучение кончилось — пятна тьмы над полками нет
     this.payout.highlightTake(false); // подсветка «забрать» не должна пережить обучение
     markDarknessDone();
     markTutorialDone();

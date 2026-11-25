@@ -421,9 +421,26 @@ try {
   await shot('p-back.png');
 
   // ---------- Подсказка долгим нажатием (телефон) ----------
+  // У доли черепов подсказки нет вовсе (DONTLIKE): долгое нажатие обязано промолчать. А у предмета на полке
+  // подсказка есть — на нём и проверяем сам жест: держишь — табличка, отпустил — пропала, предмет не включился.
   const skull = JSON.parse(await val(`JSON.stringify({ x: window.__g.panel.skullShareText.x, y: window.__g.panel.skullShareText.y })`));
   const sp = await pagePoint(skull.x, skull.y);
   await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: sp.x, y: sp.y, radiusX: 6, radiusY: 6, force: 1, id: 1 }] });
+  await sleep(700);
+  const skullHint = await val('window.__g.tooltip.container.visible');
+  await shot('p-longpress-skull.png');
+  await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await sleep(400);
+  check(skullHint === false, 'доля черепов: долгое нажатие подсказку не показывает (её там нет вовсе)');
+
+  const gave = await val("window.__g.devGiveItem('shield')");
+  await sleep(800); // предмет долетает с планшета в клетку
+  const item = JSON.parse(await val(`(() => {
+    const b = window.__g.itemShelf.items[0].getBounds();
+    return JSON.stringify({ x: b.centerX, y: b.centerY, visible: window.__g.itemShelf.items[0].visible });
+  })()`));
+  const ip = await pagePoint(item.x, item.y);
+  await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: ip.x, y: ip.y, radiusX: 6, radiusY: 6, force: 1, id: 1 }] });
   await sleep(700);
   const hintOn = await val('window.__g.tooltip.container.visible');
   const hintText = await val('window.__g.tooltip.title.text');
@@ -431,7 +448,8 @@ try {
   await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await sleep(400);
   const hintOff = await val('window.__g.tooltip.container.visible');
-  check(hintOn === true, `долгое нажатие показывает подсказку: \u00ab${hintText}\u00bb`);
+  check(gave === true && item.visible === true, 'предмет лёг на полку — есть на чём проверить жест');
+  check(hintOn === true, `долгое нажатие на предмете показывает подсказку: \u00ab${hintText}\u00bb`);
   check(hintOff === false, 'отпустил палец — подсказка пропала');
 
   // ---------- Русский на телефоне: касание RU в паузе ----------
@@ -450,9 +468,6 @@ try {
   await val(`window.__g.monitor.showTab('who')`);
   await sleep(300);
   await shot('m-who-en.png');
-  await val(`window.__g.monitor.showTab('howTo')`);
-  await sleep(300);
-  await shot('m-howto-en.png');
   await val(`window.__g.monitor.showTab('items')`);
   await sleep(300);
   await shot('m-items-en.png');

@@ -26,7 +26,7 @@ import { formatChips, t, type TextKey } from '../lang';
 import { AMULET_SIZE, ITEM_SIZE, VIEW_CENTER_X, VIEW_WIDTH, WALL_PANEL, WALL_TV } from '../layout';
 import { hasAchievement } from '../progress';
 import { isPaying, isUnlocked, skullShare, symbolsUnlockedAt, SYMBOLS, TICKET_SCATTER, type SlotSymbol } from '../rules';
-import { addText, fitTextWidth, GREEN_TEXT, GOLD_TEXT, LAMP_GOLD, RED_TEXT } from '../theme';
+import { addText, fitTextWidth, GREEN_TEXT, LAMP_GOLD, RED_TEXT } from '../theme';
 
 const TV_DIM_ALPHA = 0.35; // в покое на стекле тусклый «?»
 const TV_QUESTION_SIZE = 44; // его размер
@@ -55,7 +55,6 @@ const GEAR_SIZE = 48; // ⚙ в шапке — кнопка того же раз
 const DEV_TAB_WIDTH = 92; // раздел «?» (в режиме разработчика — «ТЕСТ»): маленький, без названия
 const DEV_TAB_GAP = 8; // отступ между кнопками шапки
 const DEV_QUESTION_SIGN = '?'; // раздел без режима: только знак
-const SPACE_KEY = '␣'; // так в списке клавиш помечен пробел: рисуем его полоской
 const PAD = 20;
 const SYMBOLS_WIDTH = WALL_PANEL.width - 2 * PAD; // картинка вкладки «Символы» — на всю ширину экрана
 const SYMBOLS_HEIGHT = 500;
@@ -136,8 +135,7 @@ const HIDDEN_WIDTH = 160;
 const HIDDEN_HEIGHT = 44;
 const HIDDEN_GAP = 8;
 const HIDDEN_TOP_GAP = 18; // отступ перед сеткой «???» от последнего ряда карточек
-// Вкладка «Как играть»: цель забега теперь на записке над экраном на стене (GOAL_NOTE, Collector), здесь — текст и клавиши.
-// Страницы: ряды по 2 столбца, сколько влезет в панель (низ 632). Больше не влезает: 12 предметов и 11 амулетов
+// Страницы списков: ряды по 2 столбца, сколько влезет в панель (низ 632). Больше не влезает: 12 предметов и 11 амулетов
 // дают 12 рядов строк плюс ряды «???». Листаются кликом по панели или по счётчику «‹ 1/2 ›».
 
 /** Строка вкладки: значок (картинка или эмодзи), название и описание. */
@@ -148,13 +146,12 @@ interface Row {
   description: string;
 }
 
-type Tab = 'symbols' | 'items' | 'who' | 'howTo' | 'achievements' | 'dev';
-const TABS: { id: Tab; label: 'tabSymbols' | 'tabItems' | 'tabWho' | 'tabHowTo' | 'tabAchievements' }[] = [
+type Tab = 'symbols' | 'items' | 'who' | 'achievements' | 'dev';
+const TABS: { id: Tab; label: 'tabSymbols' | 'tabItems' | 'tabWho' | 'tabAchievements' }[] = [
   { id: 'symbols', label: 'tabSymbols' },
   { id: 'items', label: 'tabItems' },
   { id: 'who', label: 'tabWho' },
   { id: 'achievements', label: 'tabAchievements' },
-  { id: 'howTo', label: 'tabHowTo' },
 ];
 
 /** Что показать у платящего символа на вкладке «Символы»: фактическая выплата и во сколько раз чаще он падает. */
@@ -220,7 +217,8 @@ function symbolNote(symbol: SlotSymbol, round: number): string {
  * Экран на стене справа от автомата: маленький, как телевизор. В покое на стекле тусклый «?», а когда в автомат вошли новые
  * символы — зелёное «NEW» мигает, пока экран не откроют. Клик по нему (→ ловит сцена) открывает большой экран поверх игры с вкладками:
  * «Символы» (цены и что делает каждый; новые — в золотой рамке), «Предметы», «Кто есть кто», «Ачивки» (только
- * полученные; любые неполученные — «???») и «Как играть» (долг, порядок, клавиши).
+ * полученные; любые неполученные — «???»). Вкладки «Как играть» больше нет (DONTLIKE): цель — на записке над
+ * экраном, клавиши — в подсказках самих вещей.
  * Списки нарисованы одними карточками: рамка 2 px, радиус 8, значок 28, название 21 и описание 16. По клику на карточку
  * ачивки открывается панель подробностей (у неполученной — «???», «Условие скрыто», без спойлера); её закрывают ✕,
  * клик мимо и Esc — планшет при этом остаётся открытым.
@@ -454,7 +452,6 @@ export class WallScreen {
     else if (tab === 'items') this.buildItems(left, top);
     else if (tab === 'who') this.buildWho(left, top);
     else if (tab === 'achievements') this.buildAchievements(left, top);
-    else if (tab === 'howTo') this.buildHowTo(left, top);
     else this.buildDev(left, top);
   }
 
@@ -724,68 +721,6 @@ export class WallScreen {
     this.detailShade = shade;
     this.detail = scene.add.container(WALL_PANEL.x, WALL_PANEL.y, [panel, line, icon, name, description, status, closeBox, closeSign]);
     this.detail.setDepth(DETAIL_DEPTH).setScrollFactor(0);
-  }
-
-  /** «Как играть»: слева цель и порядок игры, справа клавиши. Цель забега — на записке над экраном (GOAL_NOTE). */
-  private buildHowTo(left: number, top: number): void {
-    this.pages = 1;
-    const width = SYMBOLS_WIDTH;
-    const centerX = left + width / 2;
-    const icon = (x: number, y: number, text: string, size: number, color = INK) =>
-      addText(this.scene, x, y, text, { fontSize: `${size}px`, color }).setOrigin(0.5);
-    // Цель забега: миллион, к которому идёт счёт. Число одинаково на обоих языках — подписей не нужно.
-    this.content.add(icon(centerX, top + 32, '🎯  1 000 000', 42, GOLD_TEXT));
-    // «Что делаешь → что получаешь»: две колонки, два ряда.
-    const pairs: { x: number; y: number; text: string; color: string }[] = [
-      { x: left + width * 0.27, y: top + 116, text: '🎰 → 🪙', color: INK },
-      { x: left + width * 0.73, y: top + 116, text: '💀 → 🔥', color: RED_TEXT },
-      { x: left + width * 0.27, y: top + 186, text: '👑 → 🔄', color: GOLD_TEXT },
-      { x: left + width * 0.73, y: top + 186, text: '🍀 → ✅', color: GREEN_TEXT },
-    ];
-    this.content.add(pairs.map((pair) => icon(pair.x, pair.y, pair.text, 40, pair.color)));
-    // Клавиши — плашками с буквами, под каждой короткая подпись: без неё игрок не понимает, что это за кнопка.
-    this.addKeyRow(left, top + 266, width, [
-      { label: SPACE_KEY, width: 92, caption: 'keySpin' }, { label: '↩', width: 52, caption: 'keyTake' },
-      { label: 'D', width: 48, caption: 'keyDebt' }, { label: '1–8', width: 62, caption: 'keyItems' },
-      { label: 'Esc', width: 58, caption: 'keyPause' }, { label: 'L', width: 48, caption: 'keyLanguage' },
-      { label: 'M', width: 48, caption: 'keySound' },
-    ], 18);
-    // В магазине те же цифры — по рядам витрины: корзина намекает, где это. 9 — четвёртый ряд (№37), T — кассета,
-    // B — билеты за фишки (шаг 35: у этих рядов раньше клавиш не было).
-    this.content.add(icon(centerX, top + 348, '🛒', 34));
-    this.addKeyRow(left, top + 392, width, [
-      { label: '1–3', width: 58, caption: 'keyShop' }, { label: '4–5', width: 58, caption: 'keyShelf' },
-      { label: '6–8', width: 58, caption: 'keyAmulets' }, { label: '9', width: 40, caption: 'keyExtraRow' },
-      { label: '0', width: 40, caption: 'keyDrum' }, { label: 'T', width: 40, caption: 'keyCassette' },
-      { label: 'B', width: 40, caption: 'keyTicket' },
-    ], 26);
-  }
-
-  /**
-   * Ряд «клавиш»: тёмные плашки с буквами и короткой подписью под каждой — что эта кнопка делает.
-   * letter у пробела рисуется полоской, остальные — буквой; подписи из lang.ts, на обоих языках одно слово.
-   */
-  private addKeyRow(
-    left: number,
-    y: number,
-    width: number,
-    keys: { label: string; width: number; caption: TextKey }[],
-    gap: number,
-  ): void {
-    const captionGap = 22; // подпись ниже плашки: плашка 40, подпись 12 — не наезжают друг на друга
-    const total = keys.reduce((sum, key) => sum + key.width, 0) + gap * (keys.length - 1);
-    let x = left + (width - total) / 2;
-    for (const key of keys) {
-      const box = this.scene.add.rectangle(x + key.width / 2, y, key.width, 40, PANEL_COLOR).setStrokeStyle(2, PANEL_LINE, 0.8).setRounded(6);
-      // Пробел рисуем полоской, а не глифом ␣: он в шрифте мелкий и читается как апостроф.
-      const label =
-        key.label === SPACE_KEY
-          ? this.scene.add.rectangle(x + key.width / 2, y, key.width * 0.5, 6, PANEL_LINE, 0.85).setRounded(3)
-          : addText(this.scene, x + key.width / 2, y, key.label, { fontSize: '18px', fontStyle: 'bold', color: INK }).setOrigin(0.5);
-      const caption = addText(this.scene, x + key.width / 2, y + captionGap, t(key.caption), { fontSize: '12px', color: DIM_INK }).setOrigin(0.5, 0);
-      this.content.add([box, label, caption]);
-      x += key.width + gap;
-    }
   }
 
   // ---------- Раздел «?» и вкладка «ТЕСТ» (режим разработчика) ----------

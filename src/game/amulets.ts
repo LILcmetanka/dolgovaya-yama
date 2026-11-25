@@ -167,8 +167,11 @@ export const MINI_CASE_PLACES = 2;
 export const MINI_CASE_PRICE_SHARE = 0.5;
 /** Ниже этого цена не опускается: у пустого кошелька амулет всё равно стоит MINI_CASE_PRICE_MIN. */
 export const MINI_CASE_PRICE_MIN = 300;
-/** Сколько раз за забег в мини-чемодане покупают: один амулет, как и раньше за фишки (решение СОЛО 23.11.2026). */
-export const MINI_CASE_PURCHASES = 1;
+/**
+ * Сколько амулетов за забег берут в мини-чемодане: два (решение автора 25.11.2026). Оба можно взять в одном магазине,
+ * но в следующем чемодана уже нет до конца забега — в сцену это передаётся полем «где брали» (miniCaseShopRound).
+ */
+export const MINI_CASE_PURCHASES = 2;
 
 /**
  * Цена амулета в мини-чемодане: доля фишек на руках (MINI_CASE_PRICE_SHARE), но не меньше MINI_CASE_PRICE_MIN.

@@ -5,6 +5,7 @@ import {
   insuranceCopyPrice,
   maxCopiesOf,
   MINI_CASE_PLACES,
+  MINI_CASE_PURCHASES,
   miniCasePrice,
   randomAmuletOffer,
   socketPrice,
@@ -17,16 +18,18 @@ import { canWin, DRUM_SECTORS, drumChips, drumPrice, prizeItem, randomSector, ty
 import { itemPrice, MAX_SLOTS, offerReplacement, offerRowCount, randomOffer, slotPrice, TICKETS_PER_SHOP, ticketForChips, type ShopItem } from '../items';
 import { t } from '../lang';
 import { machineItemAllowed } from '../machines';
+import { isTutorialDone, setTutorialStep, tutorialStep, type TutorialTrack } from '../progress';
 import type { SoundName } from '../sound';
 import { GOLD_TEXT } from '../theme';
 import { VENDING_BIN } from '../layout';
-import { SLOT_ROW, SOCKET_ROW } from '../parts/miniShop';
+import { FIRST_AMULET_LINES, firstItemLines, SHOP_EMPTY_LINES, type TutorialLine } from '../tutorial';
+import { SOCKET_ROW, SLOT_ROW } from '../parts/miniShop';
 import { DealerScene } from './DealerScene';
 
 const PRIZE_POPUP_RISE = 20; // «+N» за фишки из барабана всплывает чуть выше сектора
 const AMULET_DENY_HINT_TIME = 1500; // сколько висит подсказка отказа, мс
 
-/** Звук приза барабана: билет шелестит, фишки стучат, предмет и место на полке — как предмет. */
+/** Звук приза барабана: билет шелестит, фишки стучат, предмет — как предмет. */
 function prizeSound(prize: DrumPrize): SoundName {
   if (prize === 'ticket' || prize === 'chips') return prize;
   return 'item';
@@ -44,6 +47,12 @@ export abstract class ShopScene extends DealerScene {
   private isLeavingShop = false;
   // Сколько билетов за фишки уже куплено в этом магазине: выше items.TICKETS_PER_SHOP не продают, ряд гаснет.
   private ticketsBoughtHere = 0;
+  // Сколько покупок сделано за этот заход (предмет, амулет, билет, барабан): по нулю — пустой первый магазин.
+  private purchasesThisVisit = 0;
+  // Реплики Дилера после закрытия магазина: первый предмет и первый амулет запоминаются здесь, а говорятся уже
+  // на экране автомата, когда жалюзи уехали (DONTLIKE, 25.11). Покупка в любом по счёту магазине сюда попадает.
+  private pendingFirstItem: ShopItem | null = null;
+  private pendingFirstAmulet = false;
   // Подсказка отказа висит AMULET_DENY_HINT_TIME; новый отказ снимает прошлый таймер.
   private amuletDenyHint: Phaser.Time.TimerEvent | null = null;
 
@@ -51,6 +60,14 @@ export abstract class ShopScene extends DealerScene {
   protected resetState(): void {
     super.resetState();
     this.ticketsBoughtHere = 0; // рядом с ticketsBought: тот считает билеты за забег, этот — за один заход
+    this.purchasesThisVisit = 0; // пустой первый магазин считается по нулю покупок за заход
+    this.pendingFirstItem = null; // недоигранные реплики прошлой сцены в новый забег не переезжают
+    this.pendingFirstAmulet = false;
+  }
+
+  /** Окна и новости ждут, пока панель магазина совсем не уедет: иначе они легли бы поверх жалюзи (DONTLIKE, 25.11). */
+  protected override canShowPopups(): boolean {
+    return super.canShowPopups() && !this.isLeavingShop;
   }
 
   /**
@@ -79,10 +96,9 @@ export abstract class ShopScene extends DealerScene {
     this.updateRecord();
     this.collector.flipNote(this.debt);
     // Оффер — под автомат, который стоит: «Удача» у «Тихого» бесполезна (клевера нет).
-    // Улучшение №37 (28в): рядов предметов на один больше — панель строится с этим числом ещё в GameScene.
-    // Сделка №27: в витрине на один предмет меньше; рядов не меньше одного.
+    // Сделка №27: в витрине на один предмет меньше; рядов не меньше одного. Витрина всегда 4 ряда (три предмета и билеты).
     const rowDelta = pactEffects(this.pacts, this.round - 1).itemOfferDelta;
-    const rows = Math.max(1, offerRowCount(this.upgradeEffects.offerRows + rowDelta));
+    const rows = Math.max(1, offerRowCount(rowDelta));
     const offer = randomOffer(this.round, (item) => machineItemAllowed(this.machineId, item), rows);
     this.offer = offer;
     // Чемодан открыт — витрина амулетов новая; закрыт — в магазине амулетов нет вовсе.
@@ -92,17 +108,23 @@ export abstract class ShopScene extends DealerScene {
     this.amuletOffer = amuletOffer;
     // Мини-чемодан за фишки (DONTLIKE п.7): два амулета, которых нет в основном чемодане, — за фишки.
     this.miniCaseOffer = isAmulets ? this.miniCaseOfferForShop(amuletOffer) : [];
+    // Покупка в прошлом магазине значит «следующий»: чемодана здесь нет вовсе — ни корпуса, ни ценников, ни
+    // подсказок, и его амулеты не открываются в кодексе. В магазине, где покупают, он остаётся (miniCaseShown).
+    const miniShown = this.miniCaseShown();
+    if (!miniShown) this.miniCaseOffer = [];
     this.seeInShop(
       offer.map((item) => itemKey(item.id)),
-      [...amuletOffer, ...this.miniCaseOffer].filter((amulet): amulet is Amulet => amulet !== null).map((amulet) => amuletKey(amulet.id)),
+      [...amuletOffer, ...(miniShown ? this.miniCaseOffer : [])].filter((amulet): amulet is Amulet => amulet !== null).map((amulet) => amuletKey(amulet.id)),
     );
     this.drumSpins = 0; // в новом магазине барабан снова дешёвый
     this.ticketsBoughtHere = 0; // и билеты за фишки снова продаются — ряд в автомате загорится при открытии панели
+    this.purchasesThisVisit = 0; // новый заход — новых покупок ещё нет
     const prices = offer.map((item) => this.itemPriceNow(item)); // цены — доля нового долга и скидки улучшений №22 и №36
     // Что открыто — по закрытым долгам: номер раунда уже номер этого магазина, поэтому предикаты дают его счёт.
     this.amuletCase.setAvailable(isAmulets);
-    // Мини-чемодан за фишки: один амулет за забег — после покупки он исчезает до конца забега (DONTLIKE п.4).
-    this.miniCase.setAvailable(isAmulets && !this.amuletChipUsedThisRun);
+    // Мини-чемодан за фишки: до двух амулетов за забег. В магазине, где берут, он остаётся видимым и после первой
+    // покупки (второй амулет берут там же); в следующем магазине — пропадает до конца забега. Пустым не висит.
+    this.miniCase.setAvailable(miniShown);
     this.drum.setAvailable(this.drumUnlocked());
     this.cassette.setAvailable(this.cassetteUnlocked());
     // Панель поехала: чемодан и маленький автомат прошлого захода сразу пусты, цены на панели — уже от нового долга.
@@ -127,7 +149,8 @@ export abstract class ShopScene extends DealerScene {
       }
       if (isAmulets) {
         this.amuletCase.fill({ amulets: amuletOffer, prices: amuletOffer.map((amulet) => this.amuletPriceNow(amulet)) });
-        this.miniCase.fill({ amulets: this.miniCaseOffer, prices: this.miniCasePricesNow() });
+        // Мини-чемодан наполняется, только если ему есть что предложить: взятый амулет за фишки его не возвращает.
+        if (miniShown) this.miniCase.fill({ amulets: this.miniCaseOffer, prices: this.miniCasePricesNow() });
       }
       this.refreshShop();
     });
@@ -136,7 +159,7 @@ export abstract class ShopScene extends DealerScene {
 
   /**
    * Улучшение №40 (28в): подарок первого магазина. Один случайный предмет из пула этого раунда ложится на свободное
-   * место полки; нет места — подарка нет (места не расширяем, иначе улучшение меняло бы правило MAX_SLOTS).
+   * место полки; нет места — подарка нет (мест на полке фиксированное число, расширения нет).
    * Выдаётся один раз за забег: после отката кассетой к записи, где подарка ещё не было, повторно не выдаём.
    */
   private takeFirstShopGift(): { slot: number; item: ShopItem } | null {
@@ -221,8 +244,8 @@ export abstract class ShopScene extends DealerScene {
   }
 
   /**
-   * Цена места на полке. Улучшение №21 (шаг 28б) даёт лишнее место с первого кадра, а не скидку, — поэтому здесь
-   * правило игры без изменений. Через эту дверь её читает и витрина маленького автомата.
+   * Цена места на полке. Улучшение предметов мест не даёт (№21 удалён), поэтому здесь правило игры без изменений.
+   * Через эту дверь её читает и витрина маленького автомата.
    */
   private slotPriceNow(): number | null {
     return slotPrice(this.slots, this.debt, this.priceMul());
@@ -281,15 +304,17 @@ export abstract class ShopScene extends DealerScene {
   /** Купить ряд торгового автомата row: предмет — на свободное место полки, ряд билетов — билет за фишки. */
   protected buy(row: number): void {
     if (!this.isShopping) return;
+    if (this.tutorialBlocks()) return; // идёт текст обучения — покупки ждут
     if (row === this.shop.ticketRow) this.buyTicket();
     else this.buyItem(row);
   }
 
-  /** Купить ряд маленького автомата row: место на полке или гнездо амулета. */
+  /** Купить ряд маленького автомата row: место на полке за фишки или гнездо амулета за билеты. */
   protected buyMini(row: number): void {
     if (!this.isShopping) return;
+    if (this.tutorialBlocks()) return; // идёт текст обучения — покупки ждут
     if (row === SLOT_ROW) this.buySlot();
-    else this.buySocket();
+    else if (row === SOCKET_ROW) this.buySocket();
   }
 
   /** Купить предмет: фишки уходят с табло, предмет падает в лоток и летит на свободное место полки. */
@@ -313,6 +338,7 @@ export abstract class ShopScene extends DealerScene {
     this.balance -= price;
     this.offer[row] = null;
     this.shelf[slot] = item;
+    this.purchasesThisVisit += 1; // покупка за заход: пустой первый магазин считается по нулю
     // Замена считается сразу, а не через ~1,1 с в колбэке падения покупки: уход из магазина в этот момент
     // не должен оставить ряд пустым (DONTLIKE б.5). Следующий openShop всё равно строит оффер заново.
     const replacement = offerReplacement([...this.offer, item], this.round, (next) => machineItemAllowed(this.machineId, next));
@@ -322,6 +348,7 @@ export abstract class ShopScene extends DealerScene {
       this.refillRow(row, replacement);
     });
     this.afterPurchase();
+    this.tutorialFirstItem(item); // первый купленный предмет: короткая реплика Дилера
   }
 
   /**
@@ -359,6 +386,7 @@ export abstract class ShopScene extends DealerScene {
     this.tickets += 1;
     this.ticketsBought += 1;
     this.ticketsBoughtHere += 1;
+    this.purchasesThisVisit += 1; // билет — тоже покупка за заход
     this.shop.sellTicket();
     this.afterPurchase();
     // Потолок за заход выбран — ряд гаснет до следующего магазина, а подсказка говорит, почему.
@@ -378,7 +406,7 @@ export abstract class ShopScene extends DealerScene {
     });
   }
 
-  /** Купить место на полке: с новой клетки слетают доски. */
+  /** Купить место на полке: с новой клетки слетают доски, дверца с кодом уезжает. */
   private buySlot(): void {
     const price = this.slotPriceNow();
     if (price === null) return; // мест больше не продают
@@ -388,12 +416,13 @@ export abstract class ShopScene extends DealerScene {
       return;
     }
     this.balance -= price;
+    this.purchasesThisVisit += 1; // покупка за заход
     const slot = this.addSlot();
     this.miniShop.sell(SLOT_ROW, () => this.itemShelf.openSlot(slot));
     this.afterPurchase();
   }
 
-  /** Ещё одно место на полке — следующая клетка за открытыми; вернуть её номер. Доски с неё снимает itemShelf.openSlot. */
+  /** Ещё одно место на полке — следующая клетка за открытыми; вернуть её номер. Дверцу с неё снимает itemShelf.openSlot. */
   private addSlot(): number {
     this.slots += 1;
     this.shelf.push(null);
@@ -404,6 +433,7 @@ export abstract class ShopScene extends DealerScene {
   protected buyFromCase(place: number): void {
     if (!this.amuletsUnlocked()) return;
     if (!this.isShopping || !this.amuletCase.isOpen) return; // чемодан ещё закрыт — покупать нечего
+    if (this.tutorialBlocks()) return; // идёт текст обучения — покупки ждут
     this.buyAmulet(place);
   }
 
@@ -432,6 +462,7 @@ export abstract class ShopScene extends DealerScene {
       return;
     }
     this.spendRunTickets(price); // №45 (28г): трата после записи вернётся откатом
+    this.purchasesThisVisit += 1; // покупка за заход: сгоревший от сделки амулет — тоже покупка
     this.amuletOffer[place] = null;
     const isNew = socket < 0;
     let index = socket;
@@ -448,7 +479,6 @@ export abstract class ShopScene extends DealerScene {
       this.amuletOffer[place] = null;
       this.sfx.play('burn', 0.2);
       this.shop.announce(t('pactAmuletBurned'));
-      this.miniCase.setAvailable(false); // амулет сгорел, но попытка потрачена: чемодан исчезает
       this.afterPurchase();
       return;
     }
@@ -460,6 +490,22 @@ export abstract class ShopScene extends DealerScene {
       this.showBones();
     });
     this.afterPurchase();
+    this.tutorialFirstAmulet(); // первый купленный амулет: короткая реплика Дилера
+  }
+
+  /**
+   * Видно ли мини-чемодан за фишки (DONTLIKE п.7). До MINI_CASE_PURCHASES покупок за забег, причём все они — в этом
+   * же магазине: как только берут хотя бы один амулет, следующий магазин показывает панель уже без чемодана до конца
+   * забега (miniCaseShopRound < this.round). Пустое предложение (все амулеты уже есть) тоже не висит. Зовётся при
+   * каждом открытии панели и на каждом refresh: танцы с setAvailable здесь же, чтобы в «спрятанном» состоянии не
+   * оставалось ни подсказок, ни нажатий. Откат кассетой возвращает числа с плёнки — как на записи.
+   */
+  private miniCaseShown(): boolean {
+    if (!this.amuletsUnlocked()) return false;
+    if (pactEffects(this.pacts, this.round - 1).amuletsClosed) return false; // сделка №33: амулеты в этом раунде закрыты
+    if (this.miniCaseBought >= MINI_CASE_PURCHASES) return false; // обе покупки забега сделаны
+    if (this.miniCaseBought > 0 && this.miniCaseShopRound < this.round) return false; // брали в прошлом магазине
+    return this.miniCaseOffer.some((amulet) => amulet !== null && this.copiesLeft(amulet) > 0);
   }
 
   /**
@@ -483,17 +529,20 @@ export abstract class ShopScene extends DealerScene {
   }
 
   /**
-   * Клик по месту мини-чемодана — сразу покупка за фишки, без окна выбора валюты (DONTLIKE п.7). Раз за забег
-   * (MINI_CASE_PURCHASES): амулет новый — нужно свободное гнездо, копия — в своё. Отказ — строкой на панели магазина
-   * (над чемоданами), без всплывающих окон; ценник при этом трясётся. Откат кассетой флаг не снимает (липкий).
+   * Клик по месту мини-чемодана — сразу покупка за фишки, без окна выбора валюты (DONTLIKE п.7). До двух амулетов
+   * за забег (MINI_CASE_PURCHASES): амулет новый — нужно свободное гнездо, копия — в своё. В магазине, где берут,
+   * чемодан остаётся и после первой покупки; в следующем его уже нет (miniCaseShown). Отказ — строкой на панели
+   * магазина (над чемоданами), без всплывающих окон; ценник при этом трясётся.
    */
   protected buyFromMiniCase(place: number): void {
     if (!this.amuletsUnlocked()) return;
     if (!this.isShopping || !this.miniCase.isOpen) return; // чемодан ещё закрыт — покупать нечего
+    if (this.tutorialBlocks()) return; // идёт текст обучения — покупки ждут
     const amulet = this.miniCaseOffer[place];
     if (!amulet) return;
-    if (this.amuletChipUsedThisRun) {
-      // MINI_CASE_PURCHASES = 1: один амулет за забег, флаг липкий (откат кассетой не возвращает).
+    if (this.miniCaseBought >= MINI_CASE_PURCHASES) {
+      // Обе покупки забега сделаны (или брали в прошлом магазине): обычно сюда не попасть — спрятанного чемодана
+      // на панели нет (miniCaseShown), отказ оставлен на случай гонки кликов.
       this.refuseMiniCase(place, t('miniCaseUsed'));
       return;
     }
@@ -512,7 +561,9 @@ export abstract class ShopScene extends DealerScene {
       return;
     }
     this.balance -= price; // покупка, не доход: earned не растёт (earn() сюда не зовём)
-    this.amuletChipUsedThisRun = true; // раз за забег: второй амулет за фишки не берут
+    this.miniCaseBought += 1; // за забег берут не больше MINI_CASE_PURCHASES
+    this.miniCaseShopRound = this.round; // в каком магазине брали: следующий его уже не покажет
+    this.purchasesThisVisit += 1; // покупка за заход: сгоревший от сделки амулет — тоже покупка
     this.miniCaseOffer[place] = null;
     const isNew = socket < 0;
     let index = socket;
@@ -529,7 +580,7 @@ export abstract class ShopScene extends DealerScene {
       if (isNew) this.amulets.pop();
       this.sfx.play('burn', 0.2);
       this.shop.announce(t('pactAmuletBurned'));
-      this.miniCase.setAvailable(false); // амулет сгорел, но попытка потрачена: чемодан исчезает
+      // Попытка потрачена: чемодан остаётся только если до второй покупки ещё есть запас (miniCaseShown в refresh).
       this.afterPurchase();
       return;
     }
@@ -538,9 +589,11 @@ export abstract class ShopScene extends DealerScene {
       if (isNew) this.amuletRack.putAmulet(index, amulet, count, x, y);
       else this.amuletRack.putCopy(index, amulet, count, x, y);
       this.showBones();
-      this.miniCase.setAvailable(false); // куплено — чемодан уходит с панели до конца забега
+      // Чемодан не прячем: в этом магазине можно взять второй амулет — прячет его только miniCaseShown
+      // (оба куплены, брали в прошлом магазине или предлагать больше нечего).
     });
     this.afterPurchase();
+    this.tutorialFirstAmulet(); // первый купленный амулет: короткая реплика Дилера
   }
 
   /** Отказ мини-чемодана: ценник трясётся, причина — строкой на панели магазина над чемоданами, окно не открывается. */
@@ -574,6 +627,7 @@ export abstract class ShopScene extends DealerScene {
    */
   protected spinDrum(): void {
     if (!this.drumUnlocked()) return;
+    if (this.tutorialBlocks()) return; // идёт текст обучения — барабан ждёт
     // Забег кончен или победа ждёт конца действия: колесо за экраном не крутим (winDrum включил бы покупки).
     if (!this.isShopping || this.isGameOver || this.isVictoryPending) return;
     const price = drumPrice(this.drumSpins, this.debt, this.priceMul());
@@ -585,19 +639,19 @@ export abstract class ShopScene extends DealerScene {
     const sector = randomSector(this.drumSectors());
     this.balance -= price;
     this.drumSpins += 1;
+    this.purchasesThisVisit += 1; // прокрутка барабана — тоже покупка за заход
     this.isShopping = false;
     this.afterPurchase('chips');
     this.drum.spin(sector, (x, y) => this.winDrum(DRUM_SECTORS[sector], x, y, price));
   }
 
-  /** Какие сектора барабана могут выпасть: предмету нужно свободное место на полке, месту — чтобы полки ещё не были полными. */
+  /** Какие сектора барабана могут выпасть: предмету нужно свободное место на полке. */
   private drumSectors(): boolean[] {
     const hasFreeSlot = this.shelf.includes(null);
-    const canAddSlot = this.slots < MAX_SLOTS;
-    return DRUM_SECTORS.map((prize) => canWin(prize, hasFreeSlot, canAddSlot));
+    return DRUM_SECTORS.map((prize) => canWin(prize, hasFreeSlot));
   }
 
-  /** Колесо встало: приз вылетает из сектора (x, y) — предмет на свободное место полки, билет и фишки в шапку панели, место — доски слетают. paid — цена этой прокрутки: «фишки» выплачивают её ×2. */
+  /** Колесо встало: приз вылетает из сектора (x, y) — предмет на свободное место полки, билет и фишки в шапку панели. paid — цена этой прокрутки: «фишки» выплачивают её ×2. */
   private winDrum(prize: DrumPrize, x: number, y: number, paid: number): void {
     const item = prizeItem(prize);
     if (item) {
@@ -605,10 +659,11 @@ export abstract class ShopScene extends DealerScene {
       this.shelf[slot] = item;
       this.itemShelf.putItem(slot, item, x, y);
     } else if (prize === 'ticket') {
-      this.tickets += 1;
-      this.shop.flyTicket(x, y);
-    } else if (prize === 'slot') {
-      this.itemShelf.openSlot(this.addSlot());
+      // Билет приходит только когда долетел до шапки: пока идёт анимация, число на табло прежнее (DONTLIKE).
+      this.shop.flyTicket(x, y, () => {
+        this.tickets += 1;
+        this.refreshHud();
+      });
     } else {
       const chips = drumChips(paid);
       this.earn(chips); // фишки барабана — доход забега (решение автора)
@@ -644,31 +699,85 @@ export abstract class ShopScene extends DealerScene {
     });
     this.amuletCase.refresh(this.tickets, this.amuletOffer.map((amulet) => (amulet ? this.amuletPriceNow(amulet) : null)), amuletReady);
     // Мини-чемодан (DONTLIKE п.7): цены в фишках пересчитываются от фишек на руках, поэтому идут в каждом refresh.
-    const miniReady = this.miniCaseOffer.map((amulet) => {
-      if (amulet === null) return false;
-      return this.amulets.length < this.sockets || countOf(this.amuletCounts, amulet.id) > 0;
-    });
-    const miniPrices = this.miniCasePricesNow().map((price, place) => (this.miniCaseOffer[place] ? price : null));
-    this.miniCase.refresh(this.balance, miniPrices, miniReady);
-    this.miniShop.refresh(
-      this.balance,
-      this.tickets,
-      this.slotPriceNow(),
-      this.socketPriceNow(),
-    );
+    // Амулет за фишки уже взят (или предлагать больше нечего) — чемодана на панели нет до конца забега: прячем целиком.
+    if (!this.miniCaseShown()) {
+      this.miniCase.setAvailable(false);
+    } else {
+      const miniReady = this.miniCaseOffer.map((amulet) => {
+        if (amulet === null) return false;
+        return this.amulets.length < this.sockets || countOf(this.amuletCounts, amulet.id) > 0;
+      });
+      const miniPrices = this.miniCasePricesNow().map((price, place) => (this.miniCaseOffer[place] ? price : null));
+      this.miniCase.refresh(this.balance, miniPrices, miniReady);
+    }
+    this.miniShop.refresh(this.balance, this.tickets, this.slotPriceNow(), this.socketPriceNow());
     const drumCost = drumPrice(this.drumSpins, this.debt, this.priceMul());
     this.drum.showPrice(drumCost, drumCost <= this.balance);
     this.drum.showAvailable(this.drumSectors());
   }
 
   /**
+   * Первый купленный предмет в витрине: реплика Дилера запоминается и прозвучит после закрытия магазина,
+   * на экране автомата (не поверх панели). Подарок первого магазина и предмет из барабана сюда не идут — они не покупки.
+   * Имя предмета берётся из данных на текущем языке — строки собираются при показе.
+   * Дорожка не зависит от того, в каком по счёту магазине покупка: только шаг дорожки решает, говорить ли (баг 25.11).
+   */
+  private tutorialFirstItem(item: ShopItem): void {
+    if (tutorialStep('firstItem') !== 0) return; // реплику уже говорили
+    this.pendingFirstItem ??= item; // первый предмет: второй в этом же заходе имя не затирает
+  }
+
+  /**
+   * Первый купленный амулет: чемодан или мини-чемодан. Сгоревший от сделки №34 сюда не доходит —
+   * его ветка выходит раньше, амулета у игрока не осталось. Говорится тоже после закрытия магазина.
+   */
+  private tutorialFirstAmulet(): void {
+    if (tutorialStep('firstAmulet') !== 0) return; // реплику уже говорили
+    this.pendingFirstAmulet = true;
+  }
+
+  /**
+   * Пора ли спросить про пустой магазин: первый заход (закрыт один долг), за заход ничего не куплено,
+   * реплику ещё не говорили и обучение не пройдено целиком.
+   */
+  private shopEmptyTutorialPending(): boolean {
+    return !isTutorialDone() && tutorialStep('shopEmpty') === 0 && this.closedDebts() === 1 && this.purchasesThisVisit === 0;
+  }
+
+  /**
+   * Реплики Дилера после магазина: панель уже уехала, текст идёт на экране автомата, и только потом следующий раунд.
+   * Сюда входят первый предмет, первый амулет и вопрос пустого первого магазина — по очереди, без наложения на панель.
+   */
+  private shopFarewellThen(finish: () => void): void {
+    const talks: { lines: readonly TutorialLine[]; track: TutorialTrack }[] = [];
+    if (this.pendingFirstItem) talks.push({ lines: firstItemLines(t(this.pendingFirstItem.name)), track: 'firstItem' });
+    if (this.pendingFirstAmulet) talks.push({ lines: FIRST_AMULET_LINES, track: 'firstAmulet' });
+    if (this.shopEmptyTutorialPending()) talks.push({ lines: SHOP_EMPTY_LINES, track: 'shopEmpty' });
+    this.pendingFirstItem = null;
+    this.pendingFirstAmulet = false;
+    if (talks.length === 0) {
+      finish();
+      return;
+    }
+    talks.forEach((talk, index) => {
+      this.tutorialSay(talk.lines, () => {
+        setTutorialStep(talk.track, 1);
+        if (index === talks.length - 1) finish();
+      });
+    });
+  }
+
+  /**
    * Из магазина — назад к игровому автомату: панель уезжает наверх, и начинается новый раунд
    * (в нём автомат может смениться сам — RoundScene.startRound).
    * Панель едет ~480 мс: пока она едет, раунд не начат (isLeavingShop) — победа в этом окне начнёт его сама (continueRun).
+   * Пустой первый магазин и реплики о первой покупке: панель уже уехала, и только потом Диллер говорит — текст идёт
+   * на экране автомата, а не поверх открытой панели (DONTLIKE, 25.11).
    */
   protected leaveShop(): void {
     // После победы магазин уже закрыт, нового раунда нет; пока панель едет — второй раз не уходим.
     if (!this.isShopping || !this.isShopOpen || this.isLeavingShop || this.isGameOver) return;
+    if (this.tutorialBlocks()) return; // идёт текст обучения — выход ждёт его конца
     this.isShopping = false;
     this.isShopOpen = false;
     this.isLeavingShop = true;
@@ -678,9 +787,13 @@ export abstract class ShopScene extends DealerScene {
     this.shop.close(() => {
       // Победа могла перехватить выход, пока панель ехала (suspendShop): тогда раунд начнёт «ДАЛЬШЕ».
       if (!this.isLeavingShop) return;
-      this.isLeavingShop = false;
       this.screen.setLampsVisible(true); // лампочки — только когда панель уехала, иначе они на миг видны поверх магазина
-      this.enterNextRound();
+      this.shopFarewellThen(() => {
+        if (!this.isLeavingShop) return; // победа перехватила и этот миг
+        this.isLeavingShop = false;
+        this.pumpPopups(); // отложенные ачивки и новости — после магазина и после текста, а не поверх панели
+        this.enterNextRound();
+      });
     });
   }
 
@@ -705,7 +818,11 @@ export abstract class ShopScene extends DealerScene {
   /** «ДАЛЬШЕ» после победы: магазин, который она прервала, доигрывается — и новый раунд. */
   protected resumeAfterShop(): void {
     this.isShopOpen = false;
-    this.enterNextRound();
+    // Реплики о первых покупках, что не успели прозвучать до победы, говорятся здесь — на экране автомата.
+    this.shopFarewellThen(() => {
+      this.pumpPopups();
+      this.enterNextRound();
+    });
   }
 
   /** Панель уехала: начинается новый раунд (leaveShop и «ДАЛЬШЕ» после победы). Автомат мог смениться сам — это в startRound. */

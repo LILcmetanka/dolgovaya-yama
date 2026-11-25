@@ -76,8 +76,7 @@ const TICKET_FLY_TIME = 600; // билет летит в шапку панели
 export class Shop {
   private readonly scene: Phaser.Scene;
   private readonly shopLayer: Phaser.GameObjects.Container; // панель: её вещи и вещи AmuletCase, Drum, Cassette
-  readonly offerRows: number; // сколько рядов с предметами (№37 добавляет один); по нему сцена знает клавишу «9»
-  /** Ряд билетов — последний. Номера клавиши у него нет: покупка только кликом, как и у лишнего ряда №37. */
+  /** Ряд билетов — последний. Номера клавиши у него нет: покупка только кликом. */
   readonly ticketRow: number;
   private readonly goods: Phaser.GameObjects.Image[] = []; // что лежит в ряду
   private readonly goodHeights: number[] = []; // высота товара в его итоговом масштабе — чтобы посадить низ на полку
@@ -99,12 +98,10 @@ export class Shop {
     return this.shopLayer;
   }
 
-  /** buy(row) — кликнули по ряду, leave — по кнопке выхода в шапке: назад к автомату. offerRows — сколько рядов
-   *  с предметами (улучшение №37 даёт четвёртый). */
-  constructor(scene: Phaser.Scene, buy: (row: number) => void, leave: () => void, hint: Hint, offerRows = DEFAULT_OFFER_ROWS) {
+  /** buy(row) — кликнули по ряду, leave — по кнопке выхода в шапке: назад к автомату. */
+  constructor(scene: Phaser.Scene, buy: (row: number) => void, leave: () => void, hint: Hint) {
     this.scene = scene;
-    this.offerRows = Math.max(1, offerRows);
-    this.ticketRow = this.offerRows;
+    this.ticketRow = DEFAULT_OFFER_ROWS;
     // Панель — первым: AmuletCase, Drum и Cassette создаются после Shop и кладут свои вещи в этот слой.
     this.shopLayer = scene.add.container(0, SHOP_CLOSED_Y).setDepth(SHOP_PANEL_DEPTH).setVisible(false);
     createChipTextures(scene);
@@ -115,8 +112,6 @@ export class Shop {
     this.shopLayer.add([panelBackground, machine]);
 
     // Порядок в витрине: корпус → товар → спираль → стекло. Предмет лежит за спиралью и стеклом, а не поверх корпуса.
-    // С улучшением «+1 ряд» (5 рядов на 280 px) товар ужимается под высоту ряда: иначе первый и последний ряды
-    // обрезались рамкой стекла (DONTLIKE п.9).
     const rowHeight = VENDING_GLASS.height / (this.ticketRow + 1);
     const maxGood = rowHeight - 10;
     for (let row = 0; row <= this.ticketRow; row++) {
@@ -249,7 +244,7 @@ export class Shop {
     this.items = [];
     this.prices = [];
     this.ticketsExhausted = false; // новый заход — билеты за фишки снова продаются
-    for (let row = 0; row < this.offerRows; row++) {
+    for (let row = 0; row < DEFAULT_OFFER_ROWS; row++) {
       const item = offer[row] ?? null;
       this.items.push(item);
       this.prices.push(item ? prices[row] : null);
@@ -389,8 +384,11 @@ export class Shop {
     pulse(this.scene, this.hudChipsText);
   }
 
-  /** Билет летит из (fromX, fromY) в шапку панели — к числу билетов; долетел — число подпрыгивает. */
-  flyTicket(fromX: number, fromY: number): void {
+  /**
+   * Билет летит из (fromX, fromY) в шапку панели — к числу билетов; долетел — число подпрыгивает и зовётся done.
+   * Приз барабана так и приходит: сам билет прибавляется только после анимации (DONTLIKE: «уже сразу добавляется»).
+   */
+  flyTicket(fromX: number, fromY: number, done?: () => void): void {
     const ticket = this.scene.add.image(fromX, fromY, TICKET_TEXTURE).setScale(1.4).setDepth(SHOP_FLY_DEPTH);
     this.scene.tweens.add({
       targets: ticket,
@@ -403,6 +401,7 @@ export class Shop {
       onComplete: () => {
         ticket.destroy();
         pulse(this.scene, this.hudTicketsText);
+        done?.();
       },
     });
   }

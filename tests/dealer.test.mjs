@@ -262,7 +262,6 @@ test('связка №2 «−20% цен / долг +8%»: скидка на вс
   const item = { id: 'shield', priceShare: 0.5 };
   assert.equal(I.itemPrice(item, debt), Math.round(0.5 * debt / 5) * 5, 'без скидки цена обычная');
   assert.equal(I.itemPrice(item, debt, D.CHEAP_SHOP_DISCOUNT), 80, 'предмет со скидкой — 80 при долге 200');
-  assert.ok(I.slotPrice(I.START_SLOTS, debt, D.CHEAP_SHOP_DISCOUNT) < I.slotPrice(I.START_SLOTS, debt), 'место со скидкой дешевле');
   assert.ok(S.tapePrice(0, D.CHEAP_SHOP_DISCOUNT) <= S.tapePrice(0), 'кассета не дороже');
   assert.ok(A.amuletPrice(A.AMULETS[0], D.CHEAP_SHOP_DISCOUNT) <= A.amuletPrice(A.AMULETS[0]), 'амулет не дороже');
   assert.ok(DR.drumPrice(0, debt, D.CHEAP_SHOP_DISCOUNT) < DR.drumPrice(0, debt), 'барабан со скидкой дешевле');
@@ -420,11 +419,11 @@ test('связка №8 «смена автомата отложена / чер�
   assert.equal(D.pactEffects([{ id: 'machine-delay', untilRound: 0 }], 1).noMachineSwap, false, 'битый срок — сделки нет');
 });
 
-test('пул сделок: 15 старых + 37 карт шага 30, раздача по-прежнему даёт три', () => {
+test('пул сделок: 15 старых + 34 карты шага 30, раздача по-прежнему даёт три', () => {
   // Решение автора 22.11.2026 (шаг 33): с одной ямой за забег второй запас недостижим, карта ничего не давала.
   // id удалённой карты собираем из частей: строки карты в коде и в grep'ах быть не должно, а проверить её отсутствие надо.
   const GONE = ['extra', 'breath'].join('-');
-  assert.equal(D.PACTS.length, 52, 'в пуле 52 карты: 15 старых и 37 новых шага 30');
+  assert.equal(D.PACTS.length, 49, 'в пуле 49 карт: 15 старых и 34 шага 30 — №26, 28, 30 «место на полке» удалены');
   assert.equal(new Set(D.PACTS.map((spec) => spec.id)).size, D.PACTS.length, 'id карт уникальны — дублей нет');
   assert.equal(D.PACTS.some((spec) => spec.id === GONE), false, 'карты «ещё дыхание» в пуле нет');
   assert.equal(D.isPactId(GONE), false, 'старая плёнка с этой сделкой читается как незнакомая сделка');
@@ -623,21 +622,12 @@ test('шаг 30, блок 4: кон, предметы и полка (№23, 24, 
   assert.ok(D.CHIPS_START_CHIPS > 0 && D.CHIPS_START_DEBT_MUL > 1, '№25: фишки в плюс, долг в плюс');
   assert.equal(D.pactDebt(0, D.CHIPS_START_DEBT_MUL), 0, '№25: долг не уходит в минус');
 
-  const freeItem = D.pactEffects([D.pactOf('free-item', TAKEN)], TAKEN);
-  assert.equal(freeItem.shelfSlotsDelta, D.FREE_ITEM_SHELF, '№26: −1 место на полке');
-
   const cheap = D.pactEffects([D.pactOf('item-cheap', TAKEN)], TAKEN);
   assert.equal(cheap.itemPriceMul, D.ITEM_CHEAP_MUL, '№27: предметы −20%');
   assert.equal(cheap.itemOfferDelta, D.ITEM_CHEAP_OFFER, '№27: в витрине на один меньше');
   const shield = I.ITEMS.find((item) => item.id === 'shield');
   assert.ok(I.itemPrice(shield, 1000, cheap.itemPriceMul) < I.itemPrice(shield, 1000), '№27: цена предмета упала');
 
-  const slots = D.pactEffects([D.pactOf('two-slots', TAKEN)], TAKEN);
-  assert.equal(slots.shelfSlotsDelta, D.TWO_SLOTS_BONUS, '№28: +2 места');
-  assert.equal(slots.skullShareDelta, D.TWO_SLOTS_SKULL_DELTA, '№28: черепа чаще');
-
-  const joker = D.pactEffects([D.pactOf('joker-slot', TAKEN)], TAKEN);
-  assert.equal(joker.shelfSlotsDelta, D.JOKER_SLOT_SHELF, '№30: джокер занимает место полки');
 });
 
 test('шаг 30, блок 5: амулеты, символ и автомат (№32, 33, 34, 35, 36, 38)', () => {
@@ -705,13 +695,12 @@ test('шаг 30, блок 7: риск и забирание (№46, 48) и ни�
   assert.equal(take.takeStreakReset, true, '№48: серия сбрасывается');
   assert.equal(D.pactDoubleTake(true, 1000, take.doubleTakeShare), 1000, '№48: 100% первого забирания');
 
-  // Ни одна карта не даёт отрицательный долг, прокрутки, билеты или места — всё клампится.
+  // Ни одна карта не даёт отрицательные долг, прокрутки, билеты или места столбика — всё клампится.
   for (const spec of D.PACTS) {
     const effects = D.pactEffects([D.pactOf(spec.id, TAKEN, R.SYMBOLS.find((symbol) => symbol.id === 'seven'))], TAKEN);
     assert.ok(D.pactDebt(0, D.CHEAP_SHOP_DEBT_MUL) >= 0, `${spec.id}: долг не минус`);
     assert.ok(D.pactSpinCap(1, effects) >= 1, `${spec.id}: прокруток не меньше одной`);
     assert.ok(D.pactTickets(0, -99) === 0, `${spec.id}: билеты не минус`);
-    assert.ok(effects.shelfSlotsDelta + I.MAX_SLOTS >= 0, `${spec.id}: полка не минус`);
     assert.ok(effects.effectSlotsDelta + I.EFFECT_SLOTS >= 0, `${spec.id}: столбик не минус`);
     assert.ok(Number.isFinite(effects.itemPriceMul) && effects.itemPriceMul > 0, `${spec.id}: цена предмета > 0`);
     assert.ok(Number.isFinite(effects.amuletPriceMul) && effects.amuletPriceMul > 0, `${spec.id}: цена амулета > 0`);

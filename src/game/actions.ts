@@ -169,7 +169,7 @@ export function theftReward(debt: number): number {
   return Math.max(ACTION_THEFT_REWARD_MIN, roundPrice(ACTION_THEFT_REWARD_SHARE * Math.max(0, debt)));
 }
 
-/** №6: удалась ли попытка. Провал — сразу KABOOM (решает сцена), никакого «второго шанса». */
+/** №6: удалась ли попытка. Провал — последний шанс: GOOD LUCK и раунд спасения (решает сцена), а не конец забега. */
 export function theftSucceeds(round: number, random: () => number = Math.random): boolean {
   const roll = random();
   return Number.isFinite(roll) && roll < theftChance(round);

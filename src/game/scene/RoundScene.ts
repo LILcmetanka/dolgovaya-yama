@@ -218,6 +218,7 @@ export abstract class RoundScene extends TutorialScene {
 
   /** Рычаг дёргается, столбцы мелькают и останавливаются слева направо. isFree — бесплатная прокрутка. */
   private roll(isFree: boolean): void {
+    this.tutorialSpinStarted(); // обучение: висящая строка бита снимается — бит дождался действия
     if (this.isGameOver) return; // заслон на случай таймера: итог прокрутки не должен прийти на экран победы
     this.panel.pullLever();
     this.sfx.play('lever');
@@ -1099,6 +1100,7 @@ export abstract class RoundScene extends TutorialScene {
 
   /** Включить предмет с места полки slot (клик по нему или клавиша). Только между прокрутками. */
   protected useItem(slot: number): void {
+    if (slot < 0 || slot >= this.slots) return; // закрытое место: клавиша молчит, дверцу не обойти
     const item = this.shelf[slot];
     if (!item) return;
     if (!this.canAct()) return; // висит решение по перемешке — этот нажим теряется, предмет включается отдельным нажатием после выбора
@@ -1363,6 +1365,8 @@ export abstract class RoundScene extends TutorialScene {
     this.refreshHud();
     // В самом конце: прокрутки уже посчитаны (сигарета смотрит на spinsLeft), просроченные сделки сняты (лимит мест).
     this.itemShelf.refreshPulses(); // бусты и флаги прошлого раунда сняты — предметы на полке снова годны
+    // Ранняя оплата долга (дорожка earlyPay) здесь не говорится: её реплика идёт сразу после оплаты второго долга,
+    // ДО открытия магазина (CollectorScene.payDebt → tutorialEarlyPayBeforeShop, DONTLIKE, 25.11).
   }
 
   /**

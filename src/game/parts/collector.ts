@@ -13,6 +13,15 @@ import { CENTER_X, CENTER_Y, GOAL_NOTE, GOAL_NOTE_ANGLE, NOTE, NOTE_ANGLE, SCREE
 import { CHIP_GOAL } from '../gameConfig';
 import { GOOD_LUCK_TIME } from '../lastChance';
 import { addText, fitTextWidth, GAME_OVER_DEPTH, GOLD_TEXT, LED_STYLE, POPUP_DEPTH, RED_TEXT } from '../theme';
+import {
+  SCREEN_TONE_BLUR,
+  SCREEN_TONE_COLORS,
+  TUTORIAL_SCREEN_FONT,
+  TUTORIAL_SCREEN_FONT_MIN,
+  TUTORIAL_SCREEN_MAX_WIDTH,
+  type ScreenTone,
+} from '../screenText';
+import { lineHoldFor, TUTORIAL_LINE_HOLD, tutorialLineHold, tutorialLineRows, type TutorialLine } from '../tutorial';
 
 // Записка светится, когда долг можно отдать раньше: клик по ней или D.
 const NOTE_GLOW_MIN = 0.3; // свечение пульсирует: гаснет до такой яркости и разгорается снова
@@ -26,6 +35,9 @@ const SCREEN_LINE_MAX_WIDTH = 340; // строка держится в экра�
 const SCREEN_LINE_HOLD = 1100; // строка держится, мс
 const SCREEN_LINE_FADE = 220; // и столько гаснет
 const SCREEN_LINE_GAP = 120; // пауза перед следующей строкой, мс
+const SCREEN_ROUNDING = 16; // скругление чёрного экрана заставки — как у startSequence
+const TUTORIAL_ROW_GAP = 6; // зазор между рядами строки обучения, px
+const TUTORIAL_EMPTY_ROW_HEIGHT = 43; // высота пустого ряда (кегль 36 с запасом): отступ тоже занимает место
 // Экран победы: «ПОБЕДА» золотом — автомат цел, забег выигран (KABOOM — красный).
 const VICTORY_TITLE_STYLE = { ...LED_STYLE, fontSize: '56px', color: GOLD_TEXT, shadow: { color: '#f59e0b', blur: 18, fill: true } };
 const SCREEN_TITLE_DEPTH = POPUP_DEPTH - 1; // заголовок — над сеткой, под всплывающими надписями
@@ -97,6 +109,15 @@ export class Collector {
   // смена языка (relabelScreenSequence) их сохраняет.
   private sequenceHold = SCREEN_LINE_HOLD;
   private sequenceDepth = SCREEN_TITLE_DEPTH;
+  // Режим заставки: простая (строка целиком) или обучение (куски своих тонов). Сброс — в clearScreenSequence,
+  // поэтому relabel одной заставки не трогает другую.
+  private sequenceMode: 'plain' | 'tutorial' = 'plain';
+  private tutorialLines: readonly TutorialLine[] = [];
+  private tutorialMode: 'chain' | 'wait' = 'chain';
+  // Чёрный экран заставки обучения, который пережил конец реплики: очередь реплик говорит на нём же, и автомат
+  // между ними не мелькает. keep — экран в конце реплики не гасить (снимет следующая реплика или clearScreenSequence).
+  private sequenceScreen: Phaser.GameObjects.Rectangle | null = null;
+  private sequenceKeepScreen = false;
   // Что делать по «ЗАНОВО» на экране смерти: кнопка показывается, только когда улучшать нечего (DONTLIKE п.7).
   private deathRestart: (() => void) | null = null;
 
@@ -319,8 +340,35 @@ export class Collector {
    * Заставки нет — ничего не делает. Номер строки берём текущий: показ перезапускается с начала этой строки.
    */
   relabelScreenSequence(lines: readonly string[]): void {
-    if (this.sequenceLines.length === 0) return;
+    if (this.sequenceMode !== 'plain' || this.sequenceLines.length === 0) return;
     this.startSequence(lines, this.sequenceDone, this.sequenceIndex);
+  }
+
+  /**
+   * «Богатая» заставка обучения (шаг 46а): строка рисуется из кусков своего тона, кегль крупнее, авторские '\n' —
+   * единственный перенос, wordWrap не нужен. mode 'chain' — как showScreenSequence: строка держится, гаснет,
+   * встаёт следующая, после последней гаснет экран и зовётся done. mode 'wait' — последняя строка остаётся висеть,
+   * done зовётся сразу после её появления и снимает её только clearScreenSequence.
+   * options: hold — сколько строка держится (по умолчанию TUTORIAL_LINE_HOLD), depth — слой всей заставки,
+   * keepScreen — экран в конце реплики не гасить: следующая реплика очереди встанет на него же, автомат не мелькнёт.
+   */
+  showTutorialSequence(
+    lines: readonly TutorialLine[],
+    done?: () => void,
+    options?: { hold?: number; depth?: number; mode?: 'chain' | 'wait'; keepScreen?: boolean },
+  ): void {
+    this.sequenceHold = options?.hold ?? TUTORIAL_LINE_HOLD;
+    this.sequenceDepth = options?.depth ?? SCREEN_TITLE_DEPTH;
+    this.startTutorialSequence(lines, done ?? null, 0, options?.mode ?? 'chain', options?.keepScreen ?? false);
+  }
+
+  /**
+   * Сменить язык прямо во время заставки обучения: те же строки на новом языке, с той же строки, с тем же done
+   * и тем же режимом. Заставки обучения нет — ничего не делает.
+   */
+  relabelTutorialSequence(lines: readonly TutorialLine[]): void {
+    if (this.sequenceMode !== 'tutorial' || this.tutorialLines.length === 0) return;
+    this.startTutorialSequence(lines, this.sequenceDone, this.sequenceIndex, this.tutorialMode, this.sequenceKeepScreen);
   }
 
   /** Пуск заставки с строки from. Вызывают showScreenSequence (с нуля) и relabelScreenSequence (с текущей). */
@@ -367,7 +415,7 @@ export class Collector {
         .setDepth(this.sequenceDepth);
       this.screenSequence = [screen, title];
       const blink = this.scene.tweens.add({ targets: title, alpha: 0.3, duration: TITLE_BLINK_TIME, yoyo: true, repeat: -1 });
-      this.sequenceTimers.push(this.scene.time.delayedCall(this.sequenceHold, () => {
+      this.sequenceTimers.push(this.scene.time.delayedCall(lineHoldFor(text, this.sequenceHold), () => {
         if (token !== this.sequenceToken) return;
         blink.remove();
         this.scene.tweens.add({
@@ -384,8 +432,179 @@ export class Collector {
     next();
   }
 
+  /** Пуск заставки обучения с строки from. Вызывают showTutorialSequence (с нуля) и relabelTutorialSequence (с текущей). */
+  private startTutorialSequence(
+    lines: readonly TutorialLine[],
+    done: (() => void) | null,
+    from: number,
+    mode: 'chain' | 'wait',
+    keepScreen: boolean,
+  ): void {
+    // Экран прошлой реплики очереди не гаснет: следующая реплика говорит на нём же, и автомат между ними
+    // не мелькает. Его держим в стороне от clearScreenSequence, которая снимает заставку целиком.
+    const kept = this.sequenceKeepScreen ? this.sequenceScreen : null;
+    if (kept) this.screenSequence = this.screenSequence.filter((part) => part !== kept);
+    this.clearScreenSequence();
+    const token = this.sequenceToken;
+    this.sequenceMode = 'tutorial';
+    this.tutorialMode = mode;
+    this.sequenceKeepScreen = keepScreen;
+    this.tutorialLines = lines;
+    this.sequenceIndex = Math.min(Math.max(0, from), lines.length);
+    this.sequenceDone = done;
+    const screen =
+      kept ??
+      this.scene.add
+        .rectangle(SCREEN.x, SCREEN.y, SCREEN.width, SCREEN.height, 0x000000)
+        .setRounded(SCREEN_ROUNDING)
+        .setDepth(this.sequenceDepth);
+    screen.setDepth(this.sequenceDepth);
+    this.sequenceScreen = screen;
+    this.screenSequence = [screen];
+    let index = this.sequenceIndex;
+    const next = (): void => {
+      if (token !== this.sequenceToken) return; // заставку сняли — дальше не идём
+      if (index >= lines.length) {
+        this.tutorialLines = [];
+        this.sequenceDone = null;
+        // keepScreen: экран остаётся чёрным до следующей реплики очереди (её пуск возьмёт его же),
+        // последняя реплика гасит его как обычно.
+        if (keepScreen) {
+          done?.();
+          return;
+        }
+        this.scene.tweens.add({
+          targets: screen,
+          alpha: 0,
+          duration: SCREEN_LINE_FADE,
+          onComplete: () => {
+            screen.destroy();
+            if (token === this.sequenceToken) {
+              this.screenSequence = [];
+              this.sequenceScreen = null;
+            }
+            done?.();
+          },
+        });
+        return;
+      }
+      const line = lines[index];
+      this.sequenceIndex = index; // эта строка на экране: смена языка вернётся к ней же
+      index += 1;
+      const texts = this.drawTutorialLine(line);
+      this.screenSequence = [screen, ...texts];
+      // Последняя строка в режиме wait остаётся висеть: done зовём сразу после её появления,
+      // снимает её потом clearScreenSequence.
+      if (mode === 'wait' && index >= lines.length) {
+        this.sequenceDone = null;
+        done?.();
+        return;
+      }
+      this.sequenceTimers.push(
+        this.scene.time.delayedCall(tutorialLineHold(line, this.sequenceHold), () => {
+          if (token !== this.sequenceToken) return;
+          if (texts.length === 0) {
+            // Пустая строка (одни отступы) — гасить нечего, держим паузу и идём дальше.
+            this.sequenceTimers.push(this.scene.time.delayedCall(SCREEN_LINE_GAP, next));
+            return;
+          }
+          this.scene.tweens.add({
+            targets: texts,
+            alpha: 0,
+            duration: SCREEN_LINE_FADE,
+            onComplete: () => {
+              for (const text of texts) text.destroy();
+              this.sequenceTimers.push(this.scene.time.delayedCall(SCREEN_LINE_GAP, next));
+            },
+          });
+        }),
+      );
+    };
+    next();
+  }
+
   /**
-   * Заставку снять сразу: её твины, картинки и отложенные шаги уничтожаются, done не зовётся.
+   * Нарисовать строку обучения: куски — свои Text со своим тоном, ряды — авторские '\n'. Блок центрируется
+   * по SCREEN.y, каждый ряд — по SCREEN.x, куски идут слева-направо. Если самый широкий ряд шире экрана,
+   * кегль уменьшается до TUTORIAL_SCREEN_FONT_MIN, затем ряд ужимается по X масштабом.
+   */
+  private drawTutorialLine(line: TutorialLine): Phaser.GameObjects.Text[] {
+    const rows = tutorialLineRows(line);
+    const rowTexts: Phaser.GameObjects.Text[][] = rows.map((row) =>
+      row
+        .filter((segment) => segment.text.length > 0)
+        .map((segment) => this.tutorialText(segment.text, segment.tone)),
+    );
+    const texts = rowTexts.flat();
+    const widthOf = (row: readonly Phaser.GameObjects.Text[]): number => row.reduce((sum, text) => sum + text.width, 0);
+    const widest = (): number => rowTexts.reduce((wide, row) => Math.max(wide, widthOf(row)), 0);
+    let fontSize = TUTORIAL_SCREEN_FONT;
+    for (const text of texts) text.setFontSize(fontSize);
+    const refresh = (): void => {
+      for (const text of texts) text.updateText();
+    };
+    refresh();
+    while (widest() > TUTORIAL_SCREEN_MAX_WIDTH && fontSize > TUTORIAL_SCREEN_FONT_MIN) {
+      fontSize -= 1;
+      for (const text of texts) text.setFontSize(fontSize);
+      refresh();
+    }
+    const scaleX = widest() > TUTORIAL_SCREEN_MAX_WIDTH ? TUTORIAL_SCREEN_MAX_WIDTH / widest() : 1;
+    const rowHeight = texts.length > 0 ? Math.max(...texts.map((text) => text.height)) : TUTORIAL_EMPTY_ROW_HEIGHT;
+    const step = rowHeight + TUTORIAL_ROW_GAP;
+    const blockHeight = (rows.length - 1) * step + rowHeight;
+    let y = SCREEN.y - blockHeight / 2 + rowHeight / 2;
+    for (const row of rowTexts) {
+      let x = SCREEN.x - (widthOf(row) * scaleX) / 2;
+      for (const text of row) {
+        text.setScale(scaleX, 1).setPosition(x, y);
+        x += text.width * scaleX;
+      }
+      y += step;
+    }
+    return texts;
+  }
+
+  /** Одна надпись «богатой» строки: кегль обучения, цвет и свечение своего тона. */
+  private tutorialText(text: string, tone: ScreenTone): Phaser.GameObjects.Text {
+    const color = SCREEN_TONE_COLORS[tone];
+    return addText(this.scene, SCREEN.x, SCREEN.y, text, {
+      ...LED_STYLE,
+      fontSize: `${TUTORIAL_SCREEN_FONT}px`,
+      color,
+      shadow: { color, blur: SCREEN_TONE_BLUR[tone], fill: true },
+    })
+      .setOrigin(0, 0.5)
+      .setDepth(this.sequenceDepth);
+  }
+
+  /**
+   * Погасить чёрный экран, оставшийся между репликами очереди (keepScreen), обычным фейдом — так кончается последняя
+   * реплика. Пуск следующей реплики экран не гасит: она забирает его себе, и автомат между ними не мелькает.
+   */
+  fadeScreenSequence(done?: () => void): void {
+    const screen = this.sequenceScreen;
+    this.sequenceKeepScreen = false;
+    if (!screen) {
+      done?.();
+      return;
+    }
+    this.sequenceScreen = null;
+    this.screenSequence = this.screenSequence.filter((part) => part !== screen);
+    this.scene.tweens.add({
+      targets: screen,
+      alpha: 0,
+      duration: SCREEN_LINE_FADE,
+      onComplete: () => {
+        screen.destroy();
+        done?.();
+      },
+    });
+  }
+
+  /**
+   * Заставку снять сразу: её твины, картинки и отложенные шаги уничтожаются, done не зовётся. В режиме обучения
+   * снимаются все куски строки и чёрный экран — так же, как простая заставка.
    * Таймеры снимаем по-настоящему: иначе они доживают до срока и зовут next по снятой заставке (шаг 35).
    */
   clearScreenSequence(): void {
@@ -398,6 +617,11 @@ export class Collector {
     this.sequenceLines = [];
     this.sequenceIndex = 0;
     this.sequenceDone = null;
+    this.sequenceMode = 'plain';
+    this.tutorialLines = [];
+    this.tutorialMode = 'chain';
+    this.sequenceScreen = null;
+    this.sequenceKeepScreen = false;
   }
 
   /** Чёрный экран автомата с мигающей надписью text на слое depth. look — цвет и размер надписи (KABOOM красный, ПОБЕДА золотая). */
@@ -427,12 +651,21 @@ export class Collector {
   }
 
   /** Конец забега: всё темнеет, на экране автомата мигает KABOOM. Больше на экране ничего: ни плиты с итогами,
-   *  ни «ЗАНОВО» — дальше ведёт выбор улучшения (DONTLIKE п.1). Кнопка появляется только если улучшать нечего. */
-  showDeath(restart: () => void, title: string): void {
+   *  ни «ЗАНОВО» — дальше ведёт выбор улучшения (DONTLIKE п.1). Кнопка появляется только если улучшать нечего.
+   *  title = null — экран смерти без KABOOM: так идёт обучение первой смерти, строки учат без мигающей надписи. */
+  showDeath(restart: () => void, title: string | null): void {
     this.deathRestart = restart;
     const shade = this.scene.add.rectangle(CENTER_X, CENTER_Y, VIEW_WIDTH, 640, 0x000000, 0.6); // на весь вид у автомата
     shade.setInteractive(); // ловит клики, чтобы кнопки под затемнением не нажимались
     for (const part of [shade]) part.setDepth(GAME_OVER_DEPTH);
+    if (title) this.screenTitle(title, GAME_OVER_DEPTH);
+  }
+
+  /**
+   * KABOOM на уже показанном экране смерти: нужен после строк обучения, если улучшать оказалось нечего.
+   * Первый раз экран смерти показывают без заголовка (showDeath(..., null)) — тогда надпись появляется здесь.
+   */
+  showDeathTitle(title: string): void {
     this.screenTitle(title, GAME_OVER_DEPTH);
   }
 

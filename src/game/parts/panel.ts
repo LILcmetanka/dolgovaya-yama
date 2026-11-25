@@ -76,14 +76,12 @@ const PHASE_SIGN_HOME_X = MULTIPLIER_WINDOW.x + PHASE_SIGN_SMALL_STEP / 2; // ч
 const PHASE_SIGNS: { text: string; style: Phaser.Types.GameObjects.Text.TextStyle }[] = [];
 // Строка доли клеток-черепов — на своём экранчике справа, над гнёздами включённых предметов (SKULL_SCREEN, layout.ts): значок 💀 сверху,
 // процент под ним. Экранчик узкий, поэтому в две строки. Долю считает сцена, здесь только показ.
-// Подсказку вешаем на пустую зону во весь экранчик: текст меняется, и мерить его ширину для наведения не надо.
+// Подсказки у доли черепов нет вовсе (DONTLIKE): ни зоны наведения, ни таблички.
 const SHARE_ICON_SIZE = '12px'; // 💀 — мельче процента, чтобы влезал в узкое окно
 const SHARE_FONT_SIZE = '13px'; // процент: «96%» моноширинным ≈ 23-24 px, по ~8 px поля с каждой стороны от 40
 const SHARE_ICON_Y = SKULL_SCREEN.y - 9; // 💀 — в верхней половине экранчика (центром 196 при окне 184…226)…
 const SHARE_PERCENT_Y = SKULL_SCREEN.y + 9; // …процент — в нижней (центром 214)
 const SHARE_WARN = 0.27; // с такой доли клеток-черепов процент красный — предупреждение
-const SHARE_HINT_WIDTH = SKULL_SCREEN.width; // подсказка — по всему экранчику
-const SHARE_HINT_HEIGHT = SKULL_SCREEN.height;
 const PHASE_SIGNS_HOLD = 2200; // столько мс знаки видны на стекле
 const PHASE_SIGNS_FLY_TIME = 700;
 // Знаки — поверх полосы новости «ФАЗА 2» (она на POPUP_DEPTH). Над панелью магазина их не видно: пока магазин
@@ -118,7 +116,7 @@ function spinLampColor(spinsLeft: number): number {
 /** Приборы на корпусе автомата: табло с фишками, окошко множителя серии, лампочки прокруток и рычаг справа. */
 export class MachinePanel {
   private readonly scene: Phaser.Scene;
-  private readonly hint: Hint; // подсказки приборов: экранчик доли черепов и знак фазы 2
+  private readonly hint: Hint; // подсказки приборов: только знак фазы 2 (у доли черепов подсказки нет вовсе)
   private readonly boardText: Phaser.GameObjects.Text; // табло: сколько у тебя фишек
   private readonly ticketsText: Phaser.GameObjects.Text; // табло: сколько у тебя билетов
   private readonly ticketScale: number; // билет на табло во столько раз больше своей картинки — туда долетают билеты
@@ -156,10 +154,6 @@ export class MachinePanel {
     // Доля клеток-черепов — всегда на виду на экранчике справа, над гнёздами предметов: 💀 сверху, процент под ним.
     addText(scene, SKULL_SCREEN.x, SHARE_ICON_Y, '💀', { fontSize: SHARE_ICON_SIZE }).setOrigin(0.5);
     this.skullShareText = addText(scene, SKULL_SCREEN.x, SHARE_PERCENT_Y, '', { fontSize: SHARE_FONT_SIZE }).setOrigin(0.5);
-    // Зона подсказки — пустая Zone: у неё нет картинки, но она ловит наведение (у прозрачного прямоугольника — нет).
-    const shareZone = scene.add.zone(SKULL_SCREEN.x, SKULL_SCREEN.y, SHARE_HINT_WIDTH, SHARE_HINT_HEIGHT);
-    shareZone.setInteractive();
-    attachHint(shareZone, hint, () => [t('skullShareTitle'), t('skullShareWhat')]);
 
     // Рычаг справа: штанга и шарик на её конце.
     this.leverRod = scene.add.image(LEVER_MOUNT.x, LEVER_MOUNT.y, LEVER_ROD_TEXTURE).setOrigin(0.5, 1);

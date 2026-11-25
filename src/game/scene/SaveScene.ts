@@ -2,11 +2,12 @@ import { readPacts } from '../dealerGame';
 import { copyEffects } from '../items';
 import { isPatternId } from '../progress';
 import {
-  amuletChipUsedOf,
   debtNextMulOf,
   deferUsedOf,
   freeGiftUsedOf,
   luckyCloversOf,
+  miniCaseBoughtOf,
+  miniCaseShopRoundOf,
   rescueUsedOf,
   skullCancelUsedOf,
   tapePrice,
@@ -121,7 +122,8 @@ export abstract class SaveScene extends ShopScene {
       devUsed: this.devUsedThisRun, // кассета помнит, что забег трогали в «ТЕСТ»: откат не делает такой рекорд честным
       rescueUsed: this.rescueUsedThisRun, // и что спасение уже было: откат яму второй раз не выпросит
       deferUsed: this.deferredThisRun, // и что отсрочка (улучшение №10) уже потрачена: откат её не возвращает
-      amuletChipUsed: this.amuletChipUsedThisRun, // и что амулет за фишки в мини-чемодане уже брали: откат не возвращает
+      miniCaseBought: this.miniCaseBought, // сколько амулетов за фишки взяли: откат вернёт ровно это число
+      miniCaseShopRound: this.miniCaseShopRound, // и в каком магазине брали последний: от него прячется следующий
       freeGiftGiven: this.freeGiftGiven, // и что подарок первого магазина (№40) уже выдан
       skullCancelUsed: this.skullCancelUsedThisRun, // и что отмена черепа (№50) уже потрачена
       pactAmuletBurns: this.pactAmuletBurns, // и что следующий амулет сгорит (сделка №34)
@@ -161,8 +163,8 @@ export abstract class SaveScene extends ShopScene {
       rescueUsed: rescueUsedOf(record, this.rescueUsedThisRun),
       // Отсрочка липкая так же: запись до неё не возвращает вторую попытку.
       deferUsed: deferUsedOf(record, this.deferredThisRun),
-      // Мини-чемодан/№40: вторая покупка за фишки и второй подарок откатом не возвращаются.
-      amuletChipUsed: amuletChipUsedOf(record, this.amuletChipUsedThisRun),
+      // Мини-чемодан ведёт себя по записи: сколько амулетов за фишки взято и в каком магазине — едет с плёнкой
+      // как есть, и откат к записи до покупок возвращает чемодан. Подарок №40 липкий: второй откат не выдаёт.
       freeGiftGiven: freeGiftUsedOf(record, this.freeGiftGiven),
       // №50 (28г): отмена черепа липкая — откат второй не даёт.
       skullCancelUsed: skullCancelUsedOf(record, this.skullCancelUsedThisRun),
@@ -197,6 +199,7 @@ export abstract class SaveScene extends ShopScene {
     // Ступень цели — тоже с плёнки: запись после «ДАЛЬШЕ» не возвращает миллион (нет поля — цель остаётся текущей).
     if (record.chipGoal !== undefined) this.chipGoal = record.chipGoal;
     this.tickets = record.tickets;
+    // Число открытых мест едет с плёнкой: откат возвращает и полку такой, какой она была на записи.
     this.slots = record.slots;
     this.shelf = [...record.shelf];
     this.itemEffects = copyEffects(record.effects);
@@ -222,8 +225,10 @@ export abstract class SaveScene extends ShopScene {
     this.rescueUsedThisRun = rescueUsedOf(record, this.rescueUsedThisRun);
     // Отсрочка (улучшение №10) — по тому же правилу: текущий флаг с плёнкой, назад её не возвращает.
     this.deferredThisRun = deferUsedOf(record, this.deferredThisRun);
-    // Мини-чемодан и №40 — липкие так же: откат к записи до них вторую покупку и подарок не возвращает.
-    this.amuletChipUsedThisRun = amuletChipUsedOf(record, this.amuletChipUsedThisRun);
+    // Мини-чемодан — по записи: плёнка до покупок возвращает чемодан с двумя амулетами, плёнка после — по её числам
+    // (сколько взято и в каком магазине). №40 — липкий: откат к записи до него второй подарок не возвращает.
+    this.miniCaseBought = miniCaseBoughtOf(record);
+    this.miniCaseShopRound = miniCaseShopRoundOf(record);
     this.freeGiftGiven = freeGiftUsedOf(record, this.freeGiftGiven);
     // №50 (28г): отмена черепа едет с плёнки; insertTape уже сложил текущее с записью.
     this.skullCancelUsedThisRun = skullCancelUsedOf(record, this.skullCancelUsedThisRun);
@@ -253,6 +258,7 @@ export abstract class SaveScene extends ShopScene {
    */
   protected playTape(): void {
     this.setPatternsOnGlass(); // стекло с записи: набор пришёл в loadTape
+    this.itemShelf.setOpenCount(this.slots); // полка на записи могла быть длиннее: дверцы встают по числу открытых мест
     this.itemShelf.setItems(this.shelf);
     this.amuletRack.setAmulets(this.amulets, this.amuletCounts);
     this.showItemEffects();

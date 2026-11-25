@@ -9,9 +9,7 @@ import {
   DEBT_NEXT_MUL,
   DEBT_TICKETS_OFF,
   EMPTY_SPIN_DEBT_MUL,
-  FREE_ITEM_SHELF,
   HALF_STEP_TICKETS,
-  JOKER_SLOT_SHELF,
   offerPacts,
   PACT_OFFER_COUNT,
   PACT_TICKETS,
@@ -21,15 +19,13 @@ import {
   pactSymbols,
   pactTickets,
   POT_START_DEBT_MUL,
-  TWO_SLOTS_BONUS,
   WIN_DEBT_MUL,
   type PactSpec,
   type PactId,
 } from '../dealerGame';
-import { ITEMS, MAX_SLOTS, randomOffer } from '../items';
-import { CENTER_X, GRID_Y, VENDING_BIN } from '../layout';
+import { CENTER_X, GRID_Y } from '../layout';
 import { t } from '../lang';
-import { machineItemAllowed, MACHINES, type MachineId } from '../machines';
+import { MACHINES, type MachineId } from '../machines';
 import type { SlotSymbol } from '../rules';
 import { LAMP_PURPLE } from '../theme';
 import { RoundScene } from './RoundScene';
@@ -114,15 +110,7 @@ export abstract class DealerScene extends RoundScene {
       this.denyPact();
       return;
     }
-    // Шаг 30: бесплатный предмет/джокер и копия амулета тоже требуют места/кандидата, а гнездо — свободного места.
-    // Полка сделки сначала укорачивается на место — свободное место ищем уже в новом пределе.
-    if (spec.id === 'free-item' || spec.id === 'joker-slot') {
-      const nextSlots = Math.max(0, this.slots - 1);
-      if (!this.shelf.slice(0, nextSlots).includes(null)) {
-        this.denyPact();
-        return;
-      }
-    }
+    // Шаг 30: копия амулета тоже требует кандидата, а гнездо — свободного места.
     if (spec.id === 'amulet-copy' && this.amuletCopyCandidate() === null) {
       this.denyPact();
       return;
@@ -192,17 +180,6 @@ export abstract class DealerScene extends RoundScene {
         this.earn(CHIPS_START_CHIPS); // фишки идут в доход забега, как все приходы на табло
         this.debt = pactDebt(this.debt, CHIPS_START_DEBT_MUL);
         break;
-      case 'free-item':
-        this.adjustShelf(FREE_ITEM_SHELF); // сначала короче полка, потом подарок — он должен влезть в новый предел
-        this.gainFreeItem(false);
-        break;
-      case 'two-slots':
-        this.adjustShelf(TWO_SLOTS_BONUS);
-        break;
-      case 'joker-slot':
-        this.adjustShelf(JOKER_SLOT_SHELF); // сначала короче полка
-        this.gainFreeItem(true); // «подмена» — предмет-джокер, который ставит джокера в клетку
-        break;
       case 'amulet-copy':
         this.gainAmuletCopy();
         break;
@@ -224,36 +201,6 @@ export abstract class DealerScene extends RoundScene {
     }
     this.collector.markNote(this.debt); // долг на записке — уже с поправкой сделки
     this.refreshHud();
-  }
-
-  /** Сколько слотов полки добавить (+) или убрать (−); новые клетки сразу открываются. */
-  private adjustShelf(delta: number): void {
-    const next = Math.max(0, Math.min(MAX_SLOTS, this.slots + delta));
-    if (next > this.slots) {
-      for (let slot = this.slots; slot < next; slot += 1) {
-        this.shelf.push(null);
-        this.itemShelf.openSlot(slot); // дверца отсека открывается, как при покупке места
-      }
-    }
-    this.slots = next;
-    this.itemShelf.setOpenCount(next);
-    this.itemShelf.refreshPulses();
-  }
-
-  /** Бесплатный предмет на свободное место полки: обычный из пула раунда или «подмена» (джокер). */
-  private gainFreeItem(joker: boolean): void {
-    let slot = -1;
-    for (let index = 0; index < this.slots; index += 1) {
-      if (this.shelf[index] === null) { slot = index; break; }
-    }
-    if (slot < 0) return;
-    const item = joker
-      ? ITEMS.find((entry) => entry.id === 'swap')
-      : randomOffer(this.round, (entry) => machineItemAllowed(this.machineId, entry), 1)[0];
-    if (!item) return;
-    this.shelf[slot] = item;
-    this.itemShelf.putItem(slot, item, VENDING_BIN.x, VENDING_BIN.y); // лоток торгового автомата — откуда падает
-    this.itemShelf.refreshPulses();
   }
 
   /** Кандидат на бесплатную копию амулета: уже купленный амулет, у которого не выбран потолок копий. */
