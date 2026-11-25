@@ -1,6 +1,10 @@
 import Phaser from 'phaser';
 import { GameScene } from './GameScene';
 import { GAME_HEIGHT, GAME_WIDTH } from './layout';
+import { ROOM_COLOR } from './theme';
+
+/** Цвет тона комнаты строкой для CSS/Phaser: '#241a0b'. */
+export const ROOM_BACKGROUND = '#' + ROOM_COLOR.toString(16).padStart(6, '0');
 
 export function createGame(parent: string): Phaser.Game {
   const config: Phaser.Types.Core.GameConfig = {
@@ -8,10 +12,11 @@ export function createGame(parent: string): Phaser.Game {
     parent,
     width: GAME_WIDTH, // Full HD: камера увеличивает раскладку (layout.ts, ZOOM)
     height: GAME_HEIGHT,
-    backgroundColor: '#000000',
+    // Поля вокруг картинки — тон комнаты, а не чёрные полосы: на телефоне боком их видно по краям.
+    backgroundColor: ROOM_BACKGROUND,
     scene: [GameScene],
     scale: {
-      mode: Phaser.Scale.FIT, // на всё окно, 16:9; лишнее по краям окна — чёрное, как комната
+      mode: Phaser.Scale.FIT, // на всё окно, 16:9; лишнее по краям окна — поля комнаты
       autoCenter: Phaser.Scale.CENTER_BOTH,
     },
     // Звуки Phaser не нужны: весь звук синтезирует sound.ts. Без этого Phaser сам создаёт ещё один AudioContext при запуске.

@@ -30,9 +30,20 @@ export const PATTERNS: Pattern[] = [
   { id: 'zigzag', multiplier: 3, cells: [[0, 0], [1, 1], [0, 2], [1, 3], [0, 4]] }, // через всю сетку: верх-низ-верх
   { id: 'zigzagUp', multiplier: 3, cells: [[1, 0], [0, 1], [1, 2], [0, 3], [1, 4]] }, // низ-верх-низ
   { id: 'frame', multiplier: 6, cells: [[0, 0], [0, 1], [0, 2], [1, 0], [1, 2], [2, 0], [2, 1], [2, 2]] }, // рамка 3×3 без середины
-  { id: 'eye', multiplier: 8, cells: [[1, 0], [0, 1], [0, 2], [0, 3], [1, 4], [2, 1], [2, 2], [2, 3], [1, 2]] }, // глаз со зрачком
-  { id: 'jackpot', multiplier: 10, cells: allCells() }, // все 15 клеток
+  { id: 'eye', multiplier: 10, cells: [[1, 0], [0, 1], [0, 2], [0, 3], [1, 4], [2, 1], [2, 2], [2, 3], [1, 2]] }, // глаз со зрачком
+  { id: 'jackpot', multiplier: 100, cells: allCells() }, // все 15 клеток: джекпот платит в сто раз
 ];
+
+/** Самый сильный паттерн: сильнее него на сетке ничего не собрать (по нему сделка «джекпот» узнаёт джекпот). */
+export const TOP_MULTIPLIER = Math.max(...PATTERNS.map((pattern) => pattern.multiplier));
+
+/**
+ * «Чёрные» паттерны — самый слабый из тех, что платят больше простой линии ×1 (ряд из трёх, столбец, диагонали):
+ * сейчас это ×2 (ряд из четырёх и квадрат). Из него считает поправку сделка №7 «вес чёрных паттернов +1».
+ */
+export const LOW_PATTERN_MULTIPLIER = Math.min(
+  ...PATTERNS.map((pattern) => pattern.multiplier).filter((multiplier) => multiplier > 1),
+);
 
 /** Паттерн из одних джокеров платит как самый дорогой символ. */
 const BEST_SYMBOL = SYMBOLS.reduce((best, symbol) => (symbol.price > best.price ? symbol : best));
@@ -122,10 +133,15 @@ export function lockedColumns(grid: Grid): Set<number> {
   return columns;
 }
 
+/** Как искать паттерны: ignoreLocks — замок 🔒 не блокирует свой столбец (молот 🔨). */
+export interface FindOptions {
+  ignoreLocks?: boolean;
+}
+
 /** Все паттерны на сетке, и из черепов тоже. Джекпот перекрывает всё, в одном ряду — только самый длинный отрезок. Через столбцы с замком — нет. */
-export function findPatterns(grid: Grid): PatternHit[] {
+export function findPatterns(grid: Grid, options?: FindOptions): PatternHit[] {
   const hits: PatternHit[] = [];
-  const locked = lockedColumns(grid);
+  const locked = options?.ignoreLocks ? new Set<number>() : lockedColumns(grid); // молот: замки не блокируют
   for (const { pattern, cells } of ALL_PLACEMENTS) {
     if (cells.some(([, col]) => locked.has(col))) continue;
     const symbol = patternSymbol(grid, cells);
@@ -151,8 +167,8 @@ function countTickets(grid: Grid): number {
 }
 
 /** Итог прокрутки: паттерн из черепов сжигает всё; иначе выигрыш — сумма «цена символа × множитель паттерна». И сколько на экране билетов. */
-export function evaluateGrid(grid: Grid): SpinResult {
-  const hits = findPatterns(grid);
+export function evaluateGrid(grid: Grid, options?: FindOptions): SpinResult {
+  const hits = findPatterns(grid, options);
   const tickets = countTickets(grid);
   const skullHits = hits.filter((hit) => isSkull(hit.symbol));
   if (skullHits.length > 0) return { kind: 'skull', win: 0, hits: skullHits, tickets };

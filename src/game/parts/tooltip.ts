@@ -1,11 +1,13 @@
 import Phaser from 'phaser';
 import { VIEW_HEIGHT, VIEW_WIDTH, ZOOM } from '../layout';
+import { safeInsets } from '../safeArea';
 import { addText, GOLD_TEXT, TOOLTIP_DEPTH } from '../theme';
 
 // Табличка подсказки.
 const PADDING = 10; // поля внутри таблички
 const LINE_GAP = 2; // между названием и описанием
 const MIN_WIDTH = 120;
+const TEXT_WIDTH = 560; // длинное описание переносится по словам: иначе табличка выходит за край вида
 const POINTER_OFFSET = 14; // табличка отстоит от курсора вправо и вниз на столько
 const FINGER_OFFSET = 36; // палец закрывает вещь под собой — табличка выше него
 const EDGE_MARGIN = 8; // от края экрана до таблички
@@ -16,6 +18,9 @@ export interface Hint {
   show(title: string, text: string): void;
   hide(): void;
 }
+
+/** Вещь с подсказкой: у неё есть видимость — невидимой подсказку не показываем (купили — вещи уже нет). */
+type HintTarget = Phaser.GameObjects.GameObject & { visible: boolean };
 
 /**
  * Подсказка при наведении мыши (на телефоне — при долгом нажатии): тёмная табличка с названием (золотом) и описанием.
@@ -29,14 +34,15 @@ export class Tooltip implements Hint {
   private readonly title: Phaser.GameObjects.Text;
   private readonly text: Phaser.GameObjects.Text;
   private readonly container: Phaser.GameObjects.Container;
+  private blocked: (() => boolean) | null = null; // подсказки нет, пока это возвращает true (тьма обучения)
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     this.box = scene.add.rectangle(0, 0, MIN_WIDTH, 40, 0x0b0f19, 0.95).setStrokeStyle(2, 0xb45309).setOrigin(0, 0);
     this.title = addText(scene, 0, 0, '', { fontSize: '15px', fontStyle: 'bold', color: GOLD_TEXT }).setOrigin(0.5, 0);
-    this.text = addText(scene, 0, 0, '', { fontSize: '14px', color: '#e2e8f0' }).setOrigin(0.5, 0);
+    this.text = addText(scene, 0, 0, '', { fontSize: '14px', color: '#e2e8f0', wordWrap: { width: TEXT_WIDTH } }).setOrigin(0.5, 0);
     this.container = scene.add.container(0, 0, [this.box, this.title, this.text]);
-    this.container.setScrollFactor(0, 0, true).setDepth(TOOLTIP_DEPTH).setVisible(false); // приклеена к экрану: вид поворачивается — она на месте
+    this.container.setScrollFactor(0, 0, true).setDepth(TOOLTIP_DEPTH).setVisible(false); // приклеена к экрану, а не к комнате: стоит на месте при любом виде
     scene.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
       if (this.container.visible) this.place(pointer);
     });
@@ -44,6 +50,7 @@ export class Tooltip implements Hint {
 
   /** Табличка у курсора: размер — по надписям, место — рядом с указателем. */
   show(title: string, text: string): void {
+    if (this.blocked?.()) return; // тьма обучения: подсказка выдала бы то, что в ней спрятано
     this.title.setText(title);
     this.text.setText(text);
     const width = Math.max(MIN_WIDTH, this.title.width, this.text.width) + 2 * PADDING;
@@ -55,9 +62,15 @@ export class Tooltip implements Hint {
     this.container.setVisible(true);
   }
 
-  /** Табличка справа снизу от указателя; не помещается справа — слева, не помещается снизу — сверху. Палец — над ним. */
+  /** Табличка справа снизу от указателя; не помещается справа — слева, не помещается снизу — сверху. Палец — над ним.
+   *  Края — с учётом безопасной зоны телефона: «челка» и домашняя полоска не накрывают подсказку. */
   private place(pointer: Phaser.Input.Pointer): void {
     const { width, height } = this.box;
+    const safe = safeInsets();
+    const minX = EDGE_MARGIN + safe.left;
+    const maxX = VIEW_WIDTH - EDGE_MARGIN - safe.right - width;
+    const minY = EDGE_MARGIN + safe.top;
+    const maxY = VIEW_HEIGHT - EDGE_MARGIN - safe.bottom - height;
     const pointerX = pointer.x / ZOOM; // экранные пиксели → единицы раскладки (табличка приклеена к экрану)
     const pointerY = pointer.y / ZOOM;
     let x: number;
@@ -68,17 +81,22 @@ export class Tooltip implements Hint {
     } else {
       x = pointerX + POINTER_OFFSET;
       y = pointerY + POINTER_OFFSET;
-      if (x + width > VIEW_WIDTH - EDGE_MARGIN) x = pointerX - POINTER_OFFSET - width;
-      if (y + height > VIEW_HEIGHT - EDGE_MARGIN) y = pointerY - POINTER_OFFSET - height;
+      if (x + width > maxX) x = pointerX - POINTER_OFFSET - width;
+      if (y + height > maxY) y = pointerY - POINTER_OFFSET - height;
     }
     this.container.setPosition(
-      Phaser.Math.Clamp(x, EDGE_MARGIN, VIEW_WIDTH - EDGE_MARGIN - width),
-      Phaser.Math.Clamp(y, EDGE_MARGIN, VIEW_HEIGHT - EDGE_MARGIN - height),
+      Phaser.Math.Clamp(x, minX, Math.max(minX, maxX)),
+      Phaser.Math.Clamp(y, minY, Math.max(minY, maxY)),
     );
   }
 
   hide(): void {
     this.container.setVisible(false);
+  }
+
+  /** Пока check() возвращает true, подсказок нет: тьма обучения не должна выдавать то, что в ней спрятано. */
+  setBlockedCheck(check: (() => boolean) | null): void {
+    this.blocked = check;
   }
 }
 
@@ -89,12 +107,13 @@ export class Tooltip implements Hint {
  * getHint возвращает [название, что делает] или null — тогда подсказки нет (например, клетка пуста).
  */
 export function attachHint(
-  target: Phaser.GameObjects.GameObject,
+  target: HintTarget,
   hint: Hint,
   getHint: () => [string, string] | null,
   press?: () => void,
 ): void {
   const show = (): void => {
+    if (!target.visible) return; // вещи уже нет (купили, спрятали) — подсказке не о чем
     const texts = getHint();
     if (texts) hint.show(texts[0], texts[1]);
   };

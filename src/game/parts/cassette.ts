@@ -20,14 +20,14 @@ import {
   VCR_WINDOW,
 } from '../decor';
 import { t } from '../lang';
-import { BOARD_TICKET_X, DISPLAY, SAVE_TAPE, VCR, VCR_CRATE, VIEW_HEIGHT, VIEW_WIDTH } from '../layout';
-import { addText, CHIP_DEPTH, LAMP_GOLD, LED_COLOR, LED_STYLE, RED_TEXT, TOOLTIP_DEPTH } from '../theme';
+import { SAVE_TAPE, SHOP_HUD, SHOP_PANEL_RIGHT, VCR, VCR_CRATE, VIEW_HEIGHT, VIEW_WIDTH } from '../layout';
+import { addText, LAMP_GOLD, LED_COLOR, LED_STYLE, RED_TEXT, SHOP_FLY_DEPTH, TOOLTIP_DEPTH } from '../theme';
 import { attachHint, type Hint } from './tooltip';
 
-// Кассета на стене магазина.
+// Кассета на панели магазина.
 const PRICE_Y = SAVE_TAPE.y + 38; // ценник «билет × 2» — под кассетой
 const PRICE_ICON_SCALE = 0.6;
-const TICKETS_FLYING = 3; // купили: столько билетов летит с табло в кассету (для красоты: цена может быть любой)
+const TICKETS_FLYING = 3; // купили: столько билетов летит из шапки панели в кассету (для красоты: цена может быть любой)
 // Видеомагнитофон: купленная кассета стоит на нём над щелью.
 const TAPE_Y = VCR.y - VCR.height / 2 - TAPE_SIZE.height / 2 + 1;
 const REC_X = VCR.x + VCR_SLOT_DX; // чистая кассета стоит над щелью REC…
@@ -51,7 +51,7 @@ const NOISE_MAX_HEIGHT = 26;
 const NOISE_ALPHA = 0.18;
 const REWIND_SHAKE = 0.004; // вид мелко трясётся, пока плёнка перематывается
 // Анимации, мс.
-const PAY_FLY_TIME = 450; // билеты летят с табло в кассету
+const PAY_FLY_TIME = 450; // билеты летят из шапки панели в кассету
 const PAY_STAGGER = 90;
 const LEAVE_TIME = 500; // купленная кассета уезжает к видеомагнитофону
 const REC_BLINK_TIME = 250; // запись: лампочка мигает
@@ -74,73 +74,135 @@ const SIGN_BLINK_TIME = 350;
 const NOISE_PASS_TIME = 500; // полоса помех проходит вид сверху вниз
 const PLAY_TIME = 1600; // после отката «▶» горит столько, потом тает
 
+/** Видеомагнитофон и всё, что на нём: построен всегда, а виден, только пока механика кассеты открыта. */
+interface VcrParts {
+  crate: Phaser.GameObjects.Image; // деревянный ящик, на котором он стоит
+  body: Phaser.GameObjects.Image; // сам видеомагнитофон
+  glow: Phaser.GameObjects.Rectangle; // свечение кассеты: её можно записать или вставить
+  tape: Phaser.GameObjects.Image; // кассета на видеомагнитофоне — по ней кликают
+  reels: Phaser.GameObjects.Image[]; // её катушки
+  lamp: Phaser.GameObjects.Arc; // лампочка записи
+  windowSign: Phaser.GameObjects.Image; // «◀◀» в окошке видеомагнитофона
+  playMark: Phaser.GameObjects.Image; // тусклое «▶» в окошке PLAY
+}
+
 /**
- * Кассета (шаг 45). В магазине она висит на стене над кнопкой «назад», под ней цена в билетах:
- * клик (или 9 — её ловит сцена) — купить, при наведении — подсказка. Купили — кассета уезжает к видеомагнитофону
- * (он стоит на ящике у монитора) и ложится в отделение REC (слева). Клик (или 9) — она записывает забег: мигает лампочка записи,
- * катушки крутятся, кассета переезжает в отделение PLAY (справа). Записанная светится, когда её можно вставить: клик (или 9) —
+ * Кассета (шаг 45). В магазине она висит на панели над кнопкой «назад», под ней цена в билетах:
+ * клик (или T — её ловит сцена) — купить, при наведении — подсказка. Купили — кассета уезжает к видеомагнитофону
+ * (он стоит на ящике у монитора) и ложится в отделение REC (слева). Клик (или T) — она записывает забег: мигает лампочка записи,
+ * катушки крутятся, кассета переезжает в отделение PLAY (справа). Записанная светится, когда её можно вставить: клик (или T) —
  * она уходит в видеомагнитофон, поверх вида — «◀◀» и полосы помех, автомат жуёт плёнку, и она рвётся; вид гаснет — тут сцена
  * перезапускается с записью, а потом показывает «▶». Когда что можно, решает сцена.
+ * Пока механика кассеты не открыта (закрыто три долга), ящик и видеомагнитофон построены, но спрятаны (setAvailable).
  */
 export class Cassette {
   private readonly scene: Phaser.Scene;
-  private readonly shopTape: Phaser.GameObjects.Image[]; // кассета на стене магазина и её катушки
+  private readonly shopTape: Phaser.GameObjects.Image[]; // кассета на панели магазина и её катушки
   private readonly priceIcon: Phaser.GameObjects.Image; // ценник: билет…
   private readonly priceText: Phaser.GameObjects.Text; // …и «× 2»
-  private readonly glow: Phaser.GameObjects.Rectangle; // свечение кассеты на видеомагнитофоне: её можно вставить
-  private readonly vcrTape: Phaser.GameObjects.Image; // кассета на видеомагнитофоне — по ней кликают
-  private readonly vcrReels: Phaser.GameObjects.Image[]; // её катушки
-  private readonly recLamp: Phaser.GameObjects.Arc; // лампочка записи
-  private readonly windowSign: Phaser.GameObjects.Image; // «◀◀» в окошке видеомагнитофона
-  private readonly playMark: Phaser.GameObjects.Image; // тусклое «▶» в окошке PLAY
+  private readonly vcr: VcrParts; // видеомагнитофон на ящике
+  private available = false; // механика кассеты открыта (закрыто три долга); нет — ящик и видеомагнитофон спрятаны
+  private forSale = false; // кассету сейчас продают: она висит на панели магазина (куплена — нет)
   private isOnVcr = false; // кассета лежит на видеомагнитофоне
   private isRecorded = false; // она записана: стоит над окошком PLAY
   private isMoving = false; // записанная кассета переезжает из REC в PLAY
   private isUsable = false; // кассетой можно воспользоваться (записать или вставить) — она светится
   private wantsUsable = false; // что просила сцена, пока кассета переезжала
 
-  /** isForSale — кассету сейчас продают (после отката её съел автомат — снова продают); buy — кликнули по ней в магазине, use — по видеомагнитофону с ней. */
-  constructor(scene: Phaser.Scene, isForSale: boolean, buy: () => void, use: () => void, hint: Hint) {
+  /**
+   * isAvailable — механика открыта (закрыто 3 долга): ящик и видеомагнитофон видны (setAvailable);
+   * isForSale — кассету сейчас продают (после отката её съел автомат — снова продают);
+   * buy — кликнули по ней в магазине, use — по видеомагнитофону с ней; layer — слой магазина: кассета с ценником на панели.
+   */
+  constructor(
+    scene: Phaser.Scene,
+    isAvailable: boolean,
+    isForSale: boolean,
+    buy: () => void,
+    use: () => void,
+    hint: Hint,
+    layer: Phaser.GameObjects.Container,
+  ) {
     this.scene = scene;
     createTapeTextures(scene);
     createTicketTexture(scene);
-    createVcrTexture(scene, VCR.width, VCR.height);
-    createCrateTexture(scene, VCR_CRATE.width, VCR_CRATE.height);
     createRewindTextures(scene);
 
-    // Кассета на стене магазина, под ней ценник.
+    // Кассета на панели магазина, под ней ценник.
     const tape = scene.add.image(SAVE_TAPE.x, SAVE_TAPE.y, TAPE_TEXTURE);
     tape.setInteractive({ useHandCursor: true });
     attachHint(tape, hint, () => [t('tape'), t('tapeWhat')], buy);
     this.shopTape = [tape, ...this.addReels(SAVE_TAPE.x, SAVE_TAPE.y)];
     this.priceIcon = scene.add.image(SAVE_TAPE.x - 18, PRICE_Y, TICKET_TEXTURE).setScale(PRICE_ICON_SCALE);
     this.priceText = addText(scene, SAVE_TAPE.x - 6, PRICE_Y, '', { ...LED_STYLE, fontSize: '16px' }).setOrigin(0, 0.5);
-    if (!isForSale) this.hideShopTape();
+    layer.add([...this.shopTape, this.priceIcon, this.priceText]); // кассета магазина — на панели
+    this.forSale = isForSale;
 
-    // Ящик и видеомагнитофон на нём. Кассета создаётся раньше корпуса: вставленная, она уходит за его лицевую панель.
-    scene.add.image(VCR_CRATE.x, VCR_CRATE.y, CRATE_TEXTURE);
-    this.glow = scene.add
+    this.vcr = this.buildVcr(hint, use);
+    this.setAvailable(isAvailable);
+  }
+
+  /**
+   * Механика кассеты открылась (или ещё нет): ящик, видеомагнитофон и лампочка видны, кассета — если она уже на нём;
+   * закрыта — всё спрятано и не кликается. Заодно та же правда про кассету на панели: пока она продаётся, её видно.
+   * Свечение покажет showUsable, когда кассетой правда можно воспользоваться.
+   */
+  setAvailable(isAvailable: boolean): void {
+    this.available = isAvailable;
+    const vcr = this.vcr;
+    this.scene.tweens.killTweensOf(vcr.glow);
+    this.isUsable = false;
+    vcr.glow.setVisible(false);
+    vcr.windowSign.setVisible(false); // знак в окошке показывает перемотка
+    for (const part of [vcr.crate, vcr.body, vcr.lamp, vcr.playMark]) part.setVisible(isAvailable);
+    const isTapeShown = isAvailable && this.isOnVcr;
+    vcr.tape.setVisible(isTapeShown);
+    for (const reel of vcr.reels) reel.setVisible(isTapeShown);
+    // Кассета в магазине: механика может открыться и посреди забега — тогда она появляется на панели впервые.
+    const isTapeForSale = isAvailable && this.forSale;
+    for (const part of [...this.shopTape, this.priceIcon, this.priceText]) part.setVisible(isTapeForSale);
+    if (isAvailable) {
+      vcr.tape.setInteractive({ useHandCursor: true });
+      vcr.body.setInteractive();
+    } else {
+      vcr.tape.disableInteractive();
+      vcr.body.disableInteractive();
+    }
+    if (isTapeForSale) this.shopTape[0].setInteractive({ useHandCursor: true });
+    else this.shopTape[0].disableInteractive();
+  }
+
+  /** Ящик и видеомагнитофон на нём с кассетой, свечением, лампочкой и знаками в окошке. */
+  private buildVcr(hint: Hint, use: () => void): VcrParts {
+    const scene = this.scene;
+    createVcrTexture(scene, VCR.width, VCR.height);
+    createCrateTexture(scene, VCR_CRATE.width, VCR_CRATE.height);
+
+    // Кассета создаётся раньше корпуса: вставленная, она уходит за его лицевую панель.
+    const crate = scene.add.image(VCR_CRATE.x, VCR_CRATE.y, CRATE_TEXTURE);
+    const glow = scene.add
       .rectangle(TAPE_ON_VCR.x, TAPE_ON_VCR.y, TAPE_SIZE.width + 2 * GLOW_PAD, TAPE_SIZE.height + 2 * GLOW_PAD, LAMP_GOLD, 0.35)
       .setRounded(8)
       .setStrokeStyle(2, LAMP_GOLD)
       .setVisible(false);
-    this.vcrTape = scene.add.image(TAPE_ON_VCR.x, TAPE_ON_VCR.y, TAPE_TEXTURE).setVisible(false);
-    this.vcrTape.setInteractive({ useHandCursor: true });
-    attachHint(this.vcrTape, hint, () => [t('tape'), this.tapeText()], use);
-    this.vcrReels = this.addReels(TAPE_ON_VCR.x, TAPE_ON_VCR.y).map((reel) => reel.setVisible(false));
-    const vcr = scene.add.image(VCR.x, VCR.y, VCR_TEXTURE).setInteractive();
-    attachHint(vcr, hint, () => [t('vcr'), this.vcrText()], use);
-    this.recLamp = scene.add.circle(VCR.x + VCR_REC_LAMP.dx, VCR.y + VCR_REC_LAMP.dy, REC_RADIUS, REC_OFF);
-    this.windowSign = scene.add
+    const tape = scene.add.image(TAPE_ON_VCR.x, TAPE_ON_VCR.y, TAPE_TEXTURE).setVisible(false);
+    tape.setInteractive({ useHandCursor: true });
+    attachHint(tape, hint, () => [t('tape'), this.tapeText()], use);
+    const reels = this.addReels(TAPE_ON_VCR.x, TAPE_ON_VCR.y).map((reel) => reel.setVisible(false));
+    const body = scene.add.image(VCR.x, VCR.y, VCR_TEXTURE).setInteractive();
+    attachHint(body, hint, () => [t('vcr'), this.vcrText()], use);
+    const lamp = scene.add.circle(VCR.x + VCR_REC_LAMP.dx, VCR.y + VCR_REC_LAMP.dy, REC_RADIUS, REC_OFF);
+    const windowSign = scene.add
       .image(VCR.x + VCR_WINDOW.dx, VCR.y + VCR_WINDOW.dy, REWIND_SIGN_TEXTURE)
       .setScale(WINDOW_SIGN_SCALE)
       .setTint(WINDOW_SIGN_TINT)
       .setVisible(false);
-    this.playMark = scene.add
+    const playMark = scene.add
       .image(VCR.x + VCR_WINDOW.dx, VCR.y + VCR_WINDOW.dy, PLAY_SIGN_TEXTURE)
       .setScale(WINDOW_SIGN_SCALE)
       .setTint(PLAY_MARK_TINT)
       .setAlpha(PLAY_MARK_ALPHA);
+    return { crate, body, glow, tape, reels, lamp, windowSign, playMark };
   }
 
   /** Две катушки в окошке кассеты с серединой (x, y). */
@@ -175,11 +237,12 @@ export class Cassette {
     this.shake([this.priceText], [SAVE_TAPE.x - 6]);
   }
 
-  /** Кассету купили: билеты летят с табло в неё, она уезжает вправо — к видеомагнитофону у монитора — и ложится на него. */
+  /** Кассету купили: из шапки панели в неё летят билеты, она уезжает вправо — за кромку панели, к видеомагнитофону у монитора — и ложится на него. */
   sell(): void {
+    this.forSale = false; // на панели её больше не продают
     const [tape] = this.shopTape;
     for (let index = 0; index < TICKETS_FLYING; index++) {
-      const ticket = this.scene.add.image(BOARD_TICKET_X, DISPLAY.y, TICKET_TEXTURE).setDepth(CHIP_DEPTH);
+      const ticket = this.scene.add.image(SHOP_HUD.ticketX, SHOP_HUD.y, TICKET_TEXTURE).setDepth(SHOP_FLY_DEPTH);
       this.scene.tweens.add({
         targets: ticket,
         x: tape.x,
@@ -195,7 +258,7 @@ export class Cassette {
     for (const part of [this.priceIcon, this.priceText]) part.setVisible(false);
     this.scene.tweens.add({
       targets: this.shopTape,
-      x: `+=${VIEW_WIDTH}`, // за край вида — туда, где стоит видеомагнитофон
+      x: `+=${SHOP_PANEL_RIGHT + TAPE_SIZE.width / 2 - tape.x}`, // за правую кромку панели: кассета уходит вместе с жалюзи, а не сквозь товары
       alpha: 0,
       delay: TICKETS_FLYING * PAY_STAGGER + PAY_FLY_TIME,
       duration: LEAVE_TIME,
@@ -203,7 +266,7 @@ export class Cassette {
       onComplete: () => this.hideShopTape(),
     });
     this.isOnVcr = true;
-    for (const part of [this.vcrTape, ...this.vcrReels]) part.setVisible(true);
+    for (const part of [this.vcr.tape, ...this.vcr.reels]) part.setVisible(true);
   }
 
   /** Кассеты в магазине больше нет: куплена или уже израсходована. */
@@ -219,20 +282,21 @@ export class Cassette {
    * потом она выезжает обратно и переезжает из REC в PLAY.
    */
   record(): void {
+    const vcr = this.vcr;
     this.isRecorded = true;
     this.isMoving = true;
     this.showUsable(false); // пока кассета вставлена и переезжает, не светится
-    const tape = [this.vcrTape, ...this.vcrReels];
+    const tape = [vcr.tape, ...vcr.reels];
     this.scene.tweens.add({ targets: tape, y: `+=${TAPE_SIZE.height}`, duration: INSERT_TIME, ease: 'Quad.easeIn' });
-    this.scene.tweens.add({ targets: this.vcrReels, angle: 360, duration: REEL_TURN_TIME, repeat: 1 });
-    this.recLamp.setFillStyle(REC_ON);
+    this.scene.tweens.add({ targets: vcr.reels, angle: 360, duration: REEL_TURN_TIME, repeat: 1 });
+    vcr.lamp.setFillStyle(REC_ON);
     this.scene.tweens.add({
-      targets: this.recLamp,
+      targets: vcr.lamp,
       alpha: 0.2,
       duration: REC_BLINK_TIME,
       yoyo: true,
       repeat: REC_BLINKS - 1,
-      onComplete: () => this.recLamp.setFillStyle(REC_OFF).setAlpha(1),
+      onComplete: () => vcr.lamp.setFillStyle(REC_OFF).setAlpha(1),
     });
     this.scene.tweens.add({ targets: tape, y: `-=${TAPE_SIZE.height}`, delay: INSERT_TIME + RECORD_TIME, duration: EJECT_TIME, ease: 'Back.easeOut' });
     this.scene.tweens.add({
@@ -251,19 +315,22 @@ export class Cassette {
   /** Можно ли воспользоваться кассетой (записать или вставить): да — она светится (свечение пульсирует); нет — свечение гаснет. */
   showUsable(isUsable: boolean): void {
     this.wantsUsable = isUsable;
+    if (!this.available) return; // механики ещё нет — светиться нечему
+    const vcr = this.vcr;
     if (this.isMoving && isUsable) return; // дождёмся, пока кассета доедет
     if (isUsable === this.isUsable) return;
     this.isUsable = isUsable;
-    this.scene.tweens.killTweensOf(this.glow);
-    this.glow.setX(this.tapeX).setVisible(isUsable).setAlpha(1);
+    this.scene.tweens.killTweensOf(vcr.glow);
+    vcr.glow.setX(this.tapeX).setVisible(isUsable).setAlpha(1);
     if (!isUsable) return;
-    this.scene.tweens.add({ targets: this.glow, alpha: GLOW_MIN, duration: GLOW_TIME, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    this.scene.tweens.add({ targets: vcr.glow, alpha: GLOW_MIN, duration: GLOW_TIME, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
   }
 
-  /** Сейчас нельзя ни записать, ни вставить (идёт прокрутка, рулетка…) — кассета трясётся. */
+  /** Сейчас нельзя ни записать, ни вставить (идёт прокрутка, спасение…) — кассета трясётся. */
   denyUse(): void {
-    if (this.isMoving) return;
-    this.shake([this.vcrTape, ...this.vcrReels], [this.tapeX, this.tapeX - TAPE_REEL_DX, this.tapeX + TAPE_REEL_DX]);
+    if (!this.available || this.isMoving) return;
+    const vcr = this.vcr;
+    this.shake([vcr.tape, ...vcr.reels], [this.tapeX, this.tapeX - TAPE_REEL_DX, this.tapeX + TAPE_REEL_DX]);
   }
 
   /**
@@ -274,9 +341,10 @@ export class Cassette {
     this.isMoving = false;
     this.showUsable(false);
     this.isOnVcr = false;
-    const tape = [this.vcrTape, ...this.vcrReels];
+    const vcr = this.vcr;
+    const tape = [vcr.tape, ...vcr.reels];
     this.scene.tweens.killTweensOf(tape);
-    this.scene.tweens.add({ targets: this.vcrReels, angle: -360, duration: REEL_TURN_TIME, repeat: 1 });
+    this.scene.tweens.add({ targets: vcr.reels, angle: -360, duration: REEL_TURN_TIME, repeat: 1 });
     this.scene.tweens.add({
       targets: tape,
       y: `+=${TAPE_SIZE.height}`,
@@ -289,11 +357,12 @@ export class Cassette {
 
   /** Плёнка перематывается: «◀◀» мигает в окошке и в углу вида, полосы помех, тряска; потом вид гаснет — done(). */
   private playBackwards(done: () => void): void {
+    const vcr = this.vcr;
     const sign = this.addScreenSign(REWIND_SIGN_TEXTURE);
-    this.playMark.setVisible(false);
-    this.windowSign.setVisible(true);
+    vcr.playMark.setVisible(false);
+    vcr.windowSign.setVisible(true);
     this.eatTape();
-    this.scene.tweens.add({ targets: [sign, this.windowSign], alpha: 0.3, duration: SIGN_BLINK_TIME, yoyo: true, repeat: -1 });
+    this.scene.tweens.add({ targets: [sign, vcr.windowSign], alpha: 0.3, duration: SIGN_BLINK_TIME, yoyo: true, repeat: -1 });
     this.addNoise();
     const camera = this.scene.cameras.main;
     camera.shake(REWIND_TIME, REWIND_SHAKE);

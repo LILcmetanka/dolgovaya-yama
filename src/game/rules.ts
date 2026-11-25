@@ -8,6 +8,12 @@ import { GAME_CONFIG } from './gameConfig';
 
 /** Сколько прокруток даётся на один раунд. */
 export const SPINS_PER_ROUND = GAME_CONFIG.spinsPerRound;
+/**
+ * Потолок прокруток в раунде. Колокольчик 🔔 за каждый паттерн из 🔔 и буст «колокола» (вес ×2) добавляют прокрутки
+ * быстрее, чем они тратятся, — без потолка раунд не кончается никогда (симуляция шага 63а: 3000 забегов, на 10-м раунде
+ * прокруток уже 61 при двух колокольчиках). Потолок виден только в очень удачном раунде.
+ */
+export const MAX_SPINS_PER_ROUND = 30;
 /** Долг первого раунда. */
 export const DEBT_START = GAME_CONFIG.debtStart;
 /** Во сколько раз долг растёт с каждым раундом. */
@@ -18,17 +24,40 @@ export const DEBT_ROUND_TO = 10;
 export const MULTIPLIER_STEP = GAME_CONFIG.multiplierStep;
 /** Какую долю серии оставляет «забрать»: множитель не падает до ×1, а уменьшается вдвое. */
 export const TAKE_KEEPS_STREAK = GAME_CONFIG.takeKeepsStreak;
+/**
+ * Какую долю серии оставляет череп — «мягкий сброс» по багу 11 (решение 15.11.2026).
+ * Замер `full-run.mjs`, 300 забегов, сид 1: новое правило — 10+ долгов у 71%, 1 млн у 14%;
+ * старое обнуление на том же симуляторе — 63% и 10%.
+ */
+export const SKULL_KEEPS_STREAK = 1 / 3;
 /** Сетка автомата: 5 столбцов и 3 ряда. */
 export const GRID_COLUMNS = 5;
 export const GRID_ROWS = 3;
-/** Вес черепа в первом раунде: около 3 черепов на экране и паттерн из черепов в ~16% прокруток. */
+/** Вес черепа в данных символов — справочное число: долю клеток задаёт skullShare (см. weightsForRound). */
 export const SKULL_WEIGHT = GAME_CONFIG.skullWeight;
 /**
- * Дальше череп держит ту же долю клеток, ~21,5%: когда в автомат входят новые символы, его вес растёт вместе с ними
- * (иначе черепов становится меньше, и игра делается спокойнее). Вес черепа = сумма весов остальных × SKULL_RATIO.
+ * Доля клеток-черепов в раунде: со skullShareStart растёт на skullShareGrowth за раунд и упирается в skullShareCap.
+ * Замечание 19: раньше доля была постоянной (~21,5%), и черепа не пугали по-новому — игрок не видел, что стало хуже.
+ * Рост откатывает только чеснок (🧄 ×0,5 к весу до конца раунда, items.ts); новых предметов и полей в RunSave нет —
+ * доля целиком выводится из номера раунда, поэтому кассета и забег заново её не ломают.
  */
-const FIRST_ROUND_OTHERS = 95; // сумма весов остальных символов первого раунда: 30 + 25 + 18 + 13 + 9
-export const SKULL_RATIO = SKULL_WEIGHT / FIRST_ROUND_OTHERS;
+export function skullShare(round: number): number {
+  const grown = GAME_CONFIG.skullShareStart + GAME_CONFIG.skullShareGrowth * (round - 1);
+  return Math.min(GAME_CONFIG.skullShareCap, Math.max(GAME_CONFIG.skullShareMin, grown));
+}
+
+/**
+ * Вес черепа из доли клеток: если черепов доля s, то вес = сумма весов остальных × s/(1−s) — тогда и в клетках
+ * доля ровно s, какого бы размера ни был автомат. Старая постоянная доля 26/121 ≈ 0,215 даёт 26/95 — прежнее
+ * SKULL_RATIO, так правка воспроизводит поведение до замечания 19 (0,215 — это старая доля, не нынешняя).
+ * Долю клампим: 0 или 1 дали бы вес 0 или ∞ — такой вызов не должен ломать прокрутку.
+ */
+export function skullRatioFromShare(share: number): number {
+  // Верхний край — чуть ниже 1: 1 дала бы ∞. Потолок нарочно высокий, чтобы поднятый skullShareCap
+  // считался честно, а не молча упирался в прежние 0,6.
+  const safe = Math.min(Math.max(share, 0.01), 1 - 1e-6);
+  return safe / (1 - safe);
+}
 
 /** Символ в клетке сетки. */
 export interface SlotSymbol {
@@ -40,6 +69,11 @@ export interface SlotSymbol {
   unlockRound: number; // с какого раунда символ есть в автомате: 1 — с самого начала
   isEvil?: boolean; // злой символ или кубик Дилера: новость о нём красная — «ВНИМАНИЕ»
 }
+
+/**
+ * Джокер 🃏 заменяет в паттерне любой платящий символ. Вынесен в константу: подмена (шаг 63б) ставит его в клетку сетки.
+ */
+export const JOKER: SlotSymbol = { id: 'joker', sign: '🃏', color: 0x312e81, weight: 8, price: 0, unlockRound: 3 };
 
 /**
  * Все символы автомата. Череп ничего не платит: паттерн из черепов сжигает кон (см. patterns.ts).
@@ -57,7 +91,7 @@ export const SYMBOLS: SlotSymbol[] = [
   { id: 'diamond', sign: '💎', color: 0x22d3ee, weight: 13, price: 15, unlockRound: 1 },
   { id: 'crown', sign: '👑', color: 0xca8a04, weight: 10, price: 0, unlockRound: 9 }, // 3 и больше на экране — бесплатные прокрутки (bonus.ts)
   { id: 'seven', sign: '7', color: 0xa855f7, weight: 9, price: 25, unlockRound: 1 },
-  { id: 'joker', sign: '🃏', color: 0x312e81, weight: 8, price: 0, unlockRound: 3 },
+  JOKER,
   { id: 'ticket', sign: '🎟', color: 0xb45309, weight: 6, price: 0, unlockRound: 2 }, // в клетке — не эмодзи, а красный билет, как на табло (decor.ts)
   { id: 'dice', sign: '🎲', color: 0x9d174d, weight: 2, price: 0, unlockRound: 4, isEvil: true },
   { id: 'spider', sign: '🕷', color: 0x3f3f46, weight: 6, price: 0, unlockRound: 6, isEvil: true },
@@ -122,15 +156,16 @@ export type WeightOf = (symbol: SlotSymbol) => number;
 const BASE_WEIGHT: WeightOf = (symbol) => (isUnlocked(symbol, 1) ? symbol.weight : 0);
 
 /**
- * Обычные веса в раунде round: символов, которых ещё нет в автомате, не бывает, череп держит свою долю клеток.
- * diceWeight — вес кубика в этой прокрутке (он растёт, пока кубик не выпадает; см. evil.ts). Долю черепа кубик не меняет.
+ * Обычные веса в раунде round: символов, которых ещё нет в автомате, не бывает, а долю клеток у черепа задаёт
+ * skullShare(round) — она растёт по раундам (замечание 19). У кубика вес — свой (он растёт, пока кубик не выпадает;
+ * см. evil.ts), и долю черепа кубик не меняет, как и раньше.
  */
 export function weightsForRound(round: number, diceWeight?: number): WeightOf {
   let others = 0;
   for (const symbol of SYMBOLS) {
     if (!isSkull(symbol) && !isDice(symbol) && isUnlocked(symbol, round)) others += symbol.weight;
   }
-  const skullWeight = others * SKULL_RATIO;
+  const skullWeight = others * skullRatioFromShare(skullShare(round));
   return (symbol) => {
     if (!isUnlocked(symbol, round)) return 0;
     if (isSkull(symbol)) return skullWeight;
@@ -165,15 +200,41 @@ export function spinGrid(weightOf: WeightOf = BASE_WEIGHT): Grid {
   return grid;
 }
 
-/** Долг раунда N = DEBT_START × DEBT_GROWTH^(N−1), округлённый до DEBT_ROUND_TO: 30, 50, 100, 170, 310… */
-export function debtForRound(round: number): number {
-  const exact = DEBT_START * DEBT_GROWTH ** (round - 1);
+/**
+ * Долг раунда N = DEBT_START × DEBT_GROWTH^(N−1), округлённый до DEBT_ROUND_TO: 150, 540, 1940, 7000, 25 190…
+ * growthMul — улучшение №7 (шаг 28): долг растёт медленнее (×3,4 вместо ×3,6). Кривая та же, меняется только шаг роста;
+ * без улучшения growthMul = 1 и числа прежние.
+ */
+export function debtForRound(round: number, growthMul = 1): number {
+  const exact = DEBT_START * (DEBT_GROWTH * growthMul) ** (round - 1);
   return Math.round(exact / DEBT_ROUND_TO) * DEBT_ROUND_TO;
 }
 
 /**
- * Множитель прокрутки. streak — серия: +1 за каждую прокрутку без паттерна из черепов; черепа и новый раунд её обнуляют,
- * «забрать» уменьшает (streakAfterTake). 0 → ×1, 1 → ×2, 2 → ×3… (при шаге MULTIPLIER_STEP = 1; амулет «Разгон» делает шаг больше).
+ * Долг первого раунда с поправкой улучшения №6 («стартовый долг −5%»): DEBT_START × mul по тому же округлению.
+ * Дальше долг считается по кривой от раунда — скидка старта на следующие раунды не переезжает.
+ */
+export function startDebt(mul = 1): number {
+  return Math.round((DEBT_START * mul) / DEBT_ROUND_TO) * DEBT_ROUND_TO;
+}
+
+/**
+ * Не хватает ли фишек на долг. Одна дверь для BaseScene.hasEnoughForDebt и Коллектора (шаг 38, `DONTLIKE` п.15):
+ * прощённый долг — это 0, и платить по нему нечего, значит «не хватает» быть не может. Раньше сравнение
+ * `balance >= debt` давало верный ответ случайно; теперь 0 и мусор явно считаются «долга нет»: нулевой долг
+ * не включает GOOD LUCK и раунд спасения, даже если числа долга испортит сделка или сохранение.
+ */
+export function debtShortfall(debt: number, balance: number): boolean {
+  const owed = Number.isFinite(debt) && debt > 0 ? debt : 0;
+  const chips = Number.isFinite(balance) ? Math.max(0, balance) : 0;
+  return owed > chips;
+}
+
+/**
+ * Множитель прокрутки. streak — серия: +1 за каждую прокрутку без паттерна из черепов; черепа оставляют от неё
+ * треть (streakAfterSkull), «забрать» уменьшает (streakAfterTake), а между раундами она сохраняется — новый раунд
+ * начинает с той же серии.
+ * 0 → ×1, 1 → ×2, 2 → ×3… (при шаге MULTIPLIER_STEP = 1; амулет «Разгон» делает шаг больше).
  */
 export function multiplierForStreak(streak: number, step = MULTIPLIER_STEP): number {
   return 1 + streak * step;
@@ -188,7 +249,24 @@ export function streakAfterTake(streak: number): number {
   return Math.floor(streak * TAKE_KEEPS_STREAK);
 }
 
+/**
+ * Серия после черепа: остаётся SKULL_KEEPS_STREAK от неё, с округлением вниз — ×10 → ×4, ×4 → ×2, ×3 → ×1
+ * (числа — множители). Мусор, отрицательное, NaN и Infinity — 0. Почему не «минус одна ступень» — см. SKULL_KEEPS_STREAK.
+ */
+export function streakAfterSkull(streak: number): number {
+  if (!Number.isFinite(streak) || streak <= 0) return 0;
+  return Math.floor(streak * SKULL_KEEPS_STREAK);
+}
+
 /** Сколько прокрутка кладёт на кон: выигрыш паттернов × множитель серии, округлённый до целого. */
 export function winWithMultiplier(win: number, multiplier: number): number {
   return Math.round(win * multiplier);
+}
+
+/**
+ * Прокрутки с бонусом, но не больше потолка за раунд — иначе бонусы обгоняют трату и раунд не кончается никогда.
+ * cap — потолок: MAX_SPINS_PER_ROUND, а с улучшением №3 (шаг 28) — он плюс UPGRADE_SPIN_CAP_BONUS.
+ */
+export function spinsAfterBonus(spinsLeft: number, add: number, cap = MAX_SPINS_PER_ROUND): number {
+  return Math.min(cap, spinsLeft + add);
 }

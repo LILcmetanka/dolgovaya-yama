@@ -1,9 +1,19 @@
 :root {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #f8fafc;
-  background: #000000; /* вокруг игры — чёрное, как тёмная комната, а не синие поля */
+  /* Тон игры — тёмно-коричневый, как нижняя грань кнопок (theme.ts, SCREEN_UI.buttonBottom 0x241a0b):
+     им красится поле вокруг холста, строка состояния и значок на «главном экране». */
+  --game-bg: #241a0b;
+  /* Безопасная зона телефона: «челка», скруглённые углы и домашняя полоска. Значения по умолчанию —
+     0, чтобы на компьютере раскладка не сдвинулась. Читает и CSS (отступы), и игра (safeArea.ts). */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  background: var(--game-bg); /* вокруг игры — тон комнаты, а не синие поля браузера */
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  -webkit-text-size-adjust: 100%; /* поворот телефона не раздувает текст */
 }
 
 * {
@@ -11,27 +21,103 @@
 }
 
 html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden; /* страница не прокручивается: игра занимает всё окно */
+  overscroll-behavior: none; /* и не «оттягивается» за край с обновлением */
+  background: var(--game-bg);
+}
+
 body,
 #app {
   width: 100%;
   height: 100%;
-  margin: 0;
 }
 
 body {
-  overflow: hidden;
+  position: fixed; /* адресная строка телефона не сдвигает игру при прокрутке */
+  inset: 0;
   touch-action: none; /* палец не прокручивает и не масштабирует страницу */
   user-select: none; /* долгое нажатие не выделяет текст… */
   -webkit-user-select: none;
   -webkit-touch-callout: none; /* …и не открывает меню на iPhone */
+  -webkit-tap-highlight-color: transparent; /* и не вспыхивает серым прямоугольником */
 }
 
 /* Игра — на всё окно: Phaser вписывает картинку 16:9 по центру (config.ts, Scale.FIT). */
-#game {
-  width: 100%;
-  height: 100%;
+#app,
+#game,
+canvas {
+  touch-action: none; /* двойной тап не приближает, свайп не листает страницу */
 }
 
 canvas {
   display: block;
+}
+
+/* ---------- «Поверни телефон» ----------
+   Телефон держат стоя — игра 16:9 туда не влезает. Экран поверх всего окна в манере игры: тёмная комната,
+   янтарная надпись LED-шрифтом, аккуратный значок телефона. Показывается только на телефоне в портрете
+   (rotateHint.ts переключает класс is-on); повернул — экран уходит сам. */
+#rotate {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(14px, 4vh, 30px);
+  padding: calc(16px + var(--safe-top)) calc(16px + var(--safe-right)) calc(16px + var(--safe-bottom)) calc(16px + var(--safe-left));
+  background:
+    radial-gradient(120% 90% at 50% 32%, #2b1d0d 0%, #1a1108 55%, #0b0703 100%);
+  color: #fbbf24;
+  text-align: center;
+  cursor: default;
+}
+
+#rotate.is-on {
+  display: flex;
+}
+
+.rotate-icon {
+  width: clamp(64px, 22vh, 132px);
+  height: auto;
+  color: #fbbf24;
+  filter: drop-shadow(0 0 10px rgba(245, 158, 11, 0.55));
+  animation: rotate-tilt 2.4s ease-in-out infinite alternate;
+}
+
+/* Телефон на значке медленно ложится набок и возвращается — и без слов понятно, что делать. */
+@keyframes rotate-tilt {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-90deg); }
+}
+
+.rotate-title {
+  margin: 0;
+  font-family: ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", monospace;
+  font-size: clamp(17px, 5.4vw, 34px);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  line-height: 1.2;
+  color: #fbbf24;
+  text-shadow: 0 0 6px rgba(245, 158, 11, 0.85), 0 0 18px rgba(245, 158, 11, 0.45);
+}
+
+.rotate-sub {
+  margin: 0;
+  font-family: ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", monospace;
+  font-size: clamp(10px, 2.6vw, 16px);
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: rgba(184, 164, 138, 0.75);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rotate-icon {
+    animation: none;
+    transform: rotate(-90deg);
+  }
 }

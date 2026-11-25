@@ -1,17 +1,19 @@
+import { jamGrid, rustColumn } from '../characters';
 import { machineKey, see } from '../codex';
-import { jamGrid, randomCharacter, rustColumn } from '../characters';
+import { machineSpec } from '../machines';
 import type { Grid, WeightOf } from '../rules';
 import { BonusScene } from './BonusScene';
 
 /**
- * Слой характера автомата (числа — в characters.ts). Веса символов и выплаты характера считает RoundScene, долг — ShopScene;
- * здесь — особое правило Ржавого (столбец заедает) и смена автомата: выстрелил — пока ты в магазине, привозят другой.
+ * Слой автомата (спеки и числа — в machines.ts). Веса и выплаты автомата считает RoundScene;
+ * здесь — ржавчина столбца (шанс берётся из спеки; у всех трёх автоматов он 0) и смена автомата:
+ * в начале раунда он может смениться сам (RoundScene.startRound → machineAtRoundStart), тогда новый встаёт
+ * на место через showNewMachine.
  * Между BonusScene и RoundScene: RoundScene и так вырос за 440 строк.
  */
 export abstract class MachineScene extends BonusScene {
   private rustyColumn: number | null = null; // заржавевший столбец: в следующей прокрутке он не крутится
-  private lastGrid: Grid | null = null; // сетка прошлой прокрутки — её символы остаются в заржавевшем столбце
-
+  protected lastGrid: Grid | null = null; // сетка прошлой прокрутки — её символы остаются в заржавевшем столбце
   /** Новый забег: ржавчины нет. */
   protected resetState(): void {
     super.resetState();
@@ -19,11 +21,19 @@ export abstract class MachineScene extends BonusScene {
     this.lastGrid = null;
   }
 
-  /** Сетка прокрутки: заржавевший столбец не крутится — в нём остаются символы прошлой прокрутки. */
-  protected rollGrid(weightOf: WeightOf): Grid {
-    const grid = super.rollGrid(weightOf);
+  /**
+   * Сетка прокрутки: заржавевший столбец не крутится — в нём остаются символы прошлой прокрутки.
+   * canJam = false — спокойная прокрутка: в ней не может быть черепов и кубика, а в заевшем столбце они как раз
+   * и остались бы. Ржавчина в этот ход не заедает — столбец крутится вместе со всеми.
+   */
+  protected rollGrid(weightOf: WeightOf, canUseLuck = true, canJam = true): Grid {
+    const grid = super.rollGrid(weightOf, canUseLuck);
     const column = this.rustyColumn;
     if (column === null || !this.lastGrid) return grid;
+    if (!canJam) {
+      this.clearRust(); // символы прошлой сетки в спокойную прокрутку не пускаем (черепа сожгли бы кон)
+      return grid;
+    }
     this.rustyColumn = null;
     return jamGrid(grid, this.lastGrid, column);
   }
@@ -34,8 +44,8 @@ export abstract class MachineScene extends BonusScene {
    */
   protected rustAfterSpin(grid: Grid): void {
     this.lastGrid = grid;
-    if (this.freeSpins > 0 || this.isLuckyNext || this.spinsLeft === 0) return;
-    const column = rustColumn(this.machine);
+    if (this.freeSpins > 0 || this.luckyClovers > 0 || this.spinsLeft === 0) return;
+    const column = rustColumn(machineSpec(this.machineId).rustChance);
     if (column === null) return;
     this.rustyColumn = column;
     this.screen.showRust(column);
@@ -48,17 +58,21 @@ export abstract class MachineScene extends BonusScene {
     this.screen.clearRust();
   }
 
-  /** Выстрел в автомат: пока ты в магазине, привозят другой — случайный характер, но не тот, что был. Новый долг — уже с ним. */
-  protected changeMachine(): void {
-    this.machine = randomCharacter(this.machine);
+  /**
+   * На место встал новый автомат (в начале раунда он сменился сам): корпус его цвета, значок и UPDATE на мониторе.
+   * Новость на стекле — отдельно, announceMachine: её показывают с задержкой, чтобы она не снесла новость фазы
+   * (на стекле живёт одна новость за раз). Зовёт RoundScene.startRound.
+   */
+  protected showNewMachine(): void {
+    const machine = machineSpec(this.machineId);
+    this.machineBadge.arrive(machine);
+    see(machineKey(this.machineId));
+    this.monitor.notify('update'); // на экране на стене — жёлтое UPDATE, в «Кто есть кто» появился автомат
   }
 
-  /** Новый автомат встал на место разбитого: корпус его цвета, значок, на стекле — значок и название. */
-  protected showNewMachine(): void {
-    this.machineBadge.arrive(this.machine);
-    see(machineKey(this.machine.id));
-    this.monitor.notify('update'); // на экране на стене — жёлтое UPDATE, в «Кто есть кто» появился автомат
-    this.screen.announceMachine(this.machine);
+  /** Новость о новом автомате: на стекле его значок и название. */
+  protected announceMachine(): void {
+    this.screen.announceMachine(machineSpec(this.machineId));
     this.sfx.play('news', 0.3);
   }
 }

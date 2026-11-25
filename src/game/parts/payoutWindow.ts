@@ -1,5 +1,13 @@
 import Phaser from 'phaser';
-import { CHIP_TEXTURE, createChipTextures, createTakeButtonTextures, TAKE_BEZEL_TEXTURE, TAKE_DOME_TEXTURE, TAKE_SHINE_TEXTURE } from '../decor';
+import {
+  CHIP_TEXTURE,
+  createChipTextures,
+  createTakeButtonTextures,
+  TAKE_BEZEL_SIZE,
+  TAKE_BEZEL_TEXTURE,
+  TAKE_DOME_TEXTURE,
+  TAKE_SHINE_TEXTURE,
+} from '../decor';
 import { BOARD_CHIP_X, DISPLAY } from '../layout';
 import {
   addText,
@@ -16,12 +24,15 @@ import {
 } from '../theme';
 
 // Что где в окошке.
-const CHIP_X = 452; // фишка слева от суммы
+const CHIP_X = 541; // фишка слева от суммы
 const CHIP_Y = 552; // фишка и «× 400» — посередине окошка
-const PAYOUT_TEXT_X = 474; // «× 400» — правее фишки
+const PAYOUT_TEXT_X = 563; // «× 400» — правее фишки
+const PAYOUT_TEXT_SIZE = 26; // сумма в окошке
 // Кнопка «забрать» на самом табло — небольшая кнопка в металлической оправе без слов: купол светится золотым (черепа — красным).
-const BUTTON_X = 664;
+const BUTTON_X = 753;
 const BUTTON_Y = 552;
+// Левый край оправы кнопки с зазором 4 px: докуда доводить полосу спасения, чтобы не накрыть саму кнопку.
+export const TAKE_BEZEL_LEFT = BUTTON_X - (TAKE_BEZEL_SIZE / 2 + 4); // 731
 const BUTTON_GLOW_RADIUS = 24; // мягкое свечение вокруг кнопки
 const BUTTON_GLOW_ALPHA = 0.25;
 const BUTTON_HIT_SIZE = 46; // нажимать можно чуть шире самой кнопки
@@ -40,6 +51,10 @@ const AMOUNT_FLY_TIME = 500; // «+36» летит в табло
 const AMOUNT_FADE_DELAY = 350; // через столько «+36» начинает таять
 const BUTTON_PRESS_SCALE = 0.85; // нажатая кнопка чуть уменьшается — «вдавливается»
 const BURN_COLOR = 0xff5a1f; // фишка в окошке горит огнём
+// Подсветка кнопки «забрать» в обучении: мягкий пульс свечения и лёгкий масштаб купола.
+const HIGHLIGHT_GLOW_ALPHA = 0.7; // свечение разгорается до этой яркости
+const HIGHLIGHT_DOME_SCALE = 1.08; // купол чуть увеличивается
+const HIGHLIGHT_TIME = 600; // половина пульса, мс
 
 /** Сколько фишек летит в табло: одна и ещё по одной за каждый порог CHIP_STEPS. */
 function chipsForPot(pot: number, debt: number): number {
@@ -60,6 +75,8 @@ export class PayoutWindow {
   private readonly buttonDome: Phaser.GameObjects.Image; // купол — краснеет вместе с суммой при черепах
   private flyingChips = 1; // сколько фишек полетит при «забрать»
   private isLit = false; // окошко горит (или загорается)
+  private pot = 0; // что сейчас на кону
+  private highlightTweens: Phaser.Tweens.Tween[] = []; // пульс кнопки «забрать» в обучении
 
   /** take — что делать, когда нажали кнопку «забрать» (Enter сцена ловит сама). */
   constructor(scene: Phaser.Scene, take: () => void) {
@@ -70,8 +87,8 @@ export class PayoutWindow {
     // Погашенная кнопка: пустая оправа с тёмным гнездом — видно, где она, но не горит. Не интерактивна.
     scene.add.image(BUTTON_X, BUTTON_Y, TAKE_BEZEL_TEXTURE);
     this.chip = scene.add.image(CHIP_X, CHIP_Y, CHIP_TEXTURE);
-    this.payoutText = addText(scene, PAYOUT_TEXT_X, CHIP_Y, '', { ...LED_STYLE, fontSize: '26px' }).setOrigin(0, 0.5);
-    this.buttonGlow = scene.add.circle(0, 0, BUTTON_GLOW_RADIUS, LAMP_GOLD, BUTTON_GLOW_ALPHA);
+    this.payoutText = addText(scene, PAYOUT_TEXT_X, CHIP_Y, '', { ...LED_STYLE, fontSize: `${PAYOUT_TEXT_SIZE}px` }).setOrigin(0, 0.5);
+    this.buttonGlow = scene.add.circle(0, 0, BUTTON_GLOW_RADIUS, LAMP_GOLD, 1).setAlpha(BUTTON_GLOW_ALPHA); // яркость свечения — alpha объекта
     this.buttonDome = scene.add.image(0, 0, TAKE_DOME_TEXTURE).setTint(LAMP_GOLD);
     const shine = scene.add.image(BUTTON_SHINE_OFFSET.x, BUTTON_SHINE_OFFSET.y, TAKE_SHINE_TEXTURE).setAngle(-25);
     this.button = scene.add.container(BUTTON_X, BUTTON_Y, [this.buttonGlow, this.buttonDome, shine]);
@@ -83,22 +100,65 @@ export class PayoutWindow {
   }
 
   /**
-   * Окошко показывает кон: есть что забрать — горят «× сумма» и кнопка, нет — гаснет.
+   * Окошко показывает кон: есть что забрать — горят «× сумма» и кнопка, иначе гаснет.
    * Сцена зовёт это при каждом обновлении приборов, поэтому окошко не останется погашенным, когда на кону что-то есть.
    */
   showPot(pot: number, debt: number): void {
+    this.pot = pot;
     if (pot === 0) {
       this.turnOff(0);
       return;
     }
-    this.payoutText.setText(`× ${pot}`);
+    this.paintText();
     this.flyingChips = chipsForPot(pot, debt);
     this.turnOn();
   }
 
-  /** Пока крутится или идёт расплата — кнопка тусклее. */
+  /** Сумма в окошке: «× 400». */
+  private paintText(): void {
+    this.payoutText.setFontSize(PAYOUT_TEXT_SIZE);
+    this.payoutText.setText(`× ${this.pot}`);
+  }
+
+  /** Пока крутится или идёт расплата — кнопка тусклее. Подсветка обучения при этом снимается. */
   setEnabled(enabled: boolean): void {
+    if (!enabled) this.highlightTake(false);
     this.button.setAlpha(enabled ? 1 : 0.5);
+  }
+
+  /**
+   * Подсветка «забрать» в обучении: свечение мягко пульсирует, купол чуть дышит. on = false — остановить
+   * и вернуть исходный вид (свечение BUTTON_GLOW_ALPHA, купол масштаба 1).
+   */
+  highlightTake(on: boolean): void {
+    this.stopHighlight();
+    if (!on) return;
+    this.highlightTweens = [
+      this.scene.tweens.add({
+        targets: this.buttonGlow,
+        alpha: { from: BUTTON_GLOW_ALPHA, to: HIGHLIGHT_GLOW_ALPHA },
+        duration: HIGHLIGHT_TIME,
+        yoyo: true,
+        repeat: -1,
+      }),
+      this.scene.tweens.add({
+        targets: this.buttonDome,
+        scale: { from: 1, to: HIGHLIGHT_DOME_SCALE },
+        duration: HIGHLIGHT_TIME,
+        yoyo: true,
+        repeat: -1,
+      }),
+    ];
+  }
+
+  /** Снять подсветку «забрать» и вернуть кнопке исходный вид. */
+  private stopHighlight(): void {
+    if (this.highlightTweens.length === 0) return;
+    this.scene.tweens.killTweensOf(this.buttonGlow);
+    this.scene.tweens.killTweensOf(this.buttonDome);
+    this.highlightTweens = [];
+    this.buttonGlow.setAlpha(BUTTON_GLOW_ALPHA);
+    this.buttonDome.setScale(1);
   }
 
   /** Кнопка коротко вдавливается. */
@@ -145,9 +205,9 @@ export class PayoutWindow {
     });
   }
 
-  /** Кнопка светится этим цветом: золотой — можно забрать, красный — черепа. */
+  /** Кнопка светится этим цветом: золотой — можно забрать, красный — черепа. Яркость свечения держит alpha объекта. */
   private paintButton(color: number): void {
-    this.buttonGlow.setFillStyle(color, BUTTON_GLOW_ALPHA);
+    this.buttonGlow.setFillStyle(color, 1);
     this.buttonDome.setTint(color);
   }
 

@@ -1,7 +1,12 @@
 // Шаг 45: кассета «когда хочешь» — цена × когда покупать × когда записывать и откатываться.
-// Запуск из этой папки: for i in $(seq 0 23); do node --import ./ts-resolve.mjs tape45-sim.mjs $i 20000 > /tmp/.../t45_$i.txt & done; wait
+// УСТАРЕЛО (2026-11-13): симулятор переписан под текущие правила. `econ.tapeOnce: false` ещё работает
+// («сколько угодно кассет»), а `tapeAnytime` больше не читается: запись — ручное действие между прокрутками,
+// то есть всегда «когда хочешь». Поэтому варианты с `any(price)` различаются только ценой.
+// Запуск из этой папки: for i in $(seq 0 23); do node --import ./ts-resolve.mjs tape45-sim.mjs $i 200 > /tmp/.../t45_$i.txt & done; wait
+// С сидом (прогон повторяется): SIM_SEED=1 node --import ./ts-resolve.mjs tape45-sim.mjs 2 200
+// (200, не 20000: забеги после шага 68б длятся десятки раундов, 20 000 забегов идут часами)
 import { BASE_STRATEGY as B, defaultEcon, summarize, report } from './full-run.mjs';
-const any = (price) => ({ tapePrice: price, tapeOnce: false, tapeAnytime: true });
+const any = (price) => ({ tapePrice: price, tapeOnce: false });
 const prices = { 'всегда 2': () => 2, 'всегда 3': () => 3, '2,3,4…': (b) => 2 + b, '3,4,5…': (b) => 3 + b, '1 + долги': (b, c) => 1 + c };
 const players = {
   'сразу, запись в начале': { ...B, rec: 'start' },

@@ -1,17 +1,32 @@
 import { cellsOf } from './evil';
-import { evaluateGrid, PATTERNS, placements, type SpinResult } from './patterns';
-import { isDice, isPaying, isSkull, randomSymbol, spinGrid, type Grid, type SlotSymbol, type WeightOf } from './rules';
+import { evaluateGrid, PATTERNS, placements, type Pattern, type SpinResult } from './patterns';
+import { isPaying, isSkull, randomSymbol, spinGrid, type Grid, type SlotSymbol, type WeightOf } from './rules';
 
 /**
  * Удача: корона, клевер и джекпот — что они дают, когда выпали. Без Phaser.
  * 👑 корона: CROWNS_FOR_FREE_SPINS и больше на экране (где угодно) — бесплатные прокрутки, как фриспины в казино:
- * крутятся сами, черепов в них нет (и кубика: Дилер их не прерывает). Лампочки прокруток они не тратят.
+ * крутятся сами, черепов, кубика, пауков, замков и крови в них нет — прокрутка полностью чистая (так решил автор:
+ * короны стали сильнее, поэтому их и стало меньше — 3/4/6). Лампочки прокруток они не тратят.
+ * Бесплатная прокрутка тоже может дать короны — цепочка разрешена, игрового потолка за раунд нет (решение автора):
+ * сколько корон выпало, столько прокруток короны и дают. От зацикливания раунда держит только технический
+ * предохранитель FREE_SPINS_GUARD — он игроку не виден.
  * 🍀 клевер: следующая прокрутка — наверняка с паттерном: любой из паттернов на стекле, от ряда из 3 до джекпота.
+ * Клеверов на экране может быть несколько, и они стакаются: один — равные шансы, два — сильные паттерны чаще,
+ * три и больше — ещё чаще (cloverPatternWeight). Удача тратится на одну прокрутку целиком.
  * Джекпот: кроме фишек — ещё билеты и прокрутки.
  */
 
 export const CROWNS_FOR_FREE_SPINS = 3; // столько корон на экране (или больше) — бесплатные прокрутки
-export const FREE_SPINS = [5, 8, 12]; // сколько бесплатных прокруток за 3, 4 и 5 (и больше) корон
+export const FREE_SPINS = [3, 4, 6]; // сколько бесплатных прокруток за 3, 4 и 5 (и больше) корон
+/**
+ * Технический предохранитель от зависания раунда, а не игровое правило: столько бесплатных прокруток за раунд —
+ * предел. Он игроку не виден (ни попапа, ни рамок), а срабатывание в консоли — console.warn('free spins guard').
+ * Игрового потолка за раунд нет (решение автора): короны дают все прокрутки, что положены за выпавшие короны.
+ * Предохранитель нужен на случай, если цепочка «бесплатная прокрутка даёт короны» не сойдётся (так было с «удачей»,
+ * 👑 вес ×2, при старом потолке 25): тогда раунд кончится штатно, а не будет крутиться вечно. Число сверялось
+ * симуляцией (full-run.mjs): до 500 цепочка доходит редко — в 2–3 % забегов, и без предела она бы не кончилась.
+ */
+export const FREE_SPINS_GUARD = 500;
 export const JACKPOT_TICKETS = 2; // джекпот: столько билетов…
 export const JACKPOT_SPINS = 3; // …и столько прокруток
 const LUCKY_TRIES = 100; // клевер: сколько раз перекрутить, пока паттерн не засчитается (обычно хватает одной-двух)
@@ -27,32 +42,70 @@ export function countCrowns(grid: Grid): number {
   return cellsOf(grid, 'crown').length;
 }
 
-/** Есть ли на сетке клевер: тогда следующая прокрутка — с паттерном наверняка. */
-export function hasClover(grid: Grid): boolean {
-  return cellsOf(grid, 'clover').length > 0;
+/** Сколько клеверов на сетке: от их числа зависит, какой паттерн выберет удача (стакинг, DONTLIKE п. 17). */
+export function countClovers(grid: Grid): number {
+  return cellsOf(grid, 'clover').length;
 }
 
-/** Вес символа в бесплатной прокрутке: черепов и кубика нет — она крутится сама, без риска и без Дилера. */
+// вес паттерна растёт с числом клеверов, но множитель выше 4 не считается:
+// иначе джекпот (×100) съедал бы всю удачу уже при двух клеверах
+const CLOVER_MULTIPLIER_CAP = 4;
+
+/** Поправка к весу паттерна в удаче: на входе обычный вес, на выходе вес с поправкой (сделка №7). */
+export type PatternWeight = (pattern: Pattern, weight: number) => number;
+
+/**
+ * Вес паттерна в удаче при clovers клеверах. Чем больше клеверов, тем чаще сильные паттерны:
+ * один клевер — у всех паттернов вес 1 (равные шансы, как было), дальше вес растёт как множитель паттерна в степени.
+ */
+export function cloverPatternWeight(pattern: Pattern, clovers: number): number {
+  // 1 клевер — 0, 2 — 1, 3 и больше — 2: выше второй степени выигрыш не растёт.
+  // Клеверы — счётчик с сетки, но степень берём от целого: 2,5 не должно давать 4^1,5 между ступенями.
+  const boost = Math.max(0, Math.min(Math.floor(clovers), 3) - 1);
+  return Math.pow(Math.min(pattern.multiplier, CLOVER_MULTIPLIER_CAP), boost);
+}
+
+/** Вес символа в бесплатной прокрутке: она полностью чистая — ни черепов, ни кубика Дилера, ни пауков, замков и крови. */
 export function freeSpinWeight(symbol: SlotSymbol, weight: number): number {
-  return isSkull(symbol) || isDice(symbol) ? 0 : weight;
+  return isSkull(symbol) || symbol.isEvil ? 0 : weight;
 }
 
 /**
- * Прокрутка после клевера: случайный паттерн со стекла (любой с равным шансом, и джекпот тоже) на случайном месте,
- * из случайного платящего символа (по весам этой прокрутки); остальные клетки выпадают как обычно.
+ * Прокрутка после клевера: паттерн со стекла на случайном месте, из случайного платящего символа (по весам этой прокрутки);
+ * остальные клетки выпадают как обычно. Паттерн выбирается по весам клеверов: с одним — равный шанс, с двумя и больше —
+ * сильные чаще (cloverPatternWeight); джекпот входит в те же веса, отдельного шанса у него нет.
+ * patternWeight — поправка сделки Дилера к весу паттерна (№7: джекпот тяжелее, «чёрные» +1).
  * Если паттерн не засчитался (его столбец заблокировал замок или рядом сложились черепа) — крутим заново.
  */
-export function luckyGrid(weightOf: WeightOf): Grid {
+export function luckyGrid(weightOf: WeightOf, clovers = 1, patternWeight?: PatternWeight): Grid {
+  // Контракт: клеверов меньше одного — удачи нет, сетка обычная. Иначе ноль клеверов тихо давал бы
+  // полноценный паттерн, а это уже не «обычная прокрутка», и ошибку в вызове никто бы не заметил.
+  // NaN проверяем отдельно: `NaN < 1` — false, и он прошёл бы дальше, а pickPattern на пустых весах выдал бы джекпот.
+  if (!Number.isFinite(clovers) || clovers < 1) return spinGrid(weightOf);
   const payingWeight: WeightOf = (symbol) => (isPaying(symbol) ? weightOf(symbol) : 0);
   for (let tries = 1; ; tries++) {
     const grid = spinGrid(weightOf);
-    const pattern = PATTERNS[Math.floor(Math.random() * PATTERNS.length)];
+    const pattern = pickPattern(clovers, patternWeight);
     const places = placements(pattern);
     const cells = places[Math.floor(Math.random() * places.length)];
     const symbol = randomSymbol(payingWeight);
     for (const [row, col] of cells) grid[row][col] = symbol;
     if (evaluateGrid(grid).kind === 'win' || tries >= LUCKY_TRIES) return grid;
   }
+}
+
+/** Паттерн по весам клеверов: сумма весов, случайное число, накопительный проход. Поправка сделки — к каждому весу. */
+function pickPattern(clovers: number, patternWeight?: PatternWeight): Pattern {
+  const weights = PATTERNS.map((pattern) => {
+    const weight = cloverPatternWeight(pattern, clovers);
+    return patternWeight ? patternWeight(pattern, weight) : weight;
+  });
+  let roll = Math.random() * weights.reduce((sum, weight) => sum + weight, 0);
+  for (let i = 0; i < PATTERNS.length; i++) {
+    if (roll < weights[i]) return PATTERNS[i];
+    roll -= weights[i];
+  }
+  return PATTERNS[PATTERNS.length - 1]; // округление в конце: последний паттерн, если число легло на самый край
 }
 
 /** Джекпот ли выпал: все 15 клеток — один символ. */

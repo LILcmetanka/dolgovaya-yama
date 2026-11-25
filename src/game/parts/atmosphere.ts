@@ -1,10 +1,10 @@
 import Phaser from 'phaser';
-import { createAtmosphereTextures, DUST_TEXTURE, SCANLINES_TEXTURE, VIGNETTE_TEXTURE } from '../decor';
-import { ROOM_SIDE, SCREEN, VIEW_CENTER_X, VIEW_WIDTH } from '../layout';
+import { createAtmosphereTextures, DUST_TEXTURE, SCANLINES_TEXTURE, VIGNETTE_TEXTURE, VIGNETTE_RED_TEXTURE } from '../decor';
+import { SCREEN, VIEW_CENTER_X, VIEW_WIDTH } from '../layout';
 
 // Пыль в свете лампы.
 const DUST_COUNT = 18;
-const DUST_AREA = { left: -360 - ROOM_SIDE, right: 960 + ROOM_SIDE, top: 80, bottom: 600 }; // по всей комнате, и слева у магазина
+const DUST_AREA = { left: 0, right: VIEW_WIDTH, top: 80, bottom: 600 }; // по всей комнате: камера стоит на месте, вид — от 0 до VIEW_WIDTH
 const DUST_RISE = { min: 40, max: 90 }; // на столько px пылинка поднимается за свой полёт
 const DUST_TIME = { min: 6000, max: 11000 }; // столько летит, мс
 // Мигание света: свет на миг гаснет.
@@ -13,7 +13,19 @@ const FLICKER_ALPHA = 0.3;
 const FLICKER_TIME = 70;
 // Тёмные края от тревоги.
 const VIGNETTE_MAX_ALPHA = 0.7;
-const ATMOSPHERE_DEPTH = 20; // над игрой, но под подсказкой и экраном DEATH
+const ATMOSPHERE_DEPTH = 20; // вспышка света: над игрой, но под подсказкой и экраном DEATH
+// Тёмные края вида — ПОД панелью магазина (9) и трещинами (8): иначе виньетка съедала правый край панели,
+// и надпись выхода «К СЛОТ-МАШИНЕ ✕» тонула в тени (баг шага 43).
+const VIGNETTE_DEPTH = 7.5;
+// Раунд спасения: красная плёнка на весь вид и пульсирующее свечение по краям.
+// Глубины ниже окна ачивки (13) и деталей планшета (20–23), но выше комнаты и автомата (0–3): красное видно
+// сквозь стекло, а панель планшета и окно ачивки остаются поверх.
+const RESCUE_WASH_DEPTH = 12;
+const RESCUE_VIGNETTE_DEPTH = 12.5;
+const RESCUE_WASH_ALPHA = 0.16;
+const RESCUE_VIGNETTE_ALPHA = 0.9;
+const RESCUE_PULSE_TIME = 900; // полный вдох-выдох свечения, мс
+export const RESCUE_FADE_TIME = 400; // столько гаснет красный режим — и только потом открывается магазин (шаг 32)
 
 /**
  * Атмосфера комнаты: пыль в воздухе, полосы развёртки на экране автомата, иногда мигает свет,
@@ -24,15 +36,51 @@ export class Atmosphere {
   private readonly scene: Phaser.Scene;
   private readonly flash: Phaser.GameObjects.Rectangle; // чёрный слой: свет мигает
   private readonly vignette: Phaser.GameObjects.Image; // тёмные края
+  private readonly redWash: Phaser.GameObjects.Rectangle; // красная плёнка на весь вид (раунд спасения)
+  private readonly redVignette: Phaser.GameObjects.Image; // красное свечение по краям (раунд спасения)
+  private rescuePulse: Phaser.Tweens.Tween | null = null; // пульс свечения; null — свечения нет
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     createAtmosphereTextures(scene, SCREEN);
     scene.add.image(SCREEN.x, SCREEN.y, SCANLINES_TEXTURE); // полосы развёртки поверх сетки
     for (let index = 0; index < DUST_COUNT; index++) this.floatDust(scene.add.image(0, 0, DUST_TEXTURE), true);
-    this.vignette = scene.add.image(0, 0, VIGNETTE_TEXTURE).setOrigin(0).setScrollFactor(0).setAlpha(0).setDepth(ATMOSPHERE_DEPTH);
+    this.vignette = scene.add.image(0, 0, VIGNETTE_TEXTURE).setOrigin(0).setScrollFactor(0).setAlpha(0).setDepth(VIGNETTE_DEPTH);
     this.flash = scene.add.rectangle(VIEW_CENTER_X, 320, VIEW_WIDTH, 640, 0x000000, 1).setScrollFactor(0).setAlpha(0).setDepth(ATMOSPHERE_DEPTH);
+    // Красный режим поверх комнаты и автомата, но под окном ачивки (13), деталями планшета (20–23),
+    // подсказкой (25) и экранами конца забега (30).
+    this.redWash = scene.add.rectangle(VIEW_CENTER_X, 320, VIEW_WIDTH, 640, 0xdc2626, 1).setScrollFactor(0).setAlpha(0).setDepth(RESCUE_WASH_DEPTH);
+    this.redVignette = scene.add.image(0, 0, VIGNETTE_RED_TEXTURE).setOrigin(0).setScrollFactor(0).setAlpha(0).setDepth(RESCUE_VIGNETTE_DEPTH);
     this.scheduleFlicker();
+  }
+
+  /**
+   * Раунд спасения: включить или снять красный режим. Плёнка и свечение проявляются за RESCUE_FADE_TIME;
+   * включённое свечение дышит (альфа ходит вниз-вверх), чтобы экран не был статичной картинкой.
+   */
+  setRescueAlert(isOn: boolean): void {
+    this.scene.tweens.killTweensOf([this.redWash, this.redVignette]);
+    this.rescuePulse?.remove();
+    this.rescuePulse = null;
+    this.scene.tweens.add({ targets: this.redWash, alpha: isOn ? RESCUE_WASH_ALPHA : 0, duration: RESCUE_FADE_TIME });
+    const fade = this.scene.tweens.add({
+      targets: this.redVignette,
+      alpha: isOn ? RESCUE_VIGNETTE_ALPHA : 0,
+      duration: RESCUE_FADE_TIME,
+    });
+    if (isOn) {
+      fade.on('complete', () => {
+        if (this.redVignette.alpha === 0) return; // успели снять режим, пока проявлялось
+        this.rescuePulse = this.scene.tweens.add({
+          targets: this.redVignette,
+          alpha: { from: RESCUE_VIGNETTE_ALPHA, to: RESCUE_VIGNETTE_ALPHA * 0.55 },
+          duration: RESCUE_PULSE_TIME,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+      });
+    }
   }
 
   /** Пылинка медленно поднимается и тает, потом появляется в новом месте. first — первый полёт начинается с середины. */

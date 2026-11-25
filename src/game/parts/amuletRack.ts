@@ -1,6 +1,11 @@
 import Phaser from 'phaser';
-import { amuletTexture, createAmuletTextures, createSocketCapTexture, SOCKET_CAP_TEXTURE } from '../decor';
-import { AMULETS, MAX_SOCKETS, type Amulet, type AmuletId } from '../amulets';
+import {
+  amuletTexture,
+  createAmuletTextures,
+  createSocketCapTexture,
+  SOCKET_CAP_TEXTURE,
+} from '../decor';
+import { AMULETS, countOf, MAX_SOCKETS, type Amulet, type AmuletCounts, type AmuletId } from '../amulets';
 import { t } from '../lang';
 import { AMULET_SIZE, SOCKET_RADIUS, SOCKET_XS, SOCKET_Y } from '../layout';
 import { addText, GOLD_TEXT, POPUP_DEPTH } from '../theme';
@@ -8,11 +13,13 @@ import { attachHint, type Hint } from './tooltip';
 
 // Анимации, мс.
 const FLY_TIME = 550; // купленный амулет летит из витрины в гнездо
+const FLY_FADE = 200; // и гаснет, пройдя к гнезду столько px: гнездо за панелью — амулет уходит за жалюзи, а не летит через витрину
 const CAP_POP_TIME = 500; // заглушка слетает с купленного гнезда
 const TRIGGER_TIME = 140; // амулет сработал: подпрыгивает
 const TRIGGER_SCALE = 1.35;
 const COPY_LABEL_DX = SOCKET_RADIUS; // метка «×N» — настолько левее центра гнезда, чтобы не столкнуться с «+N%»
 const COPY_LABEL_UP = 10; // и настолько выше подписи коллекционера костей (bonesLabel)
+const RESCUE_DIM_ALPHA = 0.35; // в раунде спасения амулеты заморожены: притушены, но стоят в гнёздах
 
 /**
  * Гнёзда для амулетов на верхушке корпуса, по три слева и справа от табло.
@@ -23,6 +30,7 @@ export class AmuletRack {
   private readonly caps: Phaser.GameObjects.Image[] = []; // заглушки закрытых гнёзд
   private readonly badges: Phaser.GameObjects.Image[] = []; // амулет в гнезде; пустое гнездо — картинка скрыта
   private readonly amulets: (Amulet | null)[] = []; // какой амулет в каком гнезде
+  private counts: AmuletCounts = {}; // сколько копий каждого амулета (шаг 62б: дубли не занимают гнёзда)
   private readonly copyLabels: Phaser.GameObjects.Text[] = []; // «×N» под гнездом: сколько копий (видна от двух)
   private readonly bonesLabel: Phaser.GameObjects.Text; // коллекционер костей: «+45%» под его гнездом
 
@@ -63,33 +71,35 @@ export class AmuletRack {
     }).setOrigin(0.5);
   }
 
+  /** Раунд спасения: амулеты заморожены — притушить значки и подписи, не убирая их с корпуса. */
+  setDimmed(isDimmed: boolean): void {
+    const alpha = isDimmed ? RESCUE_DIM_ALPHA : 1;
+    for (const badge of this.badges) badge.setAlpha(alpha);
+    for (const cap of this.caps) cap.setAlpha(alpha);
+    for (const label of this.copyLabels) label.setAlpha(alpha);
+    this.bonesLabel.setAlpha(alpha);
+  }
+
   /** Подсказка гнезда: название амулета (с «×N» при копиях) и что он делает. */
   private hintFor(index: number): [string, string] | null {
     const amulet = this.amulets[index];
     if (!amulet) return null;
-    const copies = this.copiesInRack(amulet.id);
+    const copies = countOf(this.counts, amulet.id);
     const name = copies > 1 ? `${t(amulet.name)} ×${copies}` : t(amulet.name);
     return [name, t(amulet.description)];
   }
 
-  /** Сколько копий амулета id стоит по всем гнёздам. */
-  private copiesInRack(id: AmuletId): number {
-    return this.amulets.filter((amulet) => amulet?.id === id).length;
-  }
-
-  /** Обновить метки «×N» под гнёздами: у каждой копии — её номер среди таких же, метка видна со второй. */
+  /** Обновить метки «×N» под гнёздами: одна на гнездо, по счётчику, видна со второй копии. */
   private refreshCopies(): void {
-    const ordinals = new Map<AmuletId, number>();
     this.amulets.forEach((amulet, index) => {
       const label = this.copyLabels[index];
       if (!amulet) {
         label.setVisible(false);
         return;
       }
-      const ordinal = (ordinals.get(amulet.id) ?? 0) + 1;
-      ordinals.set(amulet.id, ordinal);
-      label.setVisible(ordinal >= 2);
-      if (ordinal >= 2) label.setX(SOCKET_XS[index] - COPY_LABEL_DX).setText(`×${ordinal}`);
+      const copies = countOf(this.counts, amulet.id);
+      label.setVisible(copies >= 2);
+      if (copies >= 2) label.setX(SOCKET_XS[index] - COPY_LABEL_DX).setText(`×${copies}`);
     });
   }
 
@@ -107,29 +117,61 @@ export class AmuletRack {
     });
   }
 
-  /** Купили амулет: он летит из (fromX, fromY) в гнездо index и там встаёт. */
-  putAmulet(index: number, amulet: Amulet, fromX: number, fromY: number): void {
-    this.amulets[index] = amulet;
+  /**
+   * Купили новый амулет: он летит из (fromX, fromY) в свободное гнездо index и там встаёт. count — сколько копий стало.
+   * Гнездо за панелью магазина: амулет гаснет, не долетая, будто уходит за жалюзи.
+   */
+  putAmulet(index: number, amulet: Amulet, count: number, fromX: number, fromY: number): void {
     const badge = this.badges[index];
-    const flying = this.scene.add.image(fromX, fromY, amuletTexture(amulet)).setScale(1.4).setDepth(POPUP_DEPTH);
+    if (!badge) return; // гнезда с таким номером нет — ставить некуда
+    this.amulets[index] = amulet;
+    this.counts[amulet.id] = count;
+    this.flyToBadge(badge, amuletTexture(amulet), fromX, fromY, () => {
+      badge.setTexture(amuletTexture(amulet)).setVisible(true);
+      this.refreshCopies();
+      this.bounce(badge);
+    });
+  }
+
+  /** Купили копию: она летит из (fromX, fromY) в гнездо index уже стоящего амулета — по прилёте только метка и подскок. */
+  putCopy(index: number, amulet: Amulet, count: number, fromX: number, fromY: number): void {
+    const badge = this.badges[index];
+    if (!badge) return; // гнезда с таким номером нет — лететь некуда
+    this.counts[amulet.id] = count;
+    this.flyToBadge(badge, amuletTexture(amulet), fromX, fromY, () => {
+      this.refreshCopies();
+      this.bounce(badge);
+    });
+  }
+
+  /**
+   * Амулет летит из (fromX, fromY) к гнезду и гаснет, пройдя FLY_FADE px пути (или весь путь, если он короче): гнездо
+   * за панелью магазина, и амулет будто уходит за жалюзи. Погас — landed(): гнездо уже занято, остаётся показать.
+   */
+  private flyToBadge(badge: Phaser.GameObjects.Image, texture: string, fromX: number, fromY: number, landed: () => void): void {
+    const distance = badge.x - fromX;
+    const fadeAtX = fromX + Math.sign(distance) * Math.min(FLY_FADE, Math.abs(distance));
+    const flying = this.scene.add.image(fromX, fromY, texture).setScale(1.4).setDepth(POPUP_DEPTH);
     this.scene.tweens.add({
       targets: flying,
-      x: badge.x,
+      x: fadeAtX,
       y: badge.y,
       scale: 1,
+      alpha: 0,
       duration: FLY_TIME,
       ease: 'Cubic.easeInOut',
       onComplete: () => {
         flying.destroy();
-        badge.setTexture(amuletTexture(amulet)).setVisible(true);
-        this.refreshCopies();
-        this.bounce(badge);
+        landed();
       },
     });
   }
 
-  /** Амулеты по гнёздам заново, без анимации: так бывает, когда один отдали Коллектору и остальные сдвинулись. */
-  setAmulets(amulets: Amulet[]): void {
+  /**
+   * Амулеты по гнёздам заново, без анимации: так бывает, когда кассета вернула забег к записи. counts — счётчики копий.
+   */
+  setAmulets(amulets: Amulet[], counts: AmuletCounts): void {
+    this.counts = { ...counts };
     this.badges.forEach((badge, index) => {
       const amulet = amulets[index] ?? null;
       this.amulets[index] = amulet;
@@ -140,11 +182,10 @@ export class AmuletRack {
     this.refreshCopies();
   }
 
-  /** Амулет сработал: подпрыгивают все гнёзда с этим амулетом. */
+  /** Амулет сработал: подпрыгивает его гнездо (у каждого амулета оно одно). */
   trigger(id: AmuletId): void {
-    this.amulets.forEach((amulet, index) => {
-      if (amulet?.id === id) this.bounce(this.badges[index]);
-    });
+    const index = this.amulets.findIndex((amulet) => amulet?.id === id);
+    if (index >= 0) this.bounce(this.badges[index]);
   }
 
   /** Коллекционер костей: под его гнездом — сколько он уже прибавляет к выигрышам. */
@@ -154,7 +195,7 @@ export class AmuletRack {
     if (index >= 0) this.bonesLabel.setX(SOCKET_XS[index]).setText(`+${percent}%`);
   }
 
-  /** Подскок с увеличением. */
+  /** Подскок с увеличением: амулет сработал. */
   private bounce(badge: Phaser.GameObjects.Image): void {
     this.scene.tweens.killTweensOf(badge);
     badge.setScale(1).setY(SOCKET_Y);

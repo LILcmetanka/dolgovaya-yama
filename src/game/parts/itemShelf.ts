@@ -1,18 +1,42 @@
 import Phaser from 'phaser';
-import { MAGNIFIER } from '../collectorGame';
-import { createItemTextures, createShelfTextures, DOOR_CODE_WIDTH, itemTexture, SHELF_CELL_TEXTURE, SHELF_DOOR_TEXTURE } from '../decor';
-import { ITEMS, MAX_SLOTS, type Item, type ItemEffects } from '../items';
+import { createEffectSlotTexture, createItemTextures, createShelfDarkTexture, createShelfTextures, DOOR_CODE_WIDTH, EFFECT_SLOT_TEXTURE, itemTexture, SHELF_CELL_TEXTURE, SHELF_DARK_TEXTURE, SHELF_DOOR_TEXTURE } from '../decor';
+import {
+  activeSlotEffects,
+  EFFECT_SLOTS,
+  effectCount,
+  ITEMS,
+  MAX_SLOTS,
+  SLOT_EFFECT_IDS,
+  type Item,
+  type ItemEffects,
+  type SlotEffectId,
+} from '../items';
 import { t } from '../lang';
-import { BULLET } from '../shot';
-import { EFFECTS_STEP, EFFECTS_TOP_Y, EFFECTS_X, ITEM_SIZE, SHELF_CELL, shelfX, shelfY } from '../layout';
+import { EFFECTS_STEP, EFFECTS_TOP_Y, EFFECT_SLOT, EFFECTS_X, ITEM_SIZE, SHELF_CELL, SHELF_NICHE, shelfX, shelfY } from '../layout';
 import { addText, LED_STYLE, POPUP_DEPTH, pulse } from '../theme';
+import { DARK_COLOR } from './reveal';
 import { attachHint, type Hint } from './tooltip';
 
 // Размеры.
-const ITEM_ON_SHELF_SCALE = 0.9; // предмет в клетке чуть меньше ниши
-const EFFECT_SCALE = 0.68; // включённый предмет у экрана ещё меньше
+// Предмет на полке — от ниши, а не от клетки: 48 в нише 54 (по 3 поля), пульс ×1,1 = 52,8 — всё внутри ниши,
+// на стальную рамку и на стену не заходит (DONTLIKE п.13: «на полке 4 предмета — всё съезжает»).
+const ITEM_ON_SHELF_SIZE = 48;
+const ITEM_ON_SHELF_SCALE = ITEM_ON_SHELF_SIZE / ITEM_SIZE;
+// Пятно тьмы над полкой (замечание автора 25.11): пока обучение не дошло до бита «Это места под предметы», полка стоит
+// в темноте, как вся комната. Цвет — тьмы первого забега (DARK_COLOR в parts/reveal.ts), край мягкий (скругление и
+// размыв — в decor.createShelfDarkTexture), слой — над клетками и предметами, но под заставкой обучения, подсказками
+// и самой тьмой комнаты: пока тьма на экране, пятно прячется под ней и проступает вместе с комнатой, без стыка.
+// Пятно шире полки: клетки прячутся целиком.
+const SHELF_DARK_PAD = 14;
+const SHELF_DARK_DEPTH = 3; // клетки и предметы полки — 0, заставка обучения — 9 (SCREEN_TITLE_DEPTH), тьма — 12
+// Столько пятно гаснет на входе в бит «Это места под предметы», мс. Долго и плавно: полка проступает из темноты,
+// а не появляется рывком (Sine.easeInOut — медленное начало и конец, без обрыва на последнем кадре).
+const SHELF_DARK_FADE = 750;
+const SHELF_DARK_EASE = 'Sine.easeInOut';
+const EFFECT_SCALE = 0.55; // включённый предмет у экрана: ниша гнезда 34 px, значок 31 px — не заходит на бронзовую рамку
 // Анимации, мс.
 const FLY_TIME = 450; // предмет летит из лотка на полку или с полки к экрану
+const FADE_TIME = 220; // снятый предмет гаснет у экрана
 // Кодовый замок купленного отсека: колёсики крутятся, по одному встают на цифры кода, дверца уезжает в сторону.
 const CODE_DIGITS = 3;
 const CODE_SPIN_STEP = 60; // мс: цифры на колёсиках сменяются так часто, пока крутятся
@@ -25,69 +49,172 @@ const DIGIT_COLOR = '#fbbf24'; // как цифры табло
 const DIGIT_LOCKED_COLOR = '#4ade80'; // встало на место — зелёная
 const SHAKE_TIME = 50; // один рывок тряски «нельзя»
 const SPEND_TIME = 400; // включённый предмет сработал: летит к месту и тает
-const NEW_ITEM_SCALE = 1.15; // купленный предмет «дышит» (увеличивается во столько раз), пока его не нажмут: видно, что он нажимается
+const NEW_ITEM_SCALE = 1.1; // купленный предмет «дышит» (увеличивается во столько раз), пока его не нажмут: видно, что он нажимается
+// Потолок пульса — по нише: даже если NEW_ITEM_SCALE поднимут, предмет не вылезет на рамку клетки.
+const BREATH_SCALE = Math.min(NEW_ITEM_SCALE, SHELF_NICHE / ITEM_ON_SHELF_SIZE);
 const NEW_ITEM_BREATH = 550; // один вдох, мс
+const RESCUE_DIM_ALPHA = 0.35; // в раунде спасения предметы заморожены: притушены, но остаются на месте
 
-/** Включённые предметы у экрана: щит, чеснок и ×3, у каждого свой ряд. Сигарета действует сразу — её там нет. */
-type EffectId = 'shield' | 'garlic' | 'triple';
-const EFFECT_IDS: EffectId[] = ['shield', 'garlic', 'triple'];
-
-/** Сколько раз ещё сработает включённый предмет (у чеснока — 1, пока он действует). */
-function effectCount(effects: ItemEffects, id: EffectId): number {
-  if (id === 'shield') return effects.shields;
-  if (id === 'triple') return effects.tripleTakes;
-  return effects.isGarlicOn ? 1 : 0;
+/**
+ * Включённые предметы у экрана: только активные, сверху вниз, на четырёх местах (EFFECT_SLOTS в items.ts).
+ * Места неподвижны: пятый предмет включается, только когда игрок кликом освободил одно из четырёх.
+ * Чеснока в столбике нет: он красит огни вокруг экрана (BaseScene.calmLampColor), сигарета срабатывает сразу.
+ */
+function effectSpot(index: number): { x: number; y: number } {
+  return { x: EFFECTS_X, y: EFFECTS_TOP_Y + index * EFFECTS_STEP };
 }
 
-/** Где у экрана стоит включённый предмет. */
-export function effectPosition(id: EffectId): { x: number; y: number } {
-  return { x: EFFECTS_X, y: EFFECTS_TOP_Y + EFFECT_IDS.indexOf(id) * EFFECTS_STEP };
+/** Где у экрана встанет включённый предмет: место по активному списку (для летящего — то, что он займёт). */
+export function effectPosition(id: SlotEffectId, effects: ItemEffects): { x: number; y: number } {
+  return effectSpot(Math.max(0, activeSlotEffects(effects).indexOf(id)));
 }
 
 /**
- * Полки с предметами на стене под запиской: две полки по 4 клетки столбиком, закрытые заколочены досками.
- * Клик по предмету (или клавиша 1–8, её ловит сцена) — включить. И столбик включённых предметов справа от экрана.
+ * Полки с предметами на стене под запиской: две полки по 4 клетки столбиком (MAX_SLOTS в items.ts), закрытые
+ * заперты кодовыми дверцами и открываются покупкой. Клик по предмету (или клавиша 1–8, её ловит сцена) — включить.
+ * И столбик включённых предметов справа от экрана.
  */
 export class ItemShelf {
   private readonly scene: Phaser.Scene;
+  // Две группы: полки на стене (клетки, предметы, дверцы) и гнёзда у экрана (пустые места, значки
+  // включённых предметов и их числа). Обучение прячет только полки пятном тьмы (setDarkened) — гнёзда видны всегда.
+  // Летящие картинки (putItem, takeItem, spend) остаются вне групп: они летают по всему виду и рисуются поверх.
+  private readonly shelfGroup: Phaser.GameObjects.Container;
+  private readonly effectsGroup: Phaser.GameObjects.Container;
+  private readonly darkSpot: Phaser.GameObjects.Image; // пятно тьмы над полками: мягкая картинка в цвет тьмы комнаты
+  private shelfDarkened = false; // пятно лежит над полками: обучение ещё не дошло до «Это места под предметы»
   private readonly items: Phaser.GameObjects.Image[] = []; // предмет в клетке; пустая клетка — картинка скрыта
   private readonly doors: Phaser.GameObjects.Container[] = []; // стальные дверцы с кодом на закрытых отсеках; открытый — скрыта
   private readonly digits: Phaser.GameObjects.Text[][] = []; // цифры кода на дверце каждого отсека
-  private readonly effectIcons = new Map<EffectId, Phaser.GameObjects.Image>(); // включённые предметы у экрана
-  private readonly effectCounts = new Map<EffectId, Phaser.GameObjects.Text>(); // «2», если включено больше одного
+  private readonly effectIcons = new Map<SlotEffectId, Phaser.GameObjects.Image>(); // включённые предметы у экрана
+  private readonly effectSpots: Phaser.GameObjects.Image[] = []; // пустые гнёзда столбика: сделка №13 их прячет
+  private readonly effectCounts = new Map<SlotEffectId, Phaser.GameObjects.Text>(); // «2», если включено больше одного
   private readonly shelfItems: (Item | null)[] = []; // какой предмет в какой клетке — для подсказки
+  private readonly canDiscard: () => boolean; // сейчас можно снимать предмет у экрана (не во время прокрутки и прочего)
+  private readonly usable: (item: Item) => boolean; // можно ли предмет сейчас включить (правила — в RoundScene.canUseItem)
+  private readonly breathing = new Set<number>(); // слоты, где предмет уже «дышит» — чтобы не плодить твины
 
-  /** slots — сколько клеток открыто; use — что делать, когда кликнули по предмету в клетке. */
-  constructor(scene: Phaser.Scene, slots: number, use: (slot: number) => void, hint: Hint) {
+  /**
+   * slots — сколько клеток открыто (их и только их можно нажимать; остальные закрыты дверцами);
+   * use — что делать, когда кликнули по предмету в клетке;
+   * discard — когда кликнули по включённому предмету у экрана (игрок освобождает его место);
+   * canDiscard — можно ли снимать сейчас: во время прокрутки, Дилера или спасения случайный клик ничего не портит;
+   * usable — можно ли предмет сейчас включить: дышит только то, что реально нажать, а то пульс врёт (DONTLIKE, стр. 3).
+   */
+  constructor(
+    scene: Phaser.Scene,
+    slots: number,
+    use: (slot: number) => void,
+    discard: (id: SlotEffectId) => void,
+    canDiscard: () => boolean,
+    usable: (item: Item) => boolean,
+    hint: Hint,
+  ) {
     this.scene = scene;
-    createItemTextures(scene, [...ITEMS, BULLET, MAGNIFIER], ITEM_SIZE); // и патрон, и лупа: они тоже лежат на полке
+    this.canDiscard = canDiscard;
+    this.usable = usable;
+    this.shelfGroup = scene.add.container(0, 0); // в (0, 0) без масштаба: клетки остаются на своих местах
+    this.effectsGroup = scene.add.container(0, 0);
+    createItemTextures(scene, ITEMS, ITEM_SIZE);
     createShelfTextures(scene, SHELF_CELL);
+    createEffectSlotTexture(scene, EFFECT_SLOT);
 
+    let left = Infinity; // границы полок: по ним кроится пятно тьмы
+    let right = -Infinity;
+    let top = Infinity;
+    let bottom = -Infinity;
+    // Клетки строятся все (MAX_SLOTS): пятно тьмы обучения должно накрывать обе полки, а не только открытые места.
     for (let slot = 0; slot < MAX_SLOTS; slot++) {
       const x = shelfX(slot);
       const y = shelfY(slot);
-      scene.add.image(x + 2, y + 2, SHELF_CELL_TEXTURE); // текстура с тенью — чуть больше клетки
+      left = Math.min(left, x);
+      right = Math.max(right, x);
+      top = Math.min(top, y);
+      bottom = Math.max(bottom, y);
+      this.shelfGroup.add(scene.add.image(x + 2, y + 2, SHELF_CELL_TEXTURE)); // текстура с тенью — чуть больше клетки
       const item = scene.add.image(x, y, itemTexture(ITEMS[0])).setScale(ITEM_ON_SHELF_SCALE).setVisible(false);
       item.setInteractive({ useHandCursor: true });
       attachHint(item, hint, () => this.hintFor(slot), () => use(slot));
       this.items.push(item);
+      this.shelfGroup.add(item);
       this.shelfItems.push(null);
       const door = this.buildDoor(x, y, slot);
-      door.setVisible(slot >= slots);
+      door.setVisible(slot >= slots); // закрытое место — под дверцей с кодом
       attachHint(door, hint, () => [t('closedSlot'), t('closedSlotHow')]);
       this.doors.push(door);
+      this.shelfGroup.add(door);
     }
 
-    for (const id of EFFECT_IDS) {
-      const { x, y } = effectPosition(id);
+    // Пятно тьмы над полками: обучение ещё не дошло до «Это места под предметы» — полки стоят в темноте.
+    // Скрыто с самого начала: полка «не появляется» сама — её открывает бит обучения (setDarkened), а не таймер.
+    // Клетки построены все (MAX_SLOTS), поэтому пятно нужно всегда — независимо от того, сколько мест куплено.
+    const half = SHELF_CELL / 2 + SHELF_DARK_PAD;
+    const darkWidth = right - left + half * 2;
+    const darkHeight = bottom - top + half * 2;
+    createShelfDarkTexture(scene, darkWidth, darkHeight, DARK_COLOR);
+    this.darkSpot = scene.add
+      .image((left + right) / 2, (top + bottom) / 2, SHELF_DARK_TEXTURE)
+      .setDepth(SHELF_DARK_DEPTH)
+      .setVisible(false);
+
+    // Пустые гнёзда столбика у экрана: места видно всегда, даже когда ни один предмет не включён (DONTLIKE хоч. 11).
+    for (let index = 0; index < EFFECT_SLOTS; index++) {
+      const { x, y } = effectSpot(index);
+      const spot = scene.add.image(x, y, EFFECT_SLOT_TEXTURE);
+      this.effectSpots.push(spot);
+      this.effectsGroup.add(spot);
+    }
+
+    // Иконки — на каждый предмет столбика: showEffects расставит первые EFFECT_SLOTS активных, остальные спрятаны.
+    for (const [index, id] of SLOT_EFFECT_IDS.entries()) {
+      const { x, y } = effectSpot(Math.min(index, EFFECT_SLOTS - 1));
       const item = ITEMS.find((candidate) => candidate.id === id) ?? ITEMS[0];
       const icon = scene.add.image(x, y, itemTexture(item)).setScale(EFFECT_SCALE).setVisible(false);
-      icon.setInteractive();
-      attachHint(icon, hint, () => [t(item.name), t(item.description)]);
+      icon.setInteractive({ useHandCursor: true });
+      attachHint(icon, hint, () => [t(item.name), `${t(item.description)}\n${t('effectRemove')}`], () => this.tryFadeOut(id, discard));
       this.effectIcons.set(id, icon);
       const count = addText(scene, x + 14, y + 12, '', { fontSize: '13px', fontStyle: 'bold', stroke: '#000000', strokeThickness: 3 });
       this.effectCounts.set(id, count.setOrigin(0.5));
+      this.effectsGroup.add([icon, count]);
     }
+  }
+
+  /** Полки на стене: клетки и предметы. Обучение закрывает их пятном тьмы (setDarkened). */
+  get group(): Phaser.GameObjects.Container {
+    return this.shelfGroup;
+  }
+
+  /** Гнёзда у экрана: пустые места, значки включённых предметов и их числа. Видны всегда, обучение их не прячет. */
+  get effectSlots(): Phaser.GameObjects.Container {
+    return this.effectsGroup;
+  }
+
+  /**
+   * Пятно тьмы над полками: пока обучение не дошло до бита «Это места под предметы», полки стоят в темноте,
+   * как и вся комната первого забега. Сами полки при этом видны и живут своей жизнью — прячет их только пятно,
+   * поэтому они не «появляются из ниоткуда» (замечание автора 25.11). darkened = false — пятно гаснет тенью за
+   * SHELF_DARK_FADE: полка проступает на входе в бит, а не возникает рывком. Повторный вызов ничего не меняет.
+   */
+  setDarkened(darkened: boolean): void {
+    if (darkened === this.shelfDarkened) return;
+    this.shelfDarkened = darkened;
+    this.scene.tweens.killTweensOf(this.darkSpot);
+    if (darkened) {
+      this.darkSpot.setVisible(true).setAlpha(1); // темнота встаёт сразу, без анимации
+      return;
+    }
+    this.scene.tweens.add({
+      targets: this.darkSpot,
+      alpha: 0,
+      duration: SHELF_DARK_FADE,
+      ease: SHELF_DARK_EASE,
+      onComplete: () => this.darkSpot.setVisible(false),
+    });
+  }
+
+  /** Над полками сейчас лежит пятно тьмы (обучение ещё не дошло до «Это места под предметы»). */
+  get isDarkened(): boolean {
+    return this.shelfDarkened;
   }
 
   /** Дверца отсека slot: стальная плита, на ней три цифры кода (пока закрыто — нули). По ней наводят подсказку. */
@@ -116,6 +243,7 @@ export class ItemShelf {
   openSlot(slot: number): void {
     const door = this.doors[slot];
     const texts = this.digits[slot];
+    if (!door || !texts) return; // мест больше, чем клеток: такого отсека нет
     const code = this.codeOf(slot);
     const locked = [false, false, false];
     const spin = this.scene.time.addEvent({
@@ -140,6 +268,46 @@ export class ItemShelf {
         ease: 'Quad.easeIn',
         onComplete: () => door.setVisible(false),
       });
+    });
+  }
+
+  /**
+   * Сколько клеток открыто сейчас (покупка места, кассета). Дверцы закрытых отсеков снова встают на место;
+   * предметы, что уже лежали, не выбрасываются — сцена сама решает, куда их девать.
+   */
+  setOpenCount(slots: number): void {
+    const open = Math.max(0, Math.min(this.doors.length, Math.floor(slots)));
+    this.doors.forEach((door, slot) => {
+      const closed = slot >= open;
+      door.setVisible(closed);
+      // Дверцу могли уже отправить в сторону (она осталась с alpha 0) — закрытой она снова непрозрачная.
+      if (closed) door.setAlpha(1).setX(shelfX(slot));
+    });
+  }
+
+  /** Клик по значку: снимаем, только если сцена разрешает сейчас, — иначе значок не трогаем. */
+  private tryFadeOut(id: SlotEffectId, discard: (id: SlotEffectId) => void): void {
+    if (!this.canDiscard()) return; // прокрутка, Дилер, решение по перемешке, спасение — клик ничего не портит
+    this.fadeOut(id, discard);
+  }
+
+  /** Игрок снял предмет у экрана: значок гаснет, потом сцена убирает сам эффект (discard). */
+  private fadeOut(id: SlotEffectId, discard: (id: SlotEffectId) => void): void {
+    const icon = this.effectIcons.get(id);
+    if (!icon || !icon.visible) return; // нечего снимать: предмета у экрана нет
+    const label = this.effectCounts.get(id);
+    this.scene.tweens.killTweensOf(icon);
+    this.scene.tweens.add({
+      targets: icon,
+      alpha: 0,
+      scale: EFFECT_SCALE * 0.6,
+      duration: FADE_TIME,
+      ease: 'Quad.easeIn',
+      onComplete: () => {
+        icon.setAlpha(1).setScale(EFFECT_SCALE).setVisible(false);
+        label?.setAlpha(1).setText('');
+        discard(id);
+      },
     });
   }
 
@@ -172,18 +340,21 @@ export class ItemShelf {
       onComplete: () => {
         flying.destroy();
         target.setTexture(itemTexture(item)).setVisible(true);
-        this.breathe(target);
+        this.refreshPulses(); // дышит, только если его сейчас можно включить
       },
     });
   }
 
   /** Купленный предмет «дышит» в клетке, пока его не нажмут (включить или «нельзя» — тряска это останавливает). */
-  private breathe(target: Phaser.GameObjects.Image): void {
+  private breathe(slot: number): void {
+    const target = this.items[slot];
     this.scene.tweens.killTweensOf(target);
+    target.setX(shelfX(slot)).setAlpha(1); // ровно в клетке: пульс не должен стартовать со сдвига после оборванной тряски
     target.setScale(ITEM_ON_SHELF_SCALE);
+    this.breathing.add(slot);
     this.scene.tweens.add({
       targets: target,
-      scale: ITEM_ON_SHELF_SCALE * NEW_ITEM_SCALE,
+      scale: ITEM_ON_SHELF_SCALE * BREATH_SCALE,
       duration: NEW_ITEM_BREATH,
       ease: 'Sine.easeInOut',
       yoyo: true,
@@ -191,11 +362,47 @@ export class ItemShelf {
     });
   }
 
+  /**
+   * Пересчитать пульс всех предметов на полке: дышит только то, что сейчас можно включить (usable).
+   * Уже дышащие не трогаем (breathing — чтобы не плодить твины); не годящиеся стоят ровно: scale и alpha обычные.
+   * Сцена зовёт после включения предмета и после того, как игрок освободил место у экрана, а putItem — когда
+   * купленный предмет долетел в клетку: правила изменились, пульс пересчитываем.
+   */
+  refreshPulses(): void {
+    this.shelfItems.forEach((item, slot) => {
+      const canUse = item !== null && this.usable(item);
+      if (canUse && !this.breathing.has(slot)) this.breathe(slot);
+      else if (!canUse) this.stopBreathing(slot);
+    });
+  }
+
+  /**
+   * Раунд спасения: предметы и амулеты заморожены. Здесь только вид — притушить полку и столбик
+   * включённых предметов; нажать их всё равно нельзя, потому что canAct() в спасении false (RoundScene.useItem).
+   */
+  setDimmed(isDimmed: boolean): void {
+    const alpha = isDimmed ? RESCUE_DIM_ALPHA : 1;
+    for (const item of this.items) item.setAlpha(alpha);
+    for (const door of this.doors) door.setAlpha(alpha);
+    for (const spot of this.effectSpots) spot.setAlpha(alpha);
+    for (const icon of this.effectIcons.values()) icon.setAlpha(alpha);
+    for (const count of this.effectCounts.values()) count.setAlpha(alpha);
+  }
+
+  /** Пульс выключен: твины убиты, предмет стоит ровно в клетке (обычные scale и alpha). */
+  private stopBreathing(slot: number): void {
+    this.breathing.delete(slot);
+    const target = this.items[slot];
+    this.scene.tweens.killTweensOf(target);
+    target.setX(shelfX(slot)).setScale(ITEM_ON_SHELF_SCALE).setAlpha(1);
+  }
+
   /** Включили предмет: он улетает из клетки slot к (toX, toY) и там тает. Долетел — landed(). */
   takeItem(slot: number, toX: number, toY: number, landed: () => void): void {
     this.shelfItems[slot] = null;
     const item = this.items[slot];
-    this.scene.tweens.killTweensOf(item); // перестал «дышать»
+    this.breathing.delete(slot); // перестал «дышать»
+    this.scene.tweens.killTweensOf(item);
     item.setScale(ITEM_ON_SHELF_SCALE).setVisible(false);
     const flying = this.scene.add.image(item.x, item.y, item.texture.key).setScale(ITEM_ON_SHELF_SCALE).setDepth(POPUP_DEPTH);
     this.scene.tweens.add({
@@ -214,36 +421,55 @@ export class ItemShelf {
 
   /** Нельзя: предмет в клетке slot коротко трясётся. */
   deny(slot: number): void {
-    this.shake(this.items[slot], shelfX(slot));
+    this.shake(slot);
   }
 
   /** На полке нет свободного места: трясутся все предметы. */
   shakeFull(): void {
-    this.items.forEach((item, slot) => this.shake(item, shelfX(slot)));
+    this.items.forEach((_, slot) => this.shake(slot));
   }
 
   /** Тряска «нельзя»: влево-вправо и на место. */
-  private shake(target: Phaser.GameObjects.Image, homeX: number): void {
-    this.scene.tweens.killTweensOf(target); // и «дышать» перестаёт: на предмет уже нажимали
+  private shake(slot: number): void {
+    const target = this.items[slot];
+    const homeX = shelfX(slot);
+    this.breathing.delete(slot); // и «дышать» перестаёт: на предмет уже нажимали
+    this.scene.tweens.killTweensOf(target);
     target.setX(homeX).setScale(ITEM_ON_SHELF_SCALE);
     this.scene.tweens.add({ targets: target, x: homeX + 6, duration: SHAKE_TIME, yoyo: true, repeat: 2, onComplete: () => target.setX(homeX) });
   }
 
-  /** Столбик у экрана: виден каждый включённый предмет; если включено несколько одинаковых — рядом число. */
-  showEffects(effects: ItemEffects): void {
-    for (const id of EFFECT_IDS) {
+  /**
+   * Столбик у экрана: первые EFFECT_SLOTS включённых предметов сверху вниз (страховка от старой записи кассеты,
+   * где эффектов могло быть больше); если включено несколько одинаковых — рядом число.
+   * limit — сколько мест показывает сделка №13: лишние пустые гнёзда прячутся, но уже включённые предметы
+   * остаются на своих местах (они и раньше жили до clearEffect).
+   */
+  showEffects(effects: ItemEffects, limit = EFFECT_SLOTS): void {
+    // Не число, NaN или ∞ из чужой сделки — обычный столбик, иначе Math.trunc(NaN) погасил бы все гнёзда.
+    const places = Number.isFinite(limit) ? Math.max(0, Math.min(EFFECT_SLOTS, Math.trunc(limit))) : EFFECT_SLOTS;
+    for (const [index, spot] of this.effectSpots.entries()) spot.setVisible(index < places);
+    const active = activeSlotEffects(effects).slice(0, EFFECT_SLOTS);
+    for (const [index, id] of active.entries()) {
       const count = effectCount(effects, id);
       const icon = this.effectIcons.get(id);
       const label = this.effectCounts.get(id);
       if (!icon || !label) continue;
-      if (count > 0 && !icon.visible) pulse(this.scene, icon.setVisible(true), 1.25, EFFECT_SCALE);
-      icon.setVisible(count > 0);
+      const { x, y } = effectSpot(index);
+      icon.setPosition(x, y);
+      label.setPosition(x + 14, y + 12);
+      if (!icon.visible) pulse(this.scene, icon.setVisible(true), 1.25, EFFECT_SCALE);
       label.setText(count > 1 ? String(count) : '');
+    }
+    for (const [id, icon] of this.effectIcons) {
+      if (active.includes(id)) continue;
+      icon.setVisible(false);
+      this.effectCounts.get(id)?.setText('');
     }
   }
 
   /** Включённый предмет сработал: его копия летит от столбика к (toX, toY), раздувается и тает. */
-  spend(id: EffectId, toX: number, toY: number): void {
+  spend(id: SlotEffectId, toX: number, toY: number): void {
     const icon = this.effectIcons.get(id);
     if (!icon) return;
     const flying = this.scene.add.image(icon.x, icon.y, icon.texture.key).setScale(EFFECT_SCALE).setDepth(POPUP_DEPTH);

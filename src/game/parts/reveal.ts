@@ -4,7 +4,9 @@ import { REVEAL_DEPTH } from '../theme';
 
 // Тьма первого забега: почти чёрная картинка на весь вид, в которой «проткнуты» пятна света.
 const REVEAL_TEXTURE = 'reveal-dark';
-const DARK_COLOR = '#050403'; // цвет тьмы — не чёрный: комната в нём угадывается
+/** Цвет тьмы — не чёрный: комната в нём угадывается. Им же красится пятно тьмы над полками предметов (itemShelf.ts):
+ *  пока обучение не дошло до «Это места под предметы», полка стоит в той же тьме, что и вся комната первого забега. */
+export const DARK_COLOR = '#050403';
 const MACHINE_GLOW_PAD = 12; // пятно автомата шире его краёв на столько (полуразмер)
 const NOTE_GLOW_EXTRA = 40; // пятно записки шире и выше её на столько
 const GLOW_CORE = 0.8; // до этой доли радиуса пятно светлое целиком, дальше — мягкий край; при 0.55 темнели табло, табло прокруток и окошко выплаты
@@ -20,35 +22,51 @@ interface Hole {
   ry: number;
 }
 
+/** Точка в прямоугольном пятне (пятно автомата). */
+function inRect(hole: Hole, x: number, y: number): boolean {
+  return Math.abs(x - hole.x) <= hole.rx && Math.abs(y - hole.y) <= hole.ry;
+}
+
+/** Точка в эллиптическом пятне, выросшем в scale раз (пятна рычага и записки). */
+function inEllipse(hole: Hole, x: number, y: number, scale = 1): boolean {
+  const dx = (x - hole.x) / (hole.rx * scale);
+  const dy = (y - hole.y) / (hole.ry * scale);
+  return dx * dx + dy * dy <= 1;
+}
+
 /**
- * Тьма первого забега: виден только автомат в пятне света. После третьей прокрутки из тьмы проступает записка с долгом,
+ * Тьма первого забега: видны только автомат и рычаг в пятнах света. После третьей прокрутки из тьмы проступает записка с долгом,
  * а когда приходит Коллектор — тьма гаснет совсем. Рисуется на canvas: пятна — мягкие дыры в почти чёрной заливке.
  * Перерисовка — только при открытии записки, в остальное время текстура статична.
+ * Клики мимо пятен тьма не пропускает: там, где она сплошная, нажимать нечего.
  */
 export class Reveal {
   private readonly scene: Phaser.Scene;
   private readonly texture: Phaser.Textures.CanvasTexture | null;
   private image: Phaser.GameObjects.Image | null; // сама тьма на экране; null — её уже нет
+  private blocker: Phaser.GameObjects.Zone | null = null; // ловит клики по сплошной тьме; null — её уже нет
   private readonly machine: Hole;
   private readonly note: Hole;
+  private readonly lever: Hole;
   private isNoteOpen = false; // пятно записки проступает
   private noteOpen = 0; // 0…1 — насколько оно открылось
   private isFading = false; // тьма уже гаснет: второй раз твин не запускаем
 
-  constructor(scene: Phaser.Scene, homeScroll: number, machine: Box, note: Box) {
+  constructor(scene: Phaser.Scene, machine: Box, note: Box, lever: Box) {
     this.scene = scene;
     this.machine = {
-      x: machine.x - homeScroll,
+      x: machine.x,
       y: machine.y,
       rx: machine.width / 2 + MACHINE_GLOW_PAD,
       ry: machine.height / 2 + MACHINE_GLOW_PAD,
     };
     this.note = {
-      x: note.x - homeScroll,
+      x: note.x,
       y: note.y,
       rx: note.width / 2 + NOTE_GLOW_EXTRA,
       ry: note.height / 2 + NOTE_GLOW_EXTRA,
     };
+    this.lever = { x: lever.x, y: lever.y, rx: lever.width / 2, ry: lever.height / 2 };
     // После перезапуска сцены текстура осталась — старую убираем, рисуем заново.
     if (scene.textures.exists(REVEAL_TEXTURE)) scene.textures.remove(REVEAL_TEXTURE);
     this.texture = scene.textures.createCanvas(REVEAL_TEXTURE, VIEW_WIDTH, VIEW_HEIGHT);
@@ -56,6 +74,7 @@ export class Reveal {
     this.image = this.texture
       ? scene.add.image(0, 0, REVEAL_TEXTURE).setOrigin(0).setScrollFactor(0).setDepth(REVEAL_DEPTH)
       : null;
+    if (this.image) this.blocker = this.addBlocker();
   }
 
   /** Тьма ещё на экране (не погасла). */
@@ -88,13 +107,41 @@ export class Reveal {
       duration: FADE_TIME,
       onComplete: () => {
         image.destroy();
+        this.blocker?.destroy();
+        this.blocker = null;
         this.image = null;
         onDone?.();
       },
     });
   }
 
-  /** Залить тьму заново и проткнуть в ней пятна: автомата — всегда, записки — если открыта. */
+  /**
+   * Клики мимо пятен света не проходят: тьма не пропускает их к тому, что в ней спрятано (рычаг и записка —
+   * в пятнах, туда можно). Это та же тьма, что накрывает комнату картинкой на слое REVEAL_DEPTH.
+   */
+  private addBlocker(): Phaser.GameObjects.Zone {
+    const area = new Phaser.Geom.Rectangle(0, 0, VIEW_WIDTH, VIEW_HEIGHT);
+    const zone = this.scene.add.zone(0, 0, VIEW_WIDTH, VIEW_HEIGHT).setOrigin(0).setScrollFactor(0).setDepth(REVEAL_DEPTH);
+    zone.setInteractive(area, (_area: Phaser.Geom.Rectangle, x: number, y: number) => this.isDark(x, y));
+    return zone;
+  }
+
+  /**
+   * Сплошная ли тьма в этой точке вида. Считается по тем же пятнам, что вырезает redraw (прямоугольник автомата,
+   * эллипс рычага, эллипс записки пока она открыта), а не по пикселю картинки: тогда наведение мыши не читает
+   * canvas на каждом hit-test.
+   */
+  private isDark(x: number, y: number): boolean {
+    if (inRect(this.machine, x, y) || inEllipse(this.lever, x, y)) return false;
+    return !(this.isNoteOpen && inEllipse(this.note, x, y, this.noteOpenScale));
+  }
+
+  /** Во сколько раз выросло пятно записки: так же считает и redraw. */
+  private get noteOpenScale(): number {
+    return NOTE_OPEN_FROM + (1 - NOTE_OPEN_FROM) * this.noteOpen;
+  }
+
+  /** Залить тьму заново и проткнуть в ней пятна: автомата и рычага — всегда, записки — если открыта. */
   private redraw(): void {
     if (!this.texture) return;
     const ctx = this.texture.context;
@@ -103,7 +150,8 @@ export class Reveal {
     ctx.fillRect(0, 0, VIEW_WIDTH, VIEW_HEIGHT);
     ctx.globalCompositeOperation = 'destination-out'; // дальше рисуем «дыры» — тьма из них вырезается
     this.punchMachine(this.machine);
-    if (this.isNoteOpen) this.punchSpot(this.note, NOTE_OPEN_FROM + (1 - NOTE_OPEN_FROM) * this.noteOpen);
+    this.punchSpot(this.lever, 1); // рычаг освещён: его видно и можно дёрнуть
+    if (this.isNoteOpen) this.punchSpot(this.note, this.noteOpenScale);
     ctx.globalCompositeOperation = 'source-over';
     this.texture.refresh(); // передать нарисованное в видеокарту
   }

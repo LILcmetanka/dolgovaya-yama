@@ -1,27 +1,24 @@
 import Phaser from 'phaser';
 import type { Amulet, Rarity } from './amulets';
-import type { MachineCharacter } from './characters';
+import type { MachineSpec } from './machines';
 import type { Item } from './items';
-import { t } from './lang';
 import {
   BELLY,
   BODY,
   CENTER_X,
-  COLLECTOR_X,
-  DARK_ROOM,
   DISPLAY,
   GLASS,
   ITEM_SIZE,
-  LEFT_ROOM,
   LEVER_MOUNT,
   MULTIPLIER_WINDOW,
   PAYOUT_WINDOW,
-  ROOM_SIDE,
   SCREEN,
+  SHELF_FRAME,
+  SHOP_PANEL,
+  SKULL_SCREEN,
   SOCKET_RADIUS,
   SOCKET_XS,
   SOCKET_Y,
-  TURN_SCROLL,
   VENDING,
   VENDING_BIN,
   VENDING_COIN_SLOT,
@@ -34,10 +31,10 @@ import {
 } from './layout';
 import { patternSize, type Pattern } from './patterns';
 import { GRID_COLUMNS, GRID_ROWS, isSkull, isTicket, type SlotSymbol } from './rules';
-import { FONT, LAMP_OFF, TEXTURE_SCALE } from './theme';
+import { FONT, LAMP_DEPTH, LAMP_OFF, TEXTURE_SCALE } from './theme';
 
 /**
- * Украшения «Долговой ямы»: тёмная комната, корпус автомата, рычаг, записка, лампочки, фишки,
+ * Украшения «Долговой ямы»: корпус автомата, рычаг, записка, лампочки, фишки,
  * клетки символов и схемы паттернов. Логики игры здесь нет. Картинок в проекте тоже нет — всё рисуется кодом.
  * Неподвижное рисуется один раз и «запекается» в текстуру: дальше это одна картинка, и игра идёт даже на слабом компьютере.
  * Запекается крупно, в TEXTURE_SCALE раз (bake, createSharpCanvas): камера увеличивает вид до Full HD, и картинки остаются чёткими.
@@ -73,49 +70,40 @@ function showAtGameSize(scene: Phaser.Scene, key: string, width: number, height:
 
 /** Имена текстур, нарисованных кодом. */
 export const CHIP_TEXTURE = 'chip'; // фишка анфас: на табло, в окошке выплаты и в брызгах
-export const HAND_OPEN_TEXTURE = 'hand-open'; // рука Коллектора ладонью вверх
-export const HAND_FIST_TEXTURE = 'hand-fist'; // та же рука кулаком
 export const LEVER_ROD_TEXTURE = 'lever-rod';
 export const LEVER_BALL_TEXTURE = 'lever-ball';
 export const NOTE_TEXTURE = 'note';
+export const GOAL_NOTE_TEXTURE = 'note-goal'; // вторая записка: цель забега на стене над экраном
 export const NOTE_GLOW_TEXTURE = 'note-glow'; // зелёное свечение вокруг записки: долг можно отдать раньше
 export const SHELF_CELL_TEXTURE = 'shelf-cell'; // клетка полки с предметами
 export const SHELF_DOOR_TEXTURE = 'shelf-door'; // стальная дверца с кодовым замком поверх закрытого отсека
+export const SHOP_SLOT_TEXTURE = 'shop-slot'; // товар мини-автомата «место на полке»: клетка с золотым плюсом
+export const EFFECT_SLOT_TEXTURE = 'effect-slot'; // пустое гнездо под включённый предмет у экрана
+export const SHELF_DARK_TEXTURE = 'shelf-dark'; // пятно тьмы над полками предметов: обучение ещё не дошло до «Это места под предметы»
+// Пятно тьмы — мягкое, как пятно света вокруг автомата в тьме первого забега: скруглённое и с размытым краем.
+// Край размыт на SHELF_DARK_BLUR с каждой стороны (у canvas это σ размыва: потемнение тянется примерно на 3σ,
+// поэтому больше 8 не брать — полка утонула бы в размыве и просвечивала изнутри), поэтому картинка шире пятна;
+// ниже — скругление и сам размыв.
+const SHELF_DARK_BLUR = 7;
+const SHELF_DARK_ROUNDING = 26;
 export const DOOR_CODE_WIDTH = 50; // окошко колёсиков кода на дверце
 export const DOOR_CODE_HEIGHT = 24;
-export const LEAVE_BUTTON_TEXTURE = 'leave-button'; // круглая кнопка со стрелкой «назад к автомату»
 export const TICKET_TEXTURE = 'ticket'; // красный билет — вторая валюта
 export const SOCKET_CAP_TEXTURE = 'socket-cap'; // заглушка закрытого гнезда для амулета
-export const ROULETTE_TABLE_TEXTURE = 'roulette-table'; // стол с зелёным сукном для игры с Коллектором
-export const AMULET_TRAY_TEXTURE = 'amulet-tray'; // лоток, куда кладут амулет для Коллектора
-export const SHOTGUN_TEXTURE = 'shotgun'; // дробовик сбоку, ствол вправо
-export const MUZZLE_TEXTURE = 'shotgun-muzzle'; // тот же дробовик стволом на тебя
-export const MUZZLE_FLASH_TEXTURE = 'muzzle-flash'; // вспышка выстрела
-export const BULLET_LIVE_TEXTURE = 'bullet-live'; // боевой патрон — красный
-export const BULLET_BLANK_TEXTURE = 'bullet-blank'; // холостой патрон — синий
-export const BULLET_GOLD_TEXTURE = 'bullet-gold'; // твой патрон — золотой: им стреляют в автомат
-const GOLD_BULLET_SIZE = 40; // сторона картинки летящего патрона
-export const CRACK_TEXTURE = 'screen-crack'; // дыра от пули и трещины на экране автомата
+export const MINI_SOCKET_TEXTURE = 'mini-socket'; // гнездо амулета в маленьком автомате магазина: хром и тёмная лунка
+export const CRACK_TEXTURE = 'screen-crack'; // дыра и трещины на экране автомата после взрыва
 export const CRACK_SIZE = 150; // сторона картинки с трещинами
-export const AIM_COLLECTOR_TEXTURE = 'aim-collector'; // кнопка «в Коллектора»: прицел
-export const AIM_SELF_TEXTURE = 'aim-self'; // кнопка «в себя»: дуло смотрит на тебя
-export const SHOTGUN_SIZE = { width: 120, height: 60 };
-export const SHOTGUN_BARREL_TIP = { x: 56, y: -11 }; // конец ствола — от середины картинки (ствол вправо)
-export const MUZZLE_BORE = { x: 0, y: -14 }; // дуло на картинке «стволом на тебя» — от её середины
-export const CARD_BACK_TEXTURE = 'card-back'; // рубашка карты Дилера
-export const DEALER_FELT_TEXTURE = 'dealer-felt'; // стол Дилера поверх экрана
-export const CHOICE_HIGHER_TEXTURE = 'choice-higher'; // кнопка «>» — следующая больше
-export const CHOICE_EQUAL_TEXTURE = 'choice-equal'; // кнопка «=» — такая же
-export const CHOICE_LOWER_TEXTURE = 'choice-lower'; // кнопка «<» — меньше
-export const CHIP_STACK_TEXTURE = 'chip-stack'; // фишка сбоку-сверху: из таких складывается стопка — ставка у Дилера
-export const STAKE_GLOW_TEXTURE = 'stake-glow'; // золотое свечение под ставкой Дилера: можно остановиться
+export const DEALER_FELT_TEXTURE = 'dealer-felt'; // сукно Дилера поверх экрана: на него ложатся карты-сделки
 export const RUST_TEXTURE = 'rust-column'; // ржавчина на заевшем столбце сетки
 const ROOM_TEXTURE = 'room';
 const MACHINE_TEXTURE = 'machine'; // детали корпуса: окантовка, табло, стекло, окна, гнёзда
 const MACHINE_SHELL_TEXTURE = 'machine-shell'; // тело корпуса — его красят в цвет автомата
-const SHOP_ROOM_TEXTURE = 'shop-room'; // комната слева с торговым автоматом
-/** Комната: тёмная стена в полоску и пол. Она шире экрана 960 на ROOM_SIDE с каждой стороны (экран 16:9). */
-const ROOM_WIDTH = 960 + 2 * ROOM_SIDE;
+const SHOP_PANEL_TEXTURE = 'shop-panel'; // фон панели магазина — она выезжает сверху поверх комнаты
+const SHOP_MACHINE_TEXTURE = 'shop-machine'; // корпус торгового автомата на панели магазина
+const SHOP_SPIRALS_TEXTURE = 'shop-spirals'; // спирали витрины — отдельно: они поверх товара
+const SHOP_GLASS_TEXTURE = 'shop-glass'; // стекло витрины — ещё выше: плёнка и блик
+/** Комната: тёмная стена в полоску и пол. Она на весь вид по ширине (VIEW_WIDTH): камера стоит на месте. */
+const ROOM_WIDTH = Math.ceil(VIEW_WIDTH);
 const WALL_COLOR = 0x15100d;
 const FLOOR_COLOR = 0x090706;
 const FLOOR_Y = 560; // где стена переходит в пол
@@ -130,9 +118,15 @@ const BODY_CORNER = 30; // скругление углов
 const BODY_SHADOW = { x: 12, y: 10 }; // тень корпуса на стене сдвинута на столько
 const BELLY_SHADE = 0.53; // панель под экраном — тело корпуса, затемнённое на столько: она того же цвета, что автомат
 const TRIM_COLOR = 0xb45309; // бронзовая окантовка
+const PANEL_EDGE = 6; // бронзовая кромка панели магазина по левому краю, px
+// Панель магазина — рольставня: 8 горизонтальных ламелей. Шов и мягкая тень под ним, но бледно — панель остаётся фоном.
+const SHOP_SLATS = 8;
+const SLAT_SHADE_STEPS = 5; // тень под швом рисуется столькими полосками…
+const SLAT_SHADE_STEP = 10; // …по столько px каждая…
+const SLAT_SHADE_ALPHA = 0.05; // …и в начале такой плотности: к середине ламели сходит на нет
 const TRIM_INSET = 8; // окантовка — на столько внутри края лицевой части, со всех сторон одинаково
-const CHROME = 0x94a3b8;
-const CHROME_LIGHT = 0xe2e8f0;
+export const CHROME = 0x94a3b8;
+export const CHROME_LIGHT = 0xe2e8f0;
 const SCREEN_GLASS = 0x020617; // почти чёрное стекло под сеткой
 /** Фишка казино: красная с белыми насечками по краю. */
 const CHIP_SIZE = 28; // фишка анфас, px
@@ -143,11 +137,6 @@ const CHIP_EDGE = '#450a0a'; // кайма и обводка «1»
 const CHIP_CREAM = '#fef3c7'; // вставки по ободу, кольцо и «1»
 const CHIP_GOLD = 'rgba(253, 224, 71, 0.85)'; // тонкое внутреннее кольцо
 const CHIP_NOTCHES = 8; // кремовые вставки по ободу
-const CHIP_TOP = 0xdc2626; // фишка в стопке: верхняя грань — того же красного, что фишка анфас
-const CHIP_SIDE = 0x991b1b; // бок — темнее
-/** Свечение под ставкой Дилера: мягкий золотой круг. */
-const STAKE_GLOW_SIZE = 96; // поперечник, px
-const STAKE_GLOW_RGB = '253, 224, 71'; // золото, как огни выигрыша
 /** Билет: красный корешок с вырезами по бокам. Доли — от высоты билета (линия отрыва — от ширины). */
 const TICKET_WIDTH = 36;
 const TICKET_HEIGHT = 22;
@@ -166,11 +155,14 @@ const NOTE_DEBT_INK = '#7f1d1d'; // сумма — красной ручкой
 const NOTE_PAPER_LIGHT = '#a39679'; // бумага записки: светлее сверху слева…
 const NOTE_PAPER_DARK = '#7a6d55'; // …и темнее снизу справа
 const NOTE_DEBT_FONT_SIZE = 44; // сумма крупно; длинная сумма уменьшается, чтобы влезть на листок
-const NOTE_CHECK_COLOR = '#16a34a'; // галочка «фишек хватает»
 const NOTE_BAR_COLOR = '#16a34a'; // полоска долга: что уже на табло
 const NOTE_BAR_PENDING = 'rgba(22, 163, 74, 0.35)'; // …и что ещё на кону: заберёшь — будет на табло
 const NOTE_BAR_TRACK = 'rgba(30, 41, 59, 0.4)'; // пустая часть полоски
-const NOTE_BAR_Y = 104; // полоска под суммой, под галочкой
+const NOTE_BAR_Y = 104; // полоска долга под суммой
+const NOTE_CAPTION_Y = 95; // подпись под суммой (процент цели) — над полоской цели
+const NOTE_CAPTION_FONT_SIZE = 14;
+const NOTE_GOAL_AMOUNT_Y = 74; // сумма на записке цели — выше, чем на записке долга: под ней ещё процент и полоска
+const NOTE_GOAL_BAR_Y = 103; // полоска цели — под процентом, в том же стиле, что полоска долга (DONTLIKE з.2)
 const NOTE_BAR_HEIGHT = 7;
 const NOTE_BAR_LEFT = 26; // правее красного поля записки
 const NOTE_BAR_RIGHT = 20; // отступ справа от края листка
@@ -179,14 +171,6 @@ const NOTE_GLOW_BLUR = 10; // мягкость свечения, px
 const NOTE_GLOW_LINE = 4; // яркая кайма по краю листка, px (половина её — под листком)
 const NOTE_GLOW_LAYERS = 3; // кайма с ореолом рисуется столько раз — каждый слой ярче
 const NOTE_GLOW_COLOR = '#4ade80';
-/** Рука Коллектора: рукав тёмного пальто, белая манжета, серая кожа. */
-const HAND_WIDTH = 420;
-const HAND_HEIGHT = 150;
-const SLEEVE_COLOR = 0x1c1917;
-const SLEEVE_FOLD = 0x292524;
-const CUFF_COLOR = 0xd6d3d1;
-const SKIN_COLOR = 0xb9a58c;
-const SKIN_SHADE = 0x8f7d66;
 /** Клетка сетки: рамка обычного символа и рамка черепа. */
 const CELL_BORDER = 0xe2e8f0;
 const SKULL_CELL_BORDER = 0xef4444;
@@ -207,7 +191,7 @@ const MINI_OFF = 0x334155;
 /** Тёмная комната: стена в полоску, плинтус, пол, тёплый отсвет от автомата и тёмные углы. */
 export function drawRoom(scene: Phaser.Scene): void {
   if (!scene.textures.exists(ROOM_TEXTURE)) bakeRoom(scene);
-  scene.add.image(-ROOM_SIDE, 0, ROOM_TEXTURE).setOrigin(0);
+  scene.add.image(0, 0, ROOM_TEXTURE).setOrigin(0);
 }
 
 /**
@@ -215,7 +199,7 @@ export function drawRoom(scene: Phaser.Scene): void {
  * поэтому запекается в обычном размере, без TEXTURE_SCALE: картинка на всю комнату, так меньше памяти.
  */
 function bakeRoom(scene: Phaser.Scene): void {
-  const machineX = CENTER_X + ROOM_SIDE; // где автомат на картинке комнаты
+  const machineX = CENTER_X; // где автомат на картинке комнаты
   const g = scene.add.graphics();
   g.fillStyle(WALL_COLOR);
   g.fillRect(0, 0, ROOM_WIDTH, FLOOR_Y);
@@ -273,6 +257,7 @@ function bakeMachineBody(scene: Phaser.Scene): void {
   drawInset(g, BELLY, 0x000000, 0x7c2d12, BELLY_SHADE); // полупрозрачная: под ней тело корпуса, панель — того же цвета
   drawInset(g, MULTIPLIER_WINDOW, 0x050505, TRIM_COLOR);
   drawInset(g, PAYOUT_WINDOW, 0x050505, TRIM_COLOR);
+  drawInset(g, SKULL_SCREEN, 0x050505, TRIM_COLOR, 1, false); // экранчик доли черепов — та же оправа, что у окна выплаты, но без блика
   drawSockets(g);
   bake(g, MACHINE_TEXTURE, 960, 640);
 }
@@ -315,23 +300,46 @@ function drawBodyTrim(g: Phaser.GameObjects.Graphics, body: Box): void {
   g.strokeRoundedRect(left + TRIM_INSET, top + TRIM_INSET, body.width - 2 * TRIM_INSET, body.height - 2 * TRIM_INSET, 24);
 }
 
-/** Утопленная панель: заливка (fillAlpha — её непрозрачность), рамка и узкий блик сверху. */
-function drawInset(g: Phaser.GameObjects.Graphics, box: Box, fill: number, border: number, fillAlpha = 1): void {
+/** Утопленная панель: заливка (fillAlpha — её непрозрачность), рамка и узкий блик сверху (highlight = false — без блика). */
+function drawInset(g: Phaser.GameObjects.Graphics, box: Box, fill: number, border: number, fillAlpha = 1, highlight = true): void {
   const { left, top } = topLeft(box);
   g.fillStyle(fill, fillAlpha);
   g.fillRoundedRect(left, top, box.width, box.height, 10);
   g.lineStyle(3, border);
   g.strokeRoundedRect(left, top, box.width, box.height, 10);
+  if (!highlight) return;
   g.fillStyle(0xffffff, 0.05);
   g.fillRoundedRect(left + 6, top + 4, box.width - 12, box.height * 0.3, 6);
 }
 
-/** Окно экрана: хромированная рамка и почти чёрное стекло под сеткой. */
+/** Окно экрана: хромированная рамка с заклёпками по углам и почти чёрное стекло под сеткой. */
 function drawScreenFrame(g: Phaser.GameObjects.Graphics, screen: Box): void {
   const { left, top } = topLeft(screen);
   const frame = 8; // ширина хромированной рамки
-  g.fillStyle(CHROME);
-  g.fillRoundedRect(left - frame, top - frame, screen.width + 2 * frame, screen.height + 2 * frame, 22);
+  const outerX = left - frame;
+  const outerY = top - frame;
+  const outerW = screen.width + 2 * frame;
+  const outerH = screen.height + 2 * frame;
+  // Сталь как у панели списка: тёмный контур, средняя заливка, светлая верхняя кромка и тень по низу.
+  g.fillStyle(0x2b3138);
+  g.fillRoundedRect(outerX - 1, outerY - 1, outerW + 2, outerH + 2, 23);
+  g.fillStyle(0x7c8794);
+  g.fillRoundedRect(outerX, outerY, outerW, outerH, 22);
+  // Заклёпки по углам: тёмное гнездо, стальной грибок и светлый блик — как на окантовке списка.
+  const inset = 11;
+  for (const [x, y] of [
+    [outerX + inset, outerY + inset],
+    [outerX + outerW - inset, outerY + inset],
+    [outerX + inset, outerY + outerH - inset],
+    [outerX + outerW - inset, outerY + outerH - inset],
+  ]) {
+    g.fillStyle(0x2b3138);
+    g.fillCircle(x, y, 3.4);
+    g.fillStyle(0xb8c2cf);
+    g.fillCircle(x - 0.5, y - 0.5, 2.4);
+    g.fillStyle(0xe8eef5);
+    g.fillCircle(x - 1, y - 1, 1.1);
+  }
   g.fillStyle(SCREEN_GLASS);
   g.fillRoundedRect(left, top, screen.width, screen.height, 16);
 }
@@ -372,24 +380,33 @@ export function createLeverTextures(scene: Phaser.Scene, rodLength: number): voi
   }
 }
 
+/** Что написано на записке: у долга — «ДОЛГ» и сумма, у цели — «ЦЕЛЬ», сумма ступени и процент под ней. */
+export interface NoteContent {
+  texture: string; // имя текстуры записки: у каждой свои ключ и canvas
+  title: string; // «ДОЛГ» / «ЦЕЛЬ»
+  amount: string; // сумма строкой: у цели — с точками между тысячами
+  caption?: string; // подпись под суммой («18,4%»); есть подпись — вместо полоски
+}
+
 /**
  * Записка с долгом на canvas: листок в линейку, красное поле, скотч, «ДОЛГ» и сумма.
  * Надписи рисуются прямо на листке, поэтому записку можно повернуть одной картинкой.
  * Сумма меняется раз в раунд — тогда записка перерисовывается заново (canvas маленький, это дёшево).
+ * Той же функцией рисуется вторая записка — цель забега: другой ключ текстуры, заголовок и подпись.
  */
 export function drawNoteTexture(
   scene: Phaser.Scene,
   width: number,
   height: number,
-  debt: number,
-  isEnough: boolean,
+  note: NoteContent,
   paid = 0, // доля долга, что уже на табло (0…1)
   pending = 0, // доля долга, что лежит на кону (0…1, вместе с paid не больше 1)
+  goalShare = 0, // доля цели забега (0…1): её показывает зелёная полоска на записке цели
 ): void {
   // Текстура уже есть — её создала эта же функция, значит это canvas: берём его и рисуем заново.
-  const texture = scene.textures.exists(NOTE_TEXTURE)
-    ? (scene.textures.get(NOTE_TEXTURE) as Phaser.Textures.CanvasTexture)
-    : createSharpCanvas(scene, NOTE_TEXTURE, width, height);
+  const texture = scene.textures.exists(note.texture)
+    ? (scene.textures.get(note.texture) as Phaser.Textures.CanvasTexture)
+    : createSharpCanvas(scene, note.texture, width, height);
   if (!texture) return;
   const ctx = texture.context;
   ctx.clearRect(0, 0, width, height);
@@ -399,10 +416,10 @@ export function drawNoteTexture(
   ctx.textBaseline = 'middle';
   ctx.fillStyle = NOTE_INK;
   ctx.font = `bold 18px ${FONT}`;
-  ctx.fillText(t('debt'), width / 2, height / 2 - 16);
+  ctx.fillText(note.title, width / 2, height / 2 - 16);
 
   // Сумма: уменьшаем шрифт, пока она не влезет на листок.
-  const text = String(debt);
+  const text = note.amount;
   let size = NOTE_DEBT_FONT_SIZE;
   ctx.font = `bold ${size}px ${FONT}`;
   while (ctx.measureText(text).width > width - 32 && size > 16) {
@@ -410,10 +427,33 @@ export function drawNoteTexture(
     ctx.font = `bold ${size}px ${FONT}`;
   }
   ctx.fillStyle = NOTE_DEBT_INK;
-  ctx.fillText(text, width / 2, height / 2 + 22);
-  drawNoteBar(ctx, width, paid, pending);
-  if (isEnough) drawNoteCheck(ctx, width, height);
+  if (note.caption === undefined) {
+    // Записка долга: сумма по центру и полоска под ней — как было.
+    ctx.fillText(text, width / 2, height / 2 + 22);
+    drawNoteBar(ctx, width, paid, pending);
+  } else {
+    // Записка цели: сумма выше, под ней процент и зелёная полоска заполнения — в том же стиле, что у долга (DONTLIKE з.2).
+    ctx.fillText(text, width / 2, NOTE_GOAL_AMOUNT_Y);
+    drawNoteCaption(ctx, width, note.caption);
+    drawNoteGoalBar(ctx, width, goalShare);
+  }
   texture.refresh(); // передать нарисованное в видеокарту
+}
+
+/** Подпись под суммой — процент цели, набранный до десятых (на записке цели он стоит над полоской). */
+function drawNoteCaption(ctx: CanvasRenderingContext2D, width: number, caption: string): void {
+  ctx.fillStyle = NOTE_INK;
+  ctx.font = `bold ${NOTE_CAPTION_FONT_SIZE}px ${FONT}`;
+  ctx.fillText(caption, width / 2, NOTE_CAPTION_Y);
+}
+
+/** Полоска цели: пустая часть и зелёная заливка по проценту — тот же стиль, что у полоски долга (DONTLIKE з.2). */
+function drawNoteGoalBar(ctx: CanvasRenderingContext2D, width: number, share: number): void {
+  const barWidth = width - NOTE_BAR_LEFT - NOTE_BAR_RIGHT;
+  ctx.fillStyle = NOTE_BAR_TRACK;
+  ctx.fillRect(NOTE_BAR_LEFT, NOTE_GOAL_BAR_Y, barWidth, NOTE_BAR_HEIGHT);
+  ctx.fillStyle = NOTE_BAR_COLOR;
+  ctx.fillRect(NOTE_BAR_LEFT, NOTE_GOAL_BAR_Y, barWidth * Math.max(0, Math.min(1, share)), NOTE_BAR_HEIGHT);
 }
 
 /** Полоска долга под суммой, как полоска прогресса: тёмная — на табло, бледная — ещё на кону. */
@@ -425,19 +465,6 @@ function drawNoteBar(ctx: CanvasRenderingContext2D, width: number, paid: number,
   ctx.fillRect(NOTE_BAR_LEFT, NOTE_BAR_Y, barWidth * (paid + pending), NOTE_BAR_HEIGHT);
   ctx.fillStyle = NOTE_BAR_COLOR;
   ctx.fillRect(NOTE_BAR_LEFT, NOTE_BAR_Y, barWidth * paid, NOTE_BAR_HEIGHT);
-}
-
-/** Зелёная галочка в правом нижнем углу записки: фишек на табло хватает на долг. */
-function drawNoteCheck(ctx: CanvasRenderingContext2D, width: number, height: number): void {
-  ctx.strokeStyle = NOTE_CHECK_COLOR;
-  ctx.lineWidth = 6;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.beginPath();
-  ctx.moveTo(width * 0.66, height * 0.72);
-  ctx.lineTo(width * 0.75, height * 0.84);
-  ctx.lineTo(width * 0.93, height * 0.56);
-  ctx.stroke();
 }
 
 /** Листок записки: тень на стене, старая тёмная бумага (в цвет комнаты) с пятнами и сгибом, линейки, поле и скотч. */
@@ -505,7 +532,7 @@ export function createNoteGlowTexture(scene: Phaser.Scene, width: number, height
   texture.refresh(); // передать нарисованное в видеокарту
 }
 
-/** Фишка анфас (на табло, в окошке выплаты и в брызгах) — на canvas, чтобы нарисовать «1». */
+/** Фишка анфас (на табло, в окошке выплаты и в брызгах) — на canvas: нужен градиент и обводка. */
 export function createChipTextures(scene: Phaser.Scene): void {
   if (scene.textures.exists(CHIP_TEXTURE)) return;
   const texture = createSharpCanvas(scene, CHIP_TEXTURE, CHIP_SIZE, CHIP_SIZE);
@@ -517,7 +544,7 @@ export function createChipTextures(scene: Phaser.Scene): void {
 
 /**
  * Фишка анфас на canvas, как настоящая казино-фишка: красный корпус с лёгким объёмом, кремовые вставки по ободу,
- * внутри тёмный диск с двойным кольцом и «1» с обводкой, сверху блик. Рисуется для любого size (от значка на мониторе до большой).
+ * внутри тёмный диск с двойным кольцом, сверху блик. Рисуется для любого size (от значка на мониторе до большой).
  */
 function drawChip(ctx: CanvasRenderingContext2D, size: number): void {
   const center = size / 2;
@@ -564,16 +591,6 @@ function drawChip(ctx: CanvasRenderingContext2D, size: number): void {
   ctx.beginPath();
   ctx.arc(center, center, 0.5 * center, 0, Math.PI * 2);
   ctx.stroke();
-  // «1» с тёмной обводкой.
-  ctx.font = `bold ${Math.round(size * 0.46)}px ${FONT}`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = Math.max(1, 5 * unit);
-  ctx.strokeStyle = CHIP_EDGE;
-  ctx.strokeText('1', center, center + unit);
-  ctx.fillStyle = CHIP_CREAM;
-  ctx.fillText('1', center, center + unit);
   // Блик сверху слева.
   ctx.beginPath();
   ctx.arc(center, center, center - 2.5 * unit, 0, Math.PI * 2);
@@ -649,56 +666,12 @@ export function createTakeButtonTextures(scene: Phaser.Scene): void {
   }
 }
 
-/** Рука Коллектора: раскрытая ладонью вверх (ждёт долг) и кулаком (забрал или злится). Рукав уходит за правый край. */
-export function createHandTextures(scene: Phaser.Scene): void {
-  if (!scene.textures.exists(HAND_OPEN_TEXTURE)) bakeHand(scene, HAND_OPEN_TEXTURE, drawOpenHand);
-  if (!scene.textures.exists(HAND_FIST_TEXTURE)) bakeHand(scene, HAND_FIST_TEXTURE, drawFist);
-}
-
-/** Рукав и запястье одинаковые, кисть рисует drawHand — и всё в текстуру key. */
-function bakeHand(scene: Phaser.Scene, key: string, drawHand: (g: Phaser.GameObjects.Graphics) => void): void {
-  const g = scene.add.graphics();
-  g.fillStyle(SLEEVE_COLOR);
-  g.fillRoundedRect(232, 26, 200, 98, 18); // рукав пальто, уходит за правый край
-  g.fillStyle(SLEEVE_FOLD);
-  g.fillRect(232, 26, 200, 8); // складка сверху
-  g.fillStyle(CUFF_COLOR);
-  g.fillRoundedRect(214, 40, 26, 70, 6); // манжета
-  g.fillStyle(SKIN_COLOR);
-  g.fillRect(180, 56, 40, 42); // запястье
-  drawHand(g);
-  bake(g, key, HAND_WIDTH, HAND_HEIGHT);
-}
-
-/** Раскрытая ладонь вверх: ладонь, четыре пальца к игроку и большой палец сверху. */
-function drawOpenHand(g: Phaser.GameObjects.Graphics): void {
-  g.fillStyle(SKIN_COLOR);
-  g.fillRoundedRect(112, 50, 80, 56, 14); // ладонь
-  g.fillRoundedRect(40, 52, 82, 13, 6); // указательный
-  g.fillRoundedRect(28, 67, 94, 13, 6); // средний
-  g.fillRoundedRect(36, 82, 86, 13, 6); // безымянный
-  g.fillRoundedRect(54, 96, 68, 11, 5); // мизинец
-  g.fillRoundedRect(122, 34, 52, 16, 7); // большой палец
-  g.fillStyle(SKIN_SHADE);
-  g.fillRect(118, 54, 3, 50); // складка у основания пальцев
-}
-
-/** Кулак: пальцы поджаты, видны костяшки, большой палец поверх. */
-function drawFist(g: Phaser.GameObjects.Graphics): void {
-  g.fillStyle(SKIN_COLOR);
-  g.fillRoundedRect(96, 46, 98, 64, 16); // кулак
-  g.fillStyle(SKIN_SHADE);
-  for (const y of [56, 70, 84, 98]) g.fillCircle(104, y, 7); // костяшки
-  g.fillStyle(SKIN_COLOR);
-  g.fillRoundedRect(110, 40, 60, 16, 7); // большой палец
-}
-
 /** Лампочки по верхнему и нижнему краю окна экрана. Порядок — по кругу: верх слева направо, низ справа налево. */
 export function createLamps(scene: Phaser.Scene, x: number, y: number, width: number, height: number): Phaser.GameObjects.Arc[] {
   const xs: number[] = [];
   for (let lampX = x - width / 2 + 24; lampX <= x + width / 2 - 24; lampX += 26) xs.push(lampX);
-  const top = xs.map((lampX) => scene.add.circle(lampX, y - height / 2, 5, LAMP_OFF));
-  const bottom = [...xs].reverse().map((lampX) => scene.add.circle(lampX, y + height / 2, 5, LAMP_OFF));
+  const top = xs.map((lampX) => scene.add.circle(lampX, y - height / 2, 5, LAMP_OFF).setDepth(LAMP_DEPTH));
+  const bottom = [...xs].reverse().map((lampX) => scene.add.circle(lampX, y + height / 2, 5, LAMP_OFF).setDepth(LAMP_DEPTH));
   return [...top, ...bottom];
 }
 
@@ -854,10 +827,6 @@ function drawItem(ctx: CanvasRenderingContext2D, item: Item, size: number): void
   ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
   ctx.fill(); // блик
 
-  if (item.id === 'bullet') {
-    drawCartridge(ctx, size); // у патрона нет знака: он нарисован
-    return;
-  }
   const isText = item.sign.startsWith('×'); // «×3» — надпись, а не эмодзи: рисуем золотом
   ctx.font = `bold ${Math.round(size * (isText ? 0.46 : 0.52))}px ${FONT}`;
   ctx.textAlign = 'center';
@@ -869,52 +838,24 @@ function drawItem(ctx: CanvasRenderingContext2D, item: Item, size: number): void
   ctx.fillText(item.sign, size / 2, size / 2 + 2);
 }
 
-/**
- * Патрон дробовика в квадрате size×size: медная пуля, золотая гильза с бликом и донце.
- * Один рисунок — и на предмете (патрон на полке и в магазине), и летящий в дробовик Коллектора.
- */
-function drawCartridge(ctx: CanvasRenderingContext2D, size: number): void {
-  const width = size * 0.26;
-  const left = (size - width) / 2;
-  const right = left + width;
-  const tipTop = size * 0.13; // кончик пули
-  const caseTop = size * 0.37; // здесь пуля входит в гильзу
-  const caseBottom = size * 0.77;
-  const caseHeight = caseBottom - caseTop;
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
-  ctx.shadowBlur = 6 * TEXTURE_SCALE; // тень canvas не увеличивается вместе с картинкой
-  ctx.shadowOffsetY = 2 * TEXTURE_SCALE;
-  ctx.fillStyle = '#c2410c';
-  ctx.beginPath();
-  ctx.moveTo(left, caseTop);
-  ctx.quadraticCurveTo(left, tipTop, size / 2, tipTop);
-  ctx.quadraticCurveTo(right, tipTop, right, caseTop);
-  ctx.closePath();
-  ctx.fill(); // пуля
-  ctx.fillStyle = '#eab308';
-  ctx.fillRect(left, caseTop, width, caseHeight); // гильза
-  ctx.shadowColor = 'transparent';
-  ctx.fillStyle = 'rgba(255, 237, 213, 0.45)';
-  ctx.beginPath();
-  ctx.ellipse(left + width * 0.32, caseTop - (caseTop - tipTop) * 0.45, width * 0.12, (caseTop - tipTop) * 0.28, 0, 0, Math.PI * 2);
-  ctx.fill(); // блик на пуле
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-  ctx.fillRect(left + width * 0.18, caseTop + 2, width * 0.2, caseHeight - 4); // блик на гильзе
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
-  ctx.fillRect(right - width * 0.36, caseTop + 2, width * 0.2, caseHeight - 4); // тень справа
-  ctx.fillStyle = '#b45309';
-  ctx.fillRect(left - size * 0.03, caseBottom, width + size * 0.06, size * 0.06); // донце
+/** Пустое гнездо под включённый предмет у экрана: тёмная ниша в бронзовой рамке — видно, что мест четыре (DONTLIKE хоч. 11). */
+export function createEffectSlotTexture(scene: Phaser.Scene, size: number): void {
+  if (scene.textures.exists(EFFECT_SLOT_TEXTURE)) return;
+  const g = scene.add.graphics();
+  const plate = size - 6; // сама плитка чуть меньше текстуры: по центру картинки, центр 23 при size = 46
+  const inset = 3; // отступ плитки от края текстуры
+  g.fillStyle(0x000000, 0.45);
+  g.fillRoundedRect(inset + 2, inset + 3, plate, plate, 10); // тень уходит вниз-вправо и остаётся внутри текстуры
+  g.fillStyle(TRIM_COLOR);
+  g.fillRoundedRect(inset, inset, plate, plate, 10); // бронзовая рамка — как окантовка автомата, ровно по центру текстуры
+  g.fillStyle(0x1c1917);
+  g.fillRoundedRect(inset + 3, inset + 3, plate - 6, plate - 6, 8); // ниша
+  g.fillStyle(0x0b0f19);
+  g.fillRoundedRect(inset + 6, inset + 6, plate - 12, plate - 12, 6); // глубина: к центру ещё темнее
+  bake(g, EFFECT_SLOT_TEXTURE, size, size);
 }
 
-/** Твой патрон, летящий в дробовик Коллектора, — тот же рисунок, что на предмете, только без коробочки. */
-function drawGoldBullet(scene: Phaser.Scene): void {
-  const texture = createSharpCanvas(scene, BULLET_GOLD_TEXTURE, GOLD_BULLET_SIZE, GOLD_BULLET_SIZE);
-  if (!texture) return;
-  drawCartridge(texture.context, GOLD_BULLET_SIZE);
-  texture.refresh(); // передать нарисованное в видеокарту
-}
-
-/** Клетка полки: деревянная рамка и тёмная ниша; и доски, которыми заколочена закрытая клетка. */
+/** Клетка полки: деревянная рамка и тёмная ниша; и дверца с кодовым замком, которой закрыт купленный отсек. */
 export function createShelfTextures(scene: Phaser.Scene, size: number): void {
   if (!scene.textures.exists(SHELF_CELL_TEXTURE)) {
     const g = scene.add.graphics();
@@ -924,10 +865,12 @@ export function createShelfTextures(scene: Phaser.Scene, size: number): void {
     g.fillRoundedRect(0, 0, size, size, 5); // стальная рамка отсека
     g.fillStyle(0x6b7280);
     g.fillRect(4, 1, size - 8, 3); // светлый край рамки сверху
+    // Ниша 54×54 (рамка 6): предмет на полке и его пульс влезают в неё целиком и не заходят на рамку (DONTLIKE п.13).
+    const niche = size - 2 * SHELF_FRAME; // size — сторона клетки (SHELF_CELL): 66 − 12 = 54
     g.fillStyle(0x0d0f12);
-    g.fillRect(7, 7, size - 14, size - 16); // отсек
+    g.fillRect(SHELF_FRAME, SHELF_FRAME, niche, niche);
     g.fillStyle(0x4b5563);
-    g.fillRect(4, size - 10, size - 8, 6); // стальная полочка внизу отсека
+    g.fillRect(4, size - 4, size - 8, 3); // стальная губа по низу рамки — нишу не занимает
     g.fillStyle(0x9ca3af);
     for (const [x, y] of [[4, 4], [size - 4, 4], [4, size - 4], [size - 4, size - 4]]) g.fillCircle(x, y, 1.6); // болты по углам
     bake(g, SHELF_CELL_TEXTURE, size + 4, size + 5);
@@ -938,6 +881,51 @@ export function createShelfTextures(scene: Phaser.Scene, size: number): void {
     drawShelfDoor(texture.context, size);
     texture.refresh(); // передать нарисованное в видеокарту
   }
+  // «Место на полке» в витрине маленького автомата: та же стальная клетка, но в нише — золотой плюс.
+  // Раньше здесь стояла пустая SHELF_CELL_TEXTURE, и товар читался серым квадратом (баг шага 43).
+  if (!scene.textures.exists(SHOP_SLOT_TEXTURE)) {
+    const g = scene.add.graphics();
+    g.fillStyle(0x000000, 0.5);
+    g.fillRoundedRect(4, 5, size, size, 5); // тень на полке
+    g.fillStyle(0x2f353d);
+    g.fillRoundedRect(0, 0, size, size, 5); // стальная рамка отсека
+    g.fillStyle(0x6b7280);
+    g.fillRect(4, 1, size - 8, 3); // светлый край рамки сверху
+    const niche = size - 2 * SHELF_FRAME;
+    g.fillStyle(0x0d0f12);
+    g.fillRect(SHELF_FRAME, SHELF_FRAME, niche, niche); // ниша
+    g.fillStyle(0xfbbf24);
+    g.fillRoundedRect(size / 2 - 3, size / 2 - 13, 6, 26, 2); // золотой плюс: ещё одно место
+    g.fillRoundedRect(size / 2 - 13, size / 2 - 3, 26, 6, 2);
+    g.fillStyle(0x4b5563);
+    g.fillRect(4, size - 4, size - 8, 3); // стальная губа по низу рамки
+    g.fillStyle(0x9ca3af);
+    for (const [x, y] of [[4, 4], [size - 4, 4], [4, size - 4], [size - 4, size - 4]]) g.fillCircle(x, y, 1.6); // болты
+    bake(g, SHOP_SLOT_TEXTURE, size + 4, size + 5);
+  }
+}
+
+/**
+ * Пятно тьмы над полками предметов: то же, что тьма первого забега (DARK_COLOR в parts/reveal.ts), но мягкое —
+ * скруглённое и с размытым краем, как пятно света вокруг автомата. Пока обучение не дошло до бита «Это места
+ * под предметы», полка стоит в темноте, а не под чёрной накладкой с резкими углами (замечание автора 25.11).
+ * width × height — размер самого пятна (по нему кроит ItemShelf); картинка шире на SHELF_DARK_BLUR с каждой
+ * стороны, иначе размыв обрезался бы её краем.
+ */
+export function createShelfDarkTexture(scene: Phaser.Scene, width: number, height: number, color: string): void {
+  if (scene.textures.exists(SHELF_DARK_TEXTURE)) return;
+  const texture = createSharpCanvas(scene, SHELF_DARK_TEXTURE, width + SHELF_DARK_BLUR * 2, height + SHELF_DARK_BLUR * 2);
+  if (!texture) return;
+  const ctx = texture.context;
+  ctx.save();
+  // Canvas уже увеличен в TEXTURE_SCALE раз: размыв считается в его пикселях. Где фильтра нет — останется мягкое скругление.
+  if ('filter' in ctx) ctx.filter = `blur(${SHELF_DARK_BLUR * TEXTURE_SCALE}px)`;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.roundRect(SHELF_DARK_BLUR, SHELF_DARK_BLUR, width, height, SHELF_DARK_ROUNDING);
+  ctx.fill();
+  ctx.restore();
+  texture.refresh(); // передать нарисованное в видеокарту
 }
 
 /** Стальная дверца отсека: полосы шлифовки, заклёпки по углам, окошко для трёх цифр кодового замка (цифры рисует сцена). */
@@ -980,23 +968,7 @@ function drawShelfDoor(ctx: CanvasRenderingContext2D, size: number): void {
   }
 }
 
-/** Круглая кнопка со стрелкой вправо: «назад к игровому автомату». */
-export function createLeaveButtonTexture(scene: Phaser.Scene): void {
-  if (scene.textures.exists(LEAVE_BUTTON_TEXTURE)) return;
-  const g = scene.add.graphics();
-  g.fillStyle(0x000000, 0.45);
-  g.fillCircle(31, 33, 28); // тень
-  g.fillStyle(0x1c1917);
-  g.fillCircle(30, 30, 28);
-  g.lineStyle(3, 0xfbbf24);
-  g.strokeCircle(30, 30, 26);
-  g.fillStyle(0xffffff);
-  g.fillRect(16, 26, 18, 8); // древко стрелки
-  g.fillTriangle(32, 16, 46, 30, 32, 44); // наконечник
-  bake(g, LEAVE_BUTTON_TEXTURE, 62, 62);
-}
-
-/** Кнопка «▶ продолжить» на экране паузы: как кнопка «назад», только вместо стрелки — треугольник. */
+/** Кнопка «▶ продолжить» на экране паузы: круг с золотым ободком, вместо стрелки — треугольник. */
 export const PLAY_BUTTON_TEXTURE = 'play-button';
 
 export function createPlayButtonTexture(scene: Phaser.Scene): void {
@@ -1153,46 +1125,93 @@ function drawSignTriangles(g: Phaser.GameObjects.Graphics, bases: number[], dire
 }
 
 /**
- * Комната слева от автомата: стена и торговый автомат — одна картинка (неподвижное). Чемодан с амулетами на стене рисует AmuletCase.
- * Предметы и ценники кладут поверх части Shop.
+ * Панель магазина: неподвижные картинки, запекаются один раз. Фон идёт первым: Shop вешает на него клики,
+ * чтобы они не проходили сквозь панель на рычаг, телевизор и полку. Порядок картинок — от задних к передним:
+ * фон → корпус автомата → (товар, его кладёт Shop между ними) → спирали → стекло витрины.
+ * Чемодан с амулетами, барабан и кассету кладут поверх части AmuletCase, Drum и Cassette.
  */
-export function drawShopRoom(scene: Phaser.Scene, rows: number): void {
-  if (!scene.textures.exists(SHOP_ROOM_TEXTURE)) bakeShopRoom(scene, rows);
-  const { left, top } = topLeft(LEFT_ROOM);
-  scene.add.image(left, top, SHOP_ROOM_TEXTURE).setOrigin(0);
+export function drawShopPanel(scene: Phaser.Scene, rows: number): Phaser.GameObjects.Image[] {
+  if (!scene.textures.exists(SHOP_PANEL_TEXTURE)) bakeShopPanel(scene, rows);
+  const { left, top } = topLeft(SHOP_PANEL);
+  return [
+    scene.add.image(left, top, SHOP_PANEL_TEXTURE).setOrigin(0), // фон панели
+    scene.add.image(left, top, SHOP_MACHINE_TEXTURE).setOrigin(0), // корпус торгового автомата
+    scene.add.image(left, top, SHOP_SPIRALS_TEXTURE).setOrigin(0), // спирали: они поверх товара
+    scene.add.image(left, top, SHOP_GLASS_TEXTURE).setOrigin(0), // стекло витрины: оно поверх всего в проёме
+  ];
 }
 
-/** Комната слева — в текстуру SHOP_ROOM_TEXTURE. Координаты частей — мировые (из layout.ts), их сдвигаем к началу картинки. */
-function bakeShopRoom(scene: Phaser.Scene, rows: number): void {
-  const { left: roomLeft, top: roomTop } = topLeft(LEFT_ROOM);
-  const local = (box: Box): Box => ({ ...box, x: box.x - roomLeft, y: box.y - roomTop });
-  const g = scene.add.graphics();
-  const width = LEFT_ROOM.width;
-  g.fillStyle(WALL_COLOR);
-  g.fillRect(0, 0, width, FLOOR_Y);
-  g.fillStyle(0xffffff, 0.02); // обои в полоску, как в комнате
-  for (let x = 0; x < width; x += 48) g.fillRect(x, 0, 20, FLOOR_Y);
-  g.fillStyle(0x241a14);
-  g.fillRect(0, FLOOR_Y - 10, width, 10); // плинтус
-  g.fillStyle(FLOOR_COLOR);
-  g.fillRect(0, FLOOR_Y, width, 640 - FLOOR_Y);
+/**
+ * Панель магазина — в текстуры SHOP_PANEL_TEXTURE (фон), SHOP_MACHINE_TEXTURE (корпус), SHOP_SPIRALS_TEXTURE
+ * (спирали под товаром) и SHOP_GLASS_TEXTURE (стекло витрины). Координаты частей — мировые (из layout.ts),
+ * их сдвигаем к началу панели.
+ */
+function bakeShopPanel(scene: Phaser.Scene, rows: number): void {
+  const { left, top } = topLeft(SHOP_PANEL);
+  const width = SHOP_PANEL.width;
+  const height = SHOP_PANEL.height;
+  const local = (box: Box): Box => ({ ...box, x: box.x - left, y: box.y - top });
 
+  // Фон: стена и пол, как в комнате, только светлее от холодного отсвета торгового автомата.
+  // Он из мягких пятен — запекается в обычном размере, без TEXTURE_SCALE, как комната.
   const vending = local(VENDING);
+  const panel = scene.add.graphics();
+  panel.fillStyle(WALL_COLOR);
+  panel.fillRect(0, 0, width, FLOOR_Y);
+  panel.fillStyle(0xffffff, 0.02); // обои в полоску, как в комнате
+  for (let x = 0; x < width; x += 48) panel.fillRect(x, 0, 20, FLOOR_Y);
+  panel.fillStyle(0x241a14);
+  panel.fillRect(0, FLOOR_Y - 10, width, 10); // плинтус
+  panel.fillStyle(FLOOR_COLOR);
+  panel.fillRect(0, FLOOR_Y, width, height - FLOOR_Y);
   for (let i = 0; i < 6; i++) {
-    g.fillStyle(0x22d3ee, 0.022); // холодный отсвет от торгового автомата
-    g.fillEllipse(vending.x, vending.y, 620 - i * 80, 640 - i * 80);
+    panel.fillStyle(0x22d3ee, 0.022); // холодный отсвет от торгового автомата
+    panel.fillEllipse(vending.x, vending.y, 620 - i * 80, 640 - i * 80);
   }
   for (let i = 0; i < 5; i++) {
     const inset = i * 26; // тёмные края, как в комнате
-    g.lineStyle(52, 0x000000, 0.14);
-    g.strokeRect(inset, inset, width - 2 * inset, 640 - 2 * inset);
+    panel.lineStyle(52, 0x000000, 0.14);
+    panel.strokeRect(inset, inset, width - 2 * inset, height - 2 * inset);
   }
-  const coinSlot = { x: VENDING_COIN_SLOT.x - roomLeft, y: VENDING_COIN_SLOT.y - roomTop };
-  drawVendingMachine(g, vending, local(VENDING_GLASS), local(VENDING_BIN), coinSlot, rows, {
-    goodX: VENDING_GOOD_X - roomLeft,
-    priceX: VENDING_PRICE_X - roomLeft,
-  });
-  bake(g, SHOP_ROOM_TEXTURE, width, 640);
+  // Жалюзи: 8 горизонтальных ламелей поперёк панели. Шов тонкий, тень под ним сходит на нет — ламель читается выпуклой,
+  // а панель остаётся фоном: товары и ценники на ней видны.
+  for (let index = 1; index <= SHOP_SLATS; index++) {
+    const seamY = (height / SHOP_SLATS) * index;
+    panel.fillStyle(0x000000, 0.22);
+    panel.fillRect(0, seamY - 2, width, 2); // шов между ламелями
+    panel.fillStyle(0xffffff, 0.03);
+    panel.fillRect(0, seamY, width, 2); // светлая кромка под швом
+    for (let step = 0; step < SLAT_SHADE_STEPS; step++) {
+      panel.fillStyle(0x000000, SLAT_SHADE_ALPHA * (1 - step / SLAT_SHADE_STEPS)); // тень вниз, к середине ламели
+      panel.fillRect(0, seamY + 2 + step * SLAT_SHADE_STEP, width, SLAT_SHADE_STEP);
+    }
+  }
+  // Бронзовая кромка по левому краю: панель выезжает сверху, и стык с комнатой должен читаться.
+  panel.fillStyle(TRIM_COLOR);
+  panel.fillRect(0, 0, PANEL_EDGE, height);
+  panel.fillStyle(0x000000, 0.35);
+  panel.fillRect(PANEL_EDGE, 0, 2, height); // тень кромки на панели
+  panel.generateTexture(SHOP_PANEL_TEXTURE, width, height);
+  panel.destroy();
+
+  const glass = local(VENDING_GLASS);
+  const rowLayout = { goodX: VENDING_GOOD_X - left, priceX: VENDING_PRICE_X - left };
+
+  // Торговый автомат — поверх фона; он с резкими линиями, поэтому запекается крупно (TEXTURE_SCALE).
+  const machine = scene.add.graphics();
+  const coinSlot = { x: VENDING_COIN_SLOT.x - left, y: VENDING_COIN_SLOT.y - top };
+  drawVendingMachine(machine, vending, glass, local(VENDING_BIN), coinSlot, rows, rowLayout);
+  bake(machine, SHOP_MACHINE_TEXTURE, width, height);
+
+  // Спирали отдельной картинкой: Shop кладёт их поверх товара, чтобы предмет лежал за спиралью, а не наклейкой.
+  const spirals = scene.add.graphics();
+  drawVendingSpirals(spirals, glass, rows, rowLayout);
+  bake(spirals, SHOP_SPIRALS_TEXTURE, width, height);
+
+  // Стекло витрины — ещё выше: полупрозрачная плёнка и блик поверх товара и спиралей.
+  const glassPane = scene.add.graphics();
+  drawVendingGlass(glassPane, glass);
+  bake(glassPane, SHOP_GLASS_TEXTURE, width, height);
 }
 
 /** Где в ряду торгового автомата предмет и ценник (мировые x, сдвинутые к началу картинки). */
@@ -1201,7 +1220,52 @@ interface VendingRowLayout {
   priceX: number;
 }
 
-/** Торговый автомат: корпус, неоновая вывеска, витрина с рядами (предмет в спирали, справа табличка ценника), панель с щелью, лоток. */
+/**
+ * Спирали витрины — отдельной картинкой поверх товара: предмет стоит в витрине за спиралью, а не наклейкой.
+ * Ряд считаем так же, как корпус: полка — низ ряда, спираль под предметом.
+ */
+function drawVendingSpirals(g: Phaser.GameObjects.Graphics, glass: Box, rows: number, row: VendingRowLayout): void {
+  const glassTop = glass.y - glass.height / 2;
+  const rowHeight = glass.height / rows;
+  // Спираль ужимается вместе с рядом: при пяти рядах (56 px) прежняя 14 px липла к рамке стекла (DONTLIKE п.6).
+  const coilH = Math.min(14, rowHeight * 0.2);
+  const coilW = coilH * 0.72;
+  const lift = coilH / 2 + 2;
+  const step = Math.min(12, coilW + 2);
+  g.lineStyle(2, 0x64748b);
+  for (let index = 0; index < rows; index++) {
+    const shelfY = glassTop + rowHeight * (index + 1) - 8;
+    for (let x = row.goodX - 24; x <= row.goodX + 24; x += step) g.strokeEllipse(x, shelfY - lift, coilW, coilH);
+  }
+}
+
+/** Стекло витрины: полупрозрачная плёнка на весь проём и диагональный блик — поверх товара и спиралей. */
+function drawVendingGlass(g: Phaser.GameObjects.Graphics, glass: Box): void {
+  const left = glass.x - glass.width / 2;
+  const top = glass.y - glass.height / 2;
+  g.fillStyle(0xffffff, 0.07);
+  g.fillRoundedRect(left, top, glass.width, glass.height, 8); // стекло чуть отсвечивает
+  g.fillStyle(0xffffff, 0.1);
+  g.fillTriangle(left, top + 60, left + 90, top, left + 130, top); // блик по диагонали
+  g.fillTriangle(left, top + 60, left, top + 100, left + 130, top);
+}
+
+/**
+ * Стекло маленькой витрины и чемодана с амулетами: та же плёнка и блик, что у торгового автомата,
+ * но блик — долей от размера проёма (витрины тут меньше). Рисуется поверх товара, под ценниками.
+ */
+export function drawGlassPane(g: Phaser.GameObjects.Graphics, glass: Box, radius = 6): void {
+  const left = glass.x - glass.width / 2;
+  const top = glass.y - glass.height / 2;
+  const gleam = Math.min(glass.width * 0.62, glass.height * 0.46); // вдоль диагонали проёма
+  g.fillStyle(0xffffff, 0.07);
+  g.fillRoundedRect(left, top, glass.width, glass.height, radius); // стекло чуть отсвечивает
+  g.fillStyle(0xffffff, 0.1);
+  g.fillTriangle(left, top + gleam * 0.6, left + gleam * 0.7, top, left + gleam, top); // блик по диагонали
+  g.fillTriangle(left, top + gleam * 0.6, left, top + gleam, left + gleam, top);
+}
+
+/** Торговый автомат: корпус, неоновая вывеска, витрина с рядами (справа табличка ценника), панель с щелью, лоток. */
 function drawVendingMachine(
   g: Phaser.GameObjects.Graphics,
   body: Box,
@@ -1222,18 +1286,21 @@ function drawVendingMachine(
   g.lineStyle(3, 0x475569);
   g.strokeRoundedRect(left + side + 6, top + 6, body.width - side - 12, body.height - 12, 14);
 
-  // Неоновая вывеска сверху: светящаяся трубка, вокруг — свечение.
-  const signTop = top + 12;
+  // Неоновая вывеска сверху: светящаяся трубка, вокруг — свечение. По ширине витрины и тоньше прежней:
+  // раньше она шла во всю лицевую часть, уходила за стекло вправо и ложилась на его верхний угол.
+  const signTop = top + 10;
+  const signWidth = glass.width;
+  const signLeft = glass.x - signWidth / 2;
   for (let i = 3; i >= 1; i--) {
     g.lineStyle(4 + i * 5, 0x22d3ee, 0.08);
-    g.strokeRoundedRect(left + side + 24, signTop, body.width - side - 48, 24, 12);
+    g.strokeRoundedRect(signLeft, signTop, signWidth, 16, 8);
   }
   g.lineStyle(3, 0x67e8f9);
-  g.strokeRoundedRect(left + side + 24, signTop, body.width - side - 48, 24, 12);
+  g.strokeRoundedRect(signLeft, signTop, signWidth, 16, 8);
   g.fillStyle(0x67e8f9);
-  for (let i = 0; i < 3; i++) g.fillCircle(body.x - 24 + i * 24 + side / 2, signTop + 12, 4); // три огонька внутри
+  for (let i = 0; i < 3; i++) g.fillCircle(glass.x - 24 + i * 24, signTop + 8, 3.5); // три огонька внутри
 
-  // Витрина: тёмное стекло, полки рядов, спирали под предметами, таблички ценников и блики.
+  // Витрина: тёмное нутро и полки рядов; спирали и стекло — отдельными картинками поверх товара.
   const glassLeft = glass.x - glass.width / 2;
   const glassTop = glass.y - glass.height / 2;
   g.fillStyle(0x94a3b8);
@@ -1246,14 +1313,9 @@ function drawVendingMachine(
     const shelfY = rowTop + rowHeight - 8; // полка ряда
     g.fillStyle(0x334155);
     g.fillRect(glassLeft + 6, shelfY, glass.width - 12, 4);
-    g.lineStyle(2, 0x64748b);
-    for (let x = row.goodX - 24; x <= row.goodX + 24; x += 12) g.strokeEllipse(x, shelfY - 6, 10, 14); // спираль под предметом
     g.fillStyle(0x020617);
-    g.fillRoundedRect(row.priceX - 16, rowTop + rowHeight / 2 - 13, glassLeft + glass.width - row.priceX + 8, 26, 5); // табличка ценника
+    g.fillRoundedRect(row.priceX - 16, rowTop + rowHeight / 2 - 13, glassLeft + glass.width - 2 - (row.priceX - 16), Math.min(26, rowHeight - 8), 5); // табличка ценника — целиком внутри стекла
   }
-  g.fillStyle(0xffffff, 0.04);
-  g.fillTriangle(glassLeft, glassTop + 60, glassLeft + 90, glassTop, glassLeft + 130, glassTop); // блик
-  g.fillTriangle(glassLeft, glassTop + 60, glassLeft, glassTop + 100, glassLeft + 130, glassTop);
 
   // Панель справа от витрины: щель для фишек и кнопки.
   const { x: slotX, y: slotY } = coinSlot;
@@ -1268,15 +1330,19 @@ function drawVendingMachine(
   g.fillStyle(0xef4444);
   g.fillCircle(slotX, slotY + 150, 4); // лампочка
 
-  // Лоток внизу: тёмный проём и откидная крышка.
+  // Лоток внизу: тень, тёмный проём и откидная крышка — та же конструкция, что у плашки маленького автомата.
   const binLeft = bin.x - bin.width / 2;
   const binTop = bin.y - bin.height / 2;
+  g.fillStyle(0x000000, 0.45);
+  g.fillRoundedRect(binLeft - 3, binTop - 2, bin.width + 10, bin.height + 10, 8); // тень на корпусе
   g.fillStyle(0x94a3b8);
   g.fillRoundedRect(binLeft - 5, binTop - 5, bin.width + 10, bin.height + 10, 8);
   g.fillStyle(0x020617);
   g.fillRoundedRect(binLeft, binTop, bin.width, bin.height, 6);
   g.fillStyle(0x334155);
-  g.fillRect(binLeft + 4, binTop + 3, bin.width - 8, bin.height / 2 - 3); // крышка
+  g.fillRect(binLeft + 4, binTop + 3, bin.width - 8, bin.height * 0.55 - 3); // крышка — как у плашки маленького автомата
+  g.fillStyle(CHROME_LIGHT);
+  g.fillRect(binLeft + 4, binTop + bin.height - 3, bin.width - 8, 1); // блик по нижней кромке проёма
 }
 
 /** «Барабан» в магазине: круглая доска на стене, колесо с секторами, стрелка сверху и подсветка выпавшего сектора. */
@@ -1294,8 +1360,8 @@ const DRUM_GREEN = '#14532d'; // сектор с фишками — зелёны
 const DRUM_GOLD = '#fbbf24';
 const DRUM_DIM = 'rgba(0, 0, 0, 0.65)'; // сектор, который выпасть не может
 
-/** Что нарисовано в секторе колеса: предмет, билет, место на полке или фишки. */
-export type DrumFace = Item | 'ticket' | 'slot' | 'chips';
+/** Что нарисовано в секторе колеса: предмет, билет или фишки. */
+export type DrumFace = Item | 'ticket' | 'chips';
 
 /** Доска под колесом, стрелка и подсветка сектора — неподвижные картинки (колесо рисует drawDrumWheel). */
 export function createDrumTextures(scene: Phaser.Scene, radius: number, sectors: number): void {
@@ -1382,7 +1448,7 @@ function drawDrumSector(ctx: CanvasRenderingContext2D, radius: number, sector: n
   ctx.fill();
 }
 
-/** Картинка приза с серединой в (0, 0): предмет — его коробочка, билет — красный билет, место — клетка полки, фишки — две фишки. */
+/** Картинка приза с серединой в (0, 0): предмет — его коробочка, билет — красный билет, фишки — две фишки. */
 function drawDrumFace(ctx: CanvasRenderingContext2D, face: DrumFace): void {
   ctx.save();
   if (face === 'ticket') {
@@ -1400,8 +1466,6 @@ function drawDrumFace(ctx: CanvasRenderingContext2D, face: DrumFace): void {
       drawChip(ctx, CHIP_SIZE);
       ctx.restore();
     }
-  } else if (face === 'slot') {
-    drawDrumSlot(ctx, DRUM_ICON_SIZE * 0.85);
   } else {
     const scale = DRUM_ICON_SIZE / ITEM_SIZE; // коробочка предмета нарисована под ITEM_SIZE — уменьшаем целиком
     ctx.scale(scale, scale);
@@ -1409,19 +1473,6 @@ function drawDrumFace(ctx: CanvasRenderingContext2D, face: DrumFace): void {
     drawItem(ctx, face, ITEM_SIZE);
   }
   ctx.restore();
-}
-
-/** Пустая клетка полки, как «место» в торговом автомате: деревянная рамка и тёмная ниша с полочкой. */
-function drawDrumSlot(ctx: CanvasRenderingContext2D, size: number): void {
-  const left = -size / 2;
-  ctx.fillStyle = '#4a2f19';
-  ctx.beginPath();
-  ctx.roundRect(left, left, size, size, 3);
-  ctx.fill(); // рамка
-  ctx.fillStyle = '#140d08';
-  ctx.fillRect(left + 3, left + 3, size - 6, size - 7); // ниша
-  ctx.fillStyle = '#6b4423';
-  ctx.fillRect(left + 2, left + size - 5, size - 4, 3); // полочка внизу ниши
 }
 
 /** Золотой обод, спицы между секторами, штырьки на ободе (о них щёлкает стрелка) и ступица. */
@@ -1485,19 +1536,19 @@ function drawAmulet(ctx: CanvasRenderingContext2D, amulet: Amulet, size: number)
   drawMedallion(ctx, amulet.sign, RARITY_COLORS[amulet.rarity], size, amulet.rarity !== 'common');
 }
 
-/** Имя текстуры значка автомата с характером, например 'machine-greedy'. */
-export function characterTexture(character: MachineCharacter): string {
-  return `machine-${character.id}`;
+/** Имя текстуры значка автомата, например 'machine-greedy'. */
+export function characterTexture(machine: MachineSpec): string {
+  return `machine-${machine.id}`;
 }
 
-/** Значки автоматов с характером — такие же медальоны, как амулеты, с золотым ободком: на корпусе и в новости на стекле. */
-export function createCharacterTextures(scene: Phaser.Scene, characters: MachineCharacter[], size: number): void {
-  for (const character of characters) {
-    const key = characterTexture(character);
+/** Значки автоматов — такие же медальоны, как амулеты, с золотым ободком: в выборе автомата, на корпусе и в новости на стекле. */
+export function createCharacterTextures(scene: Phaser.Scene, machines: MachineSpec[], size: number): void {
+  for (const machine of machines) {
+    const key = characterTexture(machine);
     if (scene.textures.exists(key)) continue;
     const texture = createSharpCanvas(scene, key, size, size);
     if (!texture) continue;
-    drawMedallion(texture.context, character.sign, CHARACTER_RING, size, true);
+    drawMedallion(texture.context, machine.sign, CHARACTER_RING, size, true);
     texture.refresh(); // передать нарисованное в видеокарту
   }
 }
@@ -1591,131 +1642,27 @@ export function createSocketCapTexture(scene: Phaser.Scene, radius: number): voi
   bake(g, SOCKET_CAP_TEXTURE, size, size);
 }
 
-/** Игра с Коллектором: стол с сукном, лоток для амулета, дробовик (сбоку и стволом на тебя), вспышка, патроны и кнопки-цели. */
-export function createRouletteTextures(scene: Phaser.Scene, table: Box, tray: Box): void {
-  if (!scene.textures.exists(ROULETTE_TABLE_TEXTURE)) {
-    const g = scene.add.graphics();
-    g.fillStyle(0x3b2412);
-    g.fillRoundedRect(0, 0, table.width, table.height, 16); // деревянный край
-    g.fillStyle(0x14532d);
-    g.fillRoundedRect(8, 8, table.width - 16, table.height - 16, 12); // сукно
-    g.fillStyle(0xffffff, 0.04);
-    g.fillRoundedRect(16, 12, table.width - 32, 14, 6); // свет лампы на сукне
-    bake(g, ROULETTE_TABLE_TEXTURE, table.width, table.height);
-  }
-  if (!scene.textures.exists(AMULET_TRAY_TEXTURE)) {
-    const g = scene.add.graphics();
-    g.fillStyle(0xb45309);
-    g.fillRoundedRect(0, 0, tray.width, tray.height, 10); // латунный край
-    g.fillStyle(0x3f0a0a);
-    g.fillRoundedRect(4, 4, tray.width - 8, tray.height - 8, 8); // бархат
-    bake(g, AMULET_TRAY_TEXTURE, tray.width, tray.height);
-  }
-  if (!scene.textures.exists(SHOTGUN_TEXTURE)) bakeShotgun(scene);
-  if (!scene.textures.exists(MUZZLE_TEXTURE)) bakeMuzzle(scene);
-  if (!scene.textures.exists(MUZZLE_FLASH_TEXTURE)) drawMuzzleFlash(scene);
-  if (!scene.textures.exists(BULLET_LIVE_TEXTURE)) bakeBullet(scene, BULLET_LIVE_TEXTURE, 0xdc2626);
-  if (!scene.textures.exists(BULLET_BLANK_TEXTURE)) bakeBullet(scene, BULLET_BLANK_TEXTURE, 0x2563eb);
-  if (!scene.textures.exists(BULLET_GOLD_TEXTURE)) drawGoldBullet(scene);
-  if (!scene.textures.exists(AIM_COLLECTOR_TEXTURE)) bakeAimButton(scene, AIM_COLLECTOR_TEXTURE, drawCrosshair);
-  if (!scene.textures.exists(AIM_SELF_TEXTURE)) bakeAimButton(scene, AIM_SELF_TEXTURE, drawSmallMuzzle);
-}
-
-/**
- * Дробовик сбоку, ствол вправо (размер и точка ствола — `SHOTGUN_SIZE`, `SHOTGUN_BARREL_TIP`):
- * деревянный приклад, затвор, длинный ствол с мушкой, под ним магазин и цевьё.
- */
-function bakeShotgun(scene: Phaser.Scene): void {
-  const v = (x: number, y: number): Phaser.Math.Vector2 => new Phaser.Math.Vector2(x, y);
+/** Гнездо амулета в маленьком автомате магазина: то же, что на корпусе (хром и тёмная лунка), только крупнее. */
+export function createMiniSocketTexture(scene: Phaser.Scene, radius: number): void {
+  if (scene.textures.exists(MINI_SOCKET_TEXTURE)) return;
+  const size = radius * 2;
   const g = scene.add.graphics();
-  g.fillStyle(0x5b2a12);
-  g.fillPoints([v(0, 31), v(30, 22), v(36, 36), v(8, 52)], true); // приклад
-  g.fillStyle(0x7c3a17);
-  g.fillPoints([v(4, 32), v(28, 25), v(32, 34), v(10, 46)], true); // светлая накладка
-  g.fillStyle(0x27272a);
-  g.fillRoundedRect(30, 16, 26, 19, 4); // затвор
-  g.lineStyle(3, 0x27272a);
-  g.strokeCircle(46, 40, 6); // спусковая скоба
-  g.fillStyle(0x52525b);
-  g.fillRect(44, 34, 3, 7); // спуск
-  g.fillStyle(0x3f3f46);
-  g.fillRect(56, 15, 60, 8); // ствол
-  g.fillStyle(0x27272a);
-  g.fillRect(56, 25, 46, 6); // магазин под стволом
-  g.fillStyle(0x7c3a17);
-  g.fillRoundedRect(66, 24, 28, 11, 3); // цевьё
-  g.fillStyle(0x5b2a12);
-  g.fillRect(70, 26, 20, 2);
-  g.fillStyle(0x27272a);
-  g.fillRect(111, 11, 4, 4); // мушка
-  g.fillStyle(0xa1a1aa);
-  g.fillRect(56, 15, 60, 2); // блик на стволе: дробовик виден и в темноте
-  g.fillRect(32, 17, 22, 2); // блик на затворе
-  bake(g, SHOTGUN_TEXTURE, SHOTGUN_SIZE.width, SHOTGUN_SIZE.height);
+  g.fillStyle(0x000000, 0.4);
+  g.fillCircle(radius + 2, radius + 3, radius); // тень на полке
+  g.fillStyle(CHROME);
+  g.fillCircle(radius, radius, radius); // хромированное кольцо
+  g.fillStyle(0x0b0f19);
+  g.fillCircle(radius, radius, radius - 5); // лунка
+  g.lineStyle(2, 0x475569);
+  g.strokeCircle(radius, radius, radius - 5);
+  // Товар «ещё одно гнездо»: в лунке золотой плюс — иначе пустое гнездо читалось круглой дыркой (баг шага 43).
+  g.fillStyle(0xfbbf24);
+  g.fillRoundedRect(radius - 1.5, radius - 9, 3, 18, 1);
+  g.fillRoundedRect(radius - 9, radius - 1.5, 18, 3, 1);
+  bake(g, MINI_SOCKET_TEXTURE, size, size);
 }
 
-/** Дробовик стволом на тебя: снизу приклад, магазин под стволом, поверх — ствол с чёрным дулом и мушкой. */
-function bakeMuzzle(scene: Phaser.Scene): void {
-  const size = 80;
-  const center = size / 2;
-  const g = scene.add.graphics();
-  g.fillStyle(0x5b2a12);
-  g.fillRoundedRect(center - 13, 58, 26, 22, 5); // приклад
-  g.fillStyle(0x3f3f46);
-  g.fillCircle(center, 50, 13); // магазин под стволом
-  g.fillStyle(0x27272a);
-  g.fillCircle(center, 50, 9);
-  g.fillStyle(0x27272a);
-  g.fillCircle(center, center + MUZZLE_BORE.y, 17); // ствол
-  g.fillRect(center - 2, 5, 4, 7); // мушка
-  g.fillStyle(0xa1a1aa);
-  g.fillCircle(center, center + MUZZLE_BORE.y, 14);
-  g.fillStyle(0x000000);
-  g.fillCircle(center, center + MUZZLE_BORE.y, 10); // дуло
-  bake(g, MUZZLE_TEXTURE, size, size);
-}
-
-/** Вспышка выстрела: восьмиконечная звезда, белая посередине, к краям — жёлтая, оранжевая и прозрачная (радиальный градиент на canvas). */
-function drawMuzzleFlash(scene: Phaser.Scene): void {
-  const size = 64;
-  const center = size / 2;
-  const texture = createSharpCanvas(scene, MUZZLE_FLASH_TEXTURE, size, size);
-  if (!texture) return;
-  const ctx = texture.context;
-  const glow = ctx.createRadialGradient(center, center, 0, center, center, center);
-  glow.addColorStop(0, 'rgba(255, 255, 255, 1)');
-  glow.addColorStop(0.3, 'rgba(253, 224, 71, 0.95)');
-  glow.addColorStop(0.65, 'rgba(249, 115, 22, 0.6)');
-  glow.addColorStop(1, 'rgba(249, 115, 22, 0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  for (let point = 0; point < 16; point++) {
-    const radius = point % 2 === 0 ? center : center * 0.4; // лучи и впадины между ними
-    const angle = (point * Math.PI) / 8;
-    ctx.lineTo(center + radius * Math.cos(angle), center + radius * Math.sin(angle));
-  }
-  ctx.closePath();
-  ctx.fill();
-  texture.refresh(); // передать нарисованное в видеокарту
-}
-
-/** Патрон стоя, как гильза в Buckshot Roulette: корпус цвета color (боевой — красный, холостой — синий), латунное донце. */
-function bakeBullet(scene: Phaser.Scene, key: string, color: number): void {
-  const g = scene.add.graphics();
-  g.fillStyle(color);
-  g.fillRoundedRect(1, 2, 12, 22, 3); // корпус
-  g.fillStyle(0xffffff, 0.3);
-  g.fillRect(3, 5, 2, 16); // блик
-  g.fillStyle(0x000000, 0.25);
-  g.fillRect(10, 5, 2, 16); // тень справа
-  g.fillStyle(0xf59e0b);
-  g.fillRect(1, 22, 12, 7); // латунь
-  g.fillStyle(0xb45309);
-  g.fillRect(0, 28, 14, 5); // донце
-  bake(g, key, 14, 34);
-}
-
-// Трещины от пули: лучи из дыры (угол, длина, излом) и обрывки колец между ними. Числа постоянные — картинка всегда одна.
+// Трещины от взрыва: лучи из дыры (угол, длина, излом) и обрывки колец между ними. Числа постоянные — картинка всегда одна.
 const CRACK_RAYS = [
   { angle: 0.15, length: 70, bend: 5 },
   { angle: 0.85, length: 50, bend: -4 },
@@ -1737,7 +1684,7 @@ const CRACK_RINGS = [
 ];
 const CRACK_HOLE = 8; // радиус дыры
 
-/** Дыра от пули на стекле экрана и трещины вокруг неё (canvas: тонкие светлые линии и чёрная дыра с ободком). */
+/** Дыра на стекле экрана и трещины вокруг неё (canvas: тонкие светлые линии и чёрная дыра с ободком). */
 export function createCrackTexture(scene: Phaser.Scene): void {
   if (scene.textures.exists(CRACK_TEXTURE)) return;
   const texture = createSharpCanvas(scene, CRACK_TEXTURE, CRACK_SIZE, CRACK_SIZE);
@@ -1774,177 +1721,25 @@ export function createCrackTexture(scene: Phaser.Scene): void {
   texture.refresh(); // передать нарисованное в видеокарту
 }
 
-/** Круглая кнопка-цель, как стрелки Дилера: тень, тёмный круг в золотом кольце, на нём значок drawIcon. */
-function bakeAimButton(scene: Phaser.Scene, key: string, drawIcon: (g: Phaser.GameObjects.Graphics) => void): void {
-  const g = scene.add.graphics();
-  g.fillStyle(0x000000, 0.45);
-  g.fillCircle(27, 29, 25); // тень
-  g.fillStyle(0x1f2937);
-  g.fillCircle(26, 26, 25);
-  g.lineStyle(3, 0xfbbf24);
-  g.strokeCircle(26, 26, 23);
-  drawIcon(g);
-  bake(g, key, 54, 56);
-}
-
-/** Красный прицел: кольцо, четыре риски и точка посередине. */
-function drawCrosshair(g: Phaser.GameObjects.Graphics): void {
-  g.lineStyle(3, 0xef4444);
-  g.strokeCircle(26, 26, 11);
-  g.lineBetween(26, 8, 26, 18);
-  g.lineBetween(26, 34, 26, 44);
-  g.lineBetween(8, 26, 18, 26);
-  g.lineBetween(34, 26, 44, 26);
-  g.fillStyle(0xef4444);
-  g.fillCircle(26, 26, 2.5);
-}
-
-/** Маленькая кнопка «в себя»: кружок с гнёздами и над ним чёрное дуло. */
-function drawSmallMuzzle(g: Phaser.GameObjects.Graphics): void {
-  g.fillStyle(0x71717a);
-  g.fillCircle(26, 30, 13);
-  g.fillStyle(0x18181b);
-  for (let chamber = 0; chamber < 6; chamber++) {
-    const angle = ((chamber * 60 - 90) * Math.PI) / 180;
-    g.fillCircle(26 + 8 * Math.cos(angle), 30 + 8 * Math.sin(angle), 2.2);
-  }
-  g.fillStyle(0x27272a);
-  g.fillCircle(26, 22, 7.5); // ствол
-  g.fillStyle(0xa1a1aa);
-  g.fillCircle(26, 22, 5.5);
-  g.fillStyle(0x000000);
-  g.fillCircle(26, 22, 3.5); // дуло
-}
-
-/** Имя текстуры карты Дилера, например 'card-7'. */
-export function cardTexture(value: number): string {
-  return `card-${value}`;
-}
-
 /**
- * Игра Дилера: карты от min до max (белые, крупная цифра, ♠ в углах), рубашка, фиолетовое сукно поверх экрана,
- * две кнопки-стрелки, фишка для стопки-ставки и свечение под ней.
- * Цифры нарисованы прямо на картах, поэтому карту можно переворачивать одной картинкой.
+ * Стол Дилера: фиолетовое сукно поверх экрана автомата. На сукно ложатся три карты-сделки (parts/dealerTable.ts):
+ * сами карты рисует стол, в decor.ts нужна только подложка.
  */
-export function createDealerTextures(scene: Phaser.Scene, min: number, max: number, felt: Box): void {
-  const width = 66;
-  const height = 92;
-  for (let value = min; value <= max; value++) {
-    const key = cardTexture(value);
-    if (scene.textures.exists(key)) continue;
-    const texture = createSharpCanvas(scene, key, width, height);
-    if (!texture) continue;
-    drawCard(texture.context, width, height, String(value));
-    texture.refresh(); // передать нарисованное в видеокарту
-  }
-  if (!scene.textures.exists(CARD_BACK_TEXTURE)) {
-    const g = scene.add.graphics();
-    g.fillStyle(0xf8fafc);
-    g.fillRoundedRect(0, 0, width, height, 8);
-    g.fillStyle(0x9d174d);
-    g.fillRoundedRect(5, 5, width - 10, height - 10, 6); // рубашка
-    g.lineStyle(2, 0xfbcfe8, 0.5);
-    for (let y = 14; y < height - 10; y += 8) g.lineBetween(10, y, width - 10, y); // полосы рубашки
-    g.lineStyle(3, 0xfbcfe8);
-    g.strokeCircle(width / 2, height / 2, 14); // круг посередине
-    bake(g, CARD_BACK_TEXTURE, width, height);
-  }
-  if (!scene.textures.exists(DEALER_FELT_TEXTURE)) {
-    const g = scene.add.graphics();
-    g.fillStyle(0x2e1065);
-    g.fillRoundedRect(0, 0, felt.width, felt.height, 16); // фиолетовое сукно
-    g.lineStyle(3, 0xa855f7);
-    g.strokeRoundedRect(8, 8, felt.width - 16, felt.height - 16, 12);
-    bake(g, DEALER_FELT_TEXTURE, felt.width, felt.height);
-  }
-  if (!scene.textures.exists(CHOICE_HIGHER_TEXTURE)) bakeChoice(scene, CHOICE_HIGHER_TEXTURE, 0x15803d, 'higher');
-  if (!scene.textures.exists(CHOICE_EQUAL_TEXTURE)) bakeChoice(scene, CHOICE_EQUAL_TEXTURE, 0x7e22ce, 'equal');
-  if (!scene.textures.exists(CHOICE_LOWER_TEXTURE)) bakeChoice(scene, CHOICE_LOWER_TEXTURE, 0xb91c1c, 'lower');
-  if (!scene.textures.exists(CHIP_STACK_TEXTURE)) bakeStackChip(scene);
-  if (!scene.textures.exists(STAKE_GLOW_TEXTURE)) drawStakeGlow(scene);
-}
-
-/** Фишка сбоку-сверху: красная грань с белым кольцом и тёмный бок с белыми насечками. Из таких складывается стопка. */
-function bakeStackChip(scene: Phaser.Scene): void {
+export function createDealerFelt(scene: Phaser.Scene, felt: Box): void {
+  if (scene.textures.exists(DEALER_FELT_TEXTURE)) return;
   const g = scene.add.graphics();
-  g.fillStyle(CHIP_SIDE);
-  g.fillEllipse(18, 11, 36, 12); // нижний край
-  g.fillRect(0, 5, 36, 6); // бок
-  g.fillStyle(0xffffff);
-  for (const x of [5, 16, 27]) g.fillRect(x, 8, 4, 6); // белые насечки на боку
-  g.fillStyle(CHIP_TOP);
-  g.fillEllipse(18, 5, 36, 10); // верхняя грань
-  g.lineStyle(1.5, 0xffffff);
-  g.strokeEllipse(18, 5, 22, 6); // белое кольцо на грани
-  bake(g, CHIP_STACK_TEXTURE, 36, 18);
-}
-
-/** Свечение под ставкой: золотой круг, яркий до середины радиуса (её закрывает стопка) и прозрачный к краю — радиальный градиент на canvas. */
-function drawStakeGlow(scene: Phaser.Scene): void {
-  const size = STAKE_GLOW_SIZE;
-  const texture = createSharpCanvas(scene, STAKE_GLOW_TEXTURE, size, size);
-  if (!texture) return;
-  const ctx = texture.context;
-  const glow = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  glow.addColorStop(0, `rgba(${STAKE_GLOW_RGB}, 0.95)`);
-  glow.addColorStop(0.55, `rgba(${STAKE_GLOW_RGB}, 0.6)`);
-  glow.addColorStop(1, `rgba(${STAKE_GLOW_RGB}, 0)`);
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, size, size);
-  texture.refresh(); // передать нарисованное в видеокарту
-}
-
-/** Лицо карты: белая, цифра крупно посередине, ♠ в углах. */
-function drawCard(ctx: CanvasRenderingContext2D, width: number, height: number, text: string): void {
-  ctx.beginPath();
-  ctx.roundRect(0, 0, width, height, 8);
-  ctx.fillStyle = '#f8fafc';
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#94a3b8';
-  ctx.stroke();
-  ctx.fillStyle = '#111827';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = `bold 40px ${FONT}`;
-  ctx.fillText(text, width / 2, height / 2 + 2);
-  ctx.font = `14px ${FONT}`;
-  ctx.fillText('♠', 11, 13);
-  ctx.fillText('♠', width - 11, height - 13);
-}
-
-/**
- * Круглая кнопка выбора у Дилера: цветной круг с золотым ободом и белым знаком «>», «=» или «<», нарисованным линиями (без шрифта).
- * Стоят слева от открытой карты, поэтому читаются вместе с ней: «> 5» — больше пяти.
- */
-function bakeChoice(scene: Phaser.Scene, key: string, color: number, sign: 'higher' | 'equal' | 'lower'): void {
-  const g = scene.add.graphics();
-  g.fillStyle(0x000000, 0.45);
-  g.fillCircle(27, 29, 25); // тень
-  g.fillStyle(color);
-  g.fillCircle(26, 26, 25);
-  g.lineStyle(3, 0xfbbf24);
-  g.strokeCircle(26, 26, 23);
-  g.lineStyle(6, 0xffffff);
-  if (sign === 'equal') {
-    g.lineBetween(14, 20, 38, 20);
-    g.lineBetween(14, 32, 38, 32);
-  } else {
-    const tip = sign === 'higher' ? 37 : 15; // острие знака: у «>» справа, у «<» слева
-    const back = sign === 'higher' ? 16 : 36;
-    g.beginPath();
-    g.moveTo(back, 14);
-    g.lineTo(tip, 26);
-    g.lineTo(back, 38);
-    g.strokePath();
-  }
-  bake(g, key, 54, 56);
+  g.fillStyle(0x081a24);
+  g.fillRoundedRect(0, 0, felt.width, felt.height, 16); // тёмное стекло — как у меню и экрана слотов (DONTLIKE)
+  g.lineStyle(3, 0x475569);
+  g.strokeRoundedRect(8, 8, felt.width - 16, felt.height - 16, 12);
+  bake(g, DEALER_FELT_TEXTURE, felt.width, felt.height);
 }
 
 /** Атмосфера: пылинка (мягкая точка), полосы развёртки поверх экрана и тёмные края всего вида. */
 export const DUST_TEXTURE = 'dust';
 export const SCANLINES_TEXTURE = 'scanlines';
 export const VIGNETTE_TEXTURE = 'vignette';
+export const VIGNETTE_RED_TEXTURE = 'vignette-red'; // красное свечение по краям в раунде спасения
 const VIGNETTE_RADII = { inner: 260, outer: 710 }; // светлая середина и тёмный край — для вида шириной VIEW_WIDTH
 
 export function createAtmosphereTextures(scene: Phaser.Scene, screen: Box): void {
@@ -1964,20 +1759,28 @@ export function createAtmosphereTextures(scene: Phaser.Scene, screen: Box): void
   }
   if (!scene.textures.exists(VIGNETTE_TEXTURE)) {
     // Тень на весь вид. Она мягкая, чёткость ей не нужна — в обычном размере, без TEXTURE_SCALE.
-    const width = Math.ceil(VIEW_WIDTH);
-    const texture = scene.textures.createCanvas(VIGNETTE_TEXTURE, width, 640);
-    if (texture) {
-      // Градиент — на canvas 2D: Graphics.generateTexture градиенты пропускает.
-      const ctx = texture.context;
-      const { inner, outer } = VIGNETTE_RADII;
-      const shade = ctx.createRadialGradient(VIEW_CENTER_X, 320, inner, VIEW_CENTER_X, 320, outer); // середина светлая, к краям темнее
-      shade.addColorStop(0, 'rgba(0, 0, 0, 0)');
-      shade.addColorStop(1, 'rgba(0, 0, 0, 0.95)');
-      ctx.fillStyle = shade;
-      ctx.fillRect(0, 0, width, 640);
-      texture.refresh(); // передать нарисованное в видеокарту
-    }
+    makeVignetteTexture(scene, VIGNETTE_TEXTURE, '0, 0, 0', 0.95);
   }
+  if (!scene.textures.exists(VIGNETTE_RED_TEXTURE)) {
+    // Красное свечение по краям: раунд спасения — «как в играх, когда жизней мало». В середине прозрачно.
+    makeVignetteTexture(scene, VIGNETTE_RED_TEXTURE, '220, 38, 38', 0.9);
+  }
+}
+
+/** Мягкое свечение по краям вида: внутренний радиус прозрачный, внешний — цвета rgb с прозрачностью edgeAlpha. */
+function makeVignetteTexture(scene: Phaser.Scene, key: string, rgb: string, edgeAlpha: number): void {
+  const width = Math.ceil(VIEW_WIDTH);
+  const texture = scene.textures.createCanvas(key, width, 640);
+  if (!texture) return;
+  // Градиент — на canvas 2D: Graphics.generateTexture градиенты пропускает.
+  const ctx = texture.context;
+  const { inner, outer } = VIGNETTE_RADII;
+  const shade = ctx.createRadialGradient(VIEW_CENTER_X, 320, inner, VIEW_CENTER_X, 320, outer);
+  shade.addColorStop(0, `rgba(${rgb}, 0)`);
+  shade.addColorStop(1, `rgba(${rgb}, ${edgeAlpha})`);
+  ctx.fillStyle = shade;
+  ctx.fillRect(0, 0, width, 640);
+  texture.refresh(); // передать нарисованное в видеокарту
 }
 
 /** Знак паузы — две полоски. Белый: в углу экрана его делают бледным (setAlpha), на экране паузы — крупным. */
@@ -2033,7 +1836,8 @@ export function createFullscreenTexture(scene: Phaser.Scene): void {
 
 /**
  * Монитор символов: терминал на полу у правой стены. Корпус — одна запечённая картинка (с холодным отсветом экрана на стене),
- * экран — canvas: цены платящих символов, что делают особые, внизу — что даёт джекпот. Экран перерисовывается,
+ * экран — canvas: цены платящих символов и что делают особые. Джекпот внизу экрана убран (DONTLIKE 9.2): его строка
+ * переехала в новость на стекле, когда он выпадает. Экран перерисовывается,
  * когда в автомат входят новые символы или меняется язык (это раз в раунд — дёшево).
  */
 export const WALL_TV_TEXTURE = 'wall-tv';
@@ -2047,6 +1851,7 @@ const MONITOR_INK = '#cffafe'; // надписи
 const MONITOR_LINE = 'rgba(103, 232, 249, 0.3)'; // разделители
 const MONITOR_NEW = '#fde047'; // символ, который вошёл в автомат в этом раунде, — в золотой рамке
 const MONITOR_PRICE_COLOR = '#fbbf24'; // цены — как цифры табло
+const MONITOR_BOOST_COLOR = '#4ade80'; // пометка «выпадает чаще» у усиленного предметом символа
 const MONITOR_PAD = 10; // поля экрана
 const MONITOR_PRICE_COLUMNS = 3; // цены — по три в ряд
 const MONITOR_PRICE_ROW = 56;
@@ -2058,14 +1863,13 @@ const MONITOR_NOTE_ROW = 48; // особый символ: значок и чт�
 const MONITOR_NOTE_ICON = 36;
 const MONITOR_NOTE_FONT = 16;
 const MONITOR_NOTE_LINE = 19; // высота строки описания
-const MONITOR_MINI_CELL = 8; // схема джекпота: клетки 5×3
-const MONITOR_MINI_GAP = 2.2;
 
-/** Платящий символ на мониторе: сколько платит его паттерн ×1. isNew — вошёл в автомат в этом раунде. */
+/** Платящий символ на мониторе: сколько платит его паттерн ×1 (с усилениями), boost — во сколько раз чаще падает. isNew — вошёл в автомат в этом раунде. */
 export interface MonitorPrice {
   symbol: SlotSymbol;
   price: number;
   isNew: boolean;
+  boost?: number; // вес символа усилен предметом (вишни, колокола…): на мониторе — зелёная пометка
 }
 
 /** Особый символ на мониторе: что он делает. */
@@ -2102,14 +1906,13 @@ export function createWallTvTexture(scene: Phaser.Scene, tv: Box): void {
   bake(g, WALL_TV_TEXTURE, width, height);
 }
 
-/** Экран монитора на canvas MONITOR_SCREEN_TEXTURE (width×height): цены, особые символы, внизу — джекпот. Рисуется заново целиком. */
+/** Экран монитора на canvas MONITOR_SCREEN_TEXTURE (width×height): цены и особые символы. Рисуется заново целиком. */
 export function drawMonitorScreen(
   scene: Phaser.Scene,
   width: number,
   height: number,
   prices: MonitorPrice[],
   notes: MonitorNote[],
-  jackpot: string,
 ): void {
   // Текстура уже есть — её создала эта же функция, значит это canvas: берём его и рисуем заново.
   const texture = scene.textures.exists(MONITOR_SCREEN_TEXTURE)
@@ -2119,16 +1922,13 @@ export function drawMonitorScreen(
   const ctx = texture.context;
   ctx.clearRect(0, 0, width, height);
   drawMonitorBackground(ctx, width, height);
-  let y = drawMonitorPrices(ctx, prices, width, MONITOR_PAD);
-  y = drawMonitorDivider(ctx, width, y);
+  const y = drawMonitorPrices(ctx, prices, width, MONITOR_PAD);
+  const notesTop = drawMonitorDivider(ctx, width, y);
   const noteWidth = (width - 2 * MONITOR_PAD) / MONITOR_NOTE_COLUMNS;
   notes.forEach((note, index) => {
     const left = MONITOR_PAD + (index % MONITOR_NOTE_COLUMNS) * noteWidth;
-    drawMonitorNote(ctx, note, left, noteWidth, y + Math.floor(index / MONITOR_NOTE_COLUMNS) * MONITOR_NOTE_ROW);
+    drawMonitorNote(ctx, note, left, noteWidth, notesTop + Math.floor(index / MONITOR_NOTE_COLUMNS) * MONITOR_NOTE_ROW);
   });
-  const jackpotTop = height - MONITOR_PAD - MONITOR_NOTE_ROW; // джекпот — всегда внизу экрана
-  drawMonitorDivider(ctx, width, jackpotTop - MONITOR_PAD);
-  drawMonitorJackpot(ctx, jackpot, width, jackpotTop);
   drawMonitorScanlines(ctx, width, height);
   texture.refresh(); // передать нарисованное в видеокарту
 }
@@ -2162,7 +1962,14 @@ function drawMonitorPrices(ctx: CanvasRenderingContext2D, prices: MonitorPrice[]
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = MONITOR_PRICE_COLOR;
-    ctx.fillText(`×${entry.price}`, left + MONITOR_PRICE_ICON + MONITOR_PRICE_CHIP + 8, middle + 1);
+    const priceText = `×${entry.price}`;
+    const priceX = left + MONITOR_PRICE_ICON + MONITOR_PRICE_CHIP + 8;
+    ctx.fillText(priceText, priceX, middle + 1);
+    // Символ усилен предметом: он платит столько же, но выпадает чаще — зелёная пометка «▲N».
+    if (entry.boost !== undefined && entry.boost > 1) {
+      ctx.fillStyle = MONITOR_BOOST_COLOR;
+      ctx.fillText(` ▲${entry.boost}`, priceX + ctx.measureText(priceText).width, middle + 1);
+    }
   });
   return top + Math.ceil(prices.length / MONITOR_PRICE_COLUMNS) * MONITOR_PRICE_ROW;
 }
@@ -2174,19 +1981,6 @@ function drawMonitorNote(ctx: CanvasRenderingContext2D, note: MonitorNote, left:
   drawMonitorIcon(ctx, note.symbol, left + 2, middle - MONITOR_NOTE_ICON / 2, MONITOR_NOTE_ICON);
   const textLeft = left + MONITOR_NOTE_ICON + 12;
   drawMonitorText(ctx, note.text, textLeft, middle, columnWidth - MONITOR_NOTE_ICON - 24);
-}
-
-/** Джекпот: маленькая схема «все 15 клеток» и что он даёт кроме фишек. */
-function drawMonitorJackpot(ctx: CanvasRenderingContext2D, text: string, width: number, top: number): void {
-  const middle = top + MONITOR_NOTE_ROW / 2;
-  const step = MONITOR_MINI_CELL + MONITOR_MINI_GAP;
-  const schemeTop = middle - (GRID_ROWS * step - MONITOR_MINI_GAP) / 2;
-  ctx.fillStyle = cssColor(MINI_ON);
-  for (let row = 0; row < GRID_ROWS; row++) {
-    for (let col = 0; col < GRID_COLUMNS; col++) ctx.fillRect(MONITOR_PAD + col * step, schemeTop + row * step, MONITOR_MINI_CELL, MONITOR_MINI_CELL);
-  }
-  const textLeft = MONITOR_PAD + GRID_COLUMNS * step + 6;
-  drawMonitorText(ctx, text, textLeft, middle, width - textLeft - MONITOR_PAD);
 }
 
 /** Надпись монитора: переносится по словам (до двух строк), стоит по высоте вокруг middle. */
@@ -2266,146 +2060,4 @@ export function createCrownLampTexture(scene: Phaser.Scene): void {
   ctx.textBaseline = 'middle';
   ctx.fillText('👑', size / 2, size / 2 + 1);
   texture.refresh(); // передать нарисованное в видеокарту
-}
-
-// ---------- Тёмная комната Коллектора ----------
-
-export const DARK_ROOM_TEXTURE = 'dark-room'; // комната на весь вид (рулетка: вид целиком — комната)
-export const DARK_ROOM_SIDE_TEXTURE = 'dark-room-side'; // она же, но слева прозрачная: выстрел в автомат — дыру в экране видно
-export const DARK_ROOM_WIDTH = Math.ceil(VIEW_WIDTH);
-const DARK_ROOM_HEIGHT = 640;
-const SIDE_FADE_FROM = 640; // слева от этого места (в раскладке) комнаты нет, к 780 она полностью закрывает
-const SIDE_FADE_TO = 780;
-const LAMP_Y = 72; // лампа над столом
-const TABLE_LEVEL = 455; // где кончается стена и начинается пол
-
-/** Две картинки тёмной комнаты: на весь вид и «боковая». Рисуется кодом: стена, пол, лампа над столом, силуэт Коллектора. */
-export function createDarkRoomTextures(scene: Phaser.Scene): void {
-  for (const [key, isSide] of [[DARK_ROOM_TEXTURE, false], [DARK_ROOM_SIDE_TEXTURE, true]] as const) {
-    if (scene.textures.exists(key)) continue;
-    const texture = createSharpCanvas(scene, key, DARK_ROOM_WIDTH, DARK_ROOM_HEIGHT);
-    if (!texture) continue;
-    drawDarkRoom(texture.context, DARK_ROOM_WIDTH, DARK_ROOM_HEIGHT, isSide);
-    texture.refresh(); // передать нарисованное в видеокарту
-  }
-}
-
-function drawDarkRoom(ctx: CanvasRenderingContext2D, width: number, height: number, isSide: boolean): void {
-  const lampX = DARK_ROOM.x - TURN_SCROLL;
-  const collectorX = COLLECTOR_X - TURN_SCROLL;
-  // Стена и пол.
-  const wall = ctx.createLinearGradient(0, 0, 0, height);
-  wall.addColorStop(0, '#0b0705');
-  wall.addColorStop(0.7, '#1a110b');
-  wall.addColorStop(1, '#090604');
-  ctx.fillStyle = wall;
-  ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-  for (let x = 14; x < width; x += 46) ctx.fillRect(x, 0, 2, TABLE_LEVEL); // доски стены
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.025)';
-  for (let x = 16; x < width; x += 46) ctx.fillRect(x, 0, 1, TABLE_LEVEL);
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-  ctx.fillRect(0, TABLE_LEVEL, width, 5); // плинтус
-  for (let y = TABLE_LEVEL + 22; y < height; y += 24) ctx.fillRect(0, y, width, 2); // доски пола
-  // Свет лампы: конус вниз и пятно на столе.
-  const cone = ctx.createLinearGradient(0, LAMP_Y, 0, 480);
-  cone.addColorStop(0, 'rgba(253, 224, 160, 0.20)');
-  cone.addColorStop(1, 'rgba(253, 224, 160, 0.03)');
-  ctx.fillStyle = cone;
-  ctx.beginPath();
-  ctx.moveTo(lampX - 22, LAMP_Y);
-  ctx.lineTo(lampX + 22, LAMP_Y);
-  ctx.lineTo(lampX + 330, 500);
-  ctx.lineTo(lampX - 330, 500);
-  ctx.closePath();
-  ctx.fill();
-  ctx.save();
-  ctx.translate(lampX, 480);
-  ctx.scale(1, 0.38);
-  const pool = ctx.createRadialGradient(0, 0, 10, 0, 0, 360);
-  pool.addColorStop(0, 'rgba(253, 224, 130, 0.22)');
-  pool.addColorStop(1, 'rgba(253, 224, 130, 0)');
-  ctx.fillStyle = pool;
-  ctx.beginPath();
-  ctx.arc(0, 0, 360, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-  // Коллектор: тёмный силуэт в шляпе, свет лампы только по краю.
-  drawCollectorSilhouette(ctx, collectorX);
-  // Лампа поверх: шнур, абажур, лампочка.
-  ctx.strokeStyle = '#1a1a1a';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(lampX, 0);
-  ctx.lineTo(lampX, LAMP_Y - 28);
-  ctx.stroke();
-  ctx.fillStyle = '#2a2a2e';
-  ctx.beginPath();
-  ctx.moveTo(lampX - 40, LAMP_Y + 4);
-  ctx.lineTo(lampX + 40, LAMP_Y + 4);
-  ctx.lineTo(lampX + 16, LAMP_Y - 28);
-  ctx.lineTo(lampX - 16, LAMP_Y - 28);
-  ctx.closePath();
-  ctx.fill();
-  const bulb = ctx.createRadialGradient(lampX, LAMP_Y + 6, 2, lampX, LAMP_Y + 6, 46);
-  bulb.addColorStop(0, 'rgba(255, 244, 190, 0.95)');
-  bulb.addColorStop(1, 'rgba(255, 244, 190, 0)');
-  ctx.fillStyle = bulb;
-  ctx.fillRect(lampX - 50, LAMP_Y - 40, 100, 100);
-  // Виньетка: края комнаты тонут в темноте.
-  const vignette = ctx.createRadialGradient(width / 2, height / 2, height * 0.25, width / 2, height / 2, width * 0.62);
-  vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-  vignette.addColorStop(1, 'rgba(0, 0, 0, 0.82)');
-  ctx.fillStyle = vignette;
-  ctx.fillRect(0, 0, width, height);
-  if (isSide) {
-    // Боковая комната: слева прозрачная, чтобы было видно разбитый экран автомата.
-    const mask = ctx.createLinearGradient(SIDE_FADE_FROM - TURN_SCROLL, 0, SIDE_FADE_TO - TURN_SCROLL, 0);
-    mask.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    mask.addColorStop(1, 'rgba(0, 0, 0, 1)');
-    ctx.globalCompositeOperation = 'destination-in';
-    ctx.fillStyle = mask;
-    ctx.fillRect(0, 0, width, height);
-    ctx.globalCompositeOperation = 'source-over';
-  }
-}
-
-/** Силуэт Коллектора за столом: шляпа с полями, голова, плечи в пальто. Чёрный, чуть светлее по верхнему краю — от лампы. */
-function drawCollectorSilhouette(ctx: CanvasRenderingContext2D, cx: number): void {
-  ctx.fillStyle = '#030201';
-  ctx.beginPath();
-  ctx.moveTo(cx - 180, 470);
-  ctx.bezierCurveTo(cx - 172, 380, cx - 125, 345, cx - 62, 334);
-  ctx.lineTo(cx - 24, 318);
-  ctx.lineTo(cx + 24, 318);
-  ctx.lineTo(cx + 62, 334);
-  ctx.bezierCurveTo(cx + 125, 345, cx + 172, 380, cx + 180, 470);
-  ctx.closePath();
-  ctx.fill(); // плечи
-  ctx.fillRect(cx - 21, 296, 42, 30); // шея
-  ctx.beginPath();
-  ctx.ellipse(cx, 262, 41, 53, 0, 0, Math.PI * 2);
-  ctx.fill(); // голова
-  ctx.beginPath();
-  ctx.ellipse(cx, 214, 88, 15, 0, 0, Math.PI * 2);
-  ctx.fill(); // поля шляпы
-  ctx.beginPath();
-  ctx.roundRect(cx - 46, 142, 92, 78, [18, 18, 4, 4]);
-  ctx.fill(); // тулья
-  ctx.fillStyle = '#17120d';
-  ctx.fillRect(cx - 46, 194, 92, 11); // лента на тулье
-  ctx.strokeStyle = 'rgba(200, 160, 110, 0.30)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.ellipse(cx, 214, 88, 15, 0, Math.PI * 1.04, Math.PI * 1.96);
-  ctx.stroke(); // свет на полях сверху
-  ctx.beginPath();
-  ctx.roundRect(cx - 46, 142, 92, 40, [18, 18, 0, 0]);
-  ctx.stroke(); // и на тулье
-  ctx.beginPath();
-  ctx.moveTo(cx - 172, 400);
-  ctx.bezierCurveTo(cx - 160, 366, cx - 120, 346, cx - 62, 335);
-  ctx.moveTo(cx + 172, 400);
-  ctx.bezierCurveTo(cx + 160, 366, cx + 120, 346, cx + 62, 335);
-  ctx.stroke(); // и на плечах
 }
